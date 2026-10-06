@@ -40,11 +40,6 @@ func TestProxyRecordsAPIKeyID(t *testing.T) {
 	defer database.Close()
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/chat/completions") && false {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(`{"error":{"message":"boom"}}`))
-			return
-		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"x","usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`))
 	}))
@@ -57,7 +52,11 @@ func TestProxyRecordsAPIKeyID(t *testing.T) {
 	if _, err := pm.CreateProvider("Mock", upstream.URL, "", "mock", true, true); err != nil {
 		t.Fatal(err)
 	}
-	key, err := km.CreateKey("pi-dev", "custom", nil, []string{"mock/ok"})
+	// Nothing listens on port 1, so forwarding fails with 502.
+	if _, err := pm.CreateProvider("Dead", "http://127.0.0.1:1", "", "dead", false, true); err != nil {
+		t.Fatal(err)
+	}
+	key, err := km.CreateKey("pi-dev", "custom", nil, []string{"mock/ok", "dead/x"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,29 +65,29 @@ func TestProxyRecordsAPIKeyID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	send := func(model string, hdr map[string]string) int {
+	send := func(model string) int {
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 			strings.NewReader(`{"model":"`+model+`","messages":[{"role":"user","content":"hi"}]}`))
 		req.Header.Set("Authorization", "Bearer "+key.RawKey)
-		for k, v := range hdr {
-			req.Header.Set(k, v)
-		}
 		rec := httptest.NewRecorder()
 		p.ServeHTTP(rec, req)
 		return rec.Code
 	}
 
-	if code := send("mock/ok", nil); code != http.StatusOK {
+	if code := send("mock/ok"); code != http.StatusOK {
 		t.Fatalf("success path: %d", code)
 	}
-	if code := send("mock/other", nil); code != http.StatusForbidden { // model_not_allowed
+	if code := send("mock/other"); code != http.StatusForbidden { // model_not_allowed
 		t.Fatalf("403 path: %d", code)
 	}
+	if code := send("dead/x"); code != http.StatusBadGateway { // upstream unreachable
+		t.Fatalf("502 path: %d", code)
+	}
 	_ = mm.SetModelEnabled("mock/ok", false)
-	if code := send("mock/ok", nil); code != http.StatusForbidden { // model_disabled
+	if code := send("mock/ok"); code != http.StatusForbidden { // model_disabled
 		t.Fatalf("firewall path: %d", code)
 	}
-	waitForRows(t, database, 3)
+	waitForRows(t, database, 4)
 
 	rows, err := database.Query("SELECT status_code, api_key_id FROM traffic_logs ORDER BY id")
 	if err != nil {
@@ -105,8 +104,8 @@ func TestProxyRecordsAPIKeyID(t *testing.T) {
 		}
 		n++
 	}
-	if n != 3 {
-		t.Errorf("rows = %d, want 3", n)
+	if n != 4 {
+		t.Errorf("rows = %d, want 4", n)
 	}
 
 	// 401 rows carry no key ID.

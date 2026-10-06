@@ -17,6 +17,7 @@ import (
 	"nineguard/internal/providers"
 	"nineguard/internal/proxy"
 	"nineguard/internal/syslog"
+	"nineguard/internal/timeutil"
 	"nineguard/internal/traffic"
 	"nineguard/internal/version"
 )
@@ -723,6 +724,12 @@ func (h *Handler) DeleteModelGroup(w http.ResponseWriter, r *http.Request) {
 
 // ── System Logs Handlers (Log Explorer) ──
 
+// requestLocation returns the viewer's timezone from the "tz" query parameter
+// (IANA name, e.g. "Asia/Jakarta"). Missing or invalid values yield UTC.
+func requestLocation(r *http.Request) *time.Location {
+	return timeutil.LoadLocation(r.URL.Query().Get("tz"))
+}
+
 func parseSyslogFilterParams(q url.Values) syslog.FilterParams {
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
@@ -753,6 +760,7 @@ func parseSyslogFilterParams(q url.Values) syslog.FilterParams {
 		Cursor:    q.Get("cursor"),
 		Limit:     limit,
 		Offset:    offset,
+		Loc:       timeutil.LoadLocation(q.Get("tz")),
 	}
 }
 
@@ -904,6 +912,7 @@ func parseFilterParams(q url.Values) traffic.FilterParams {
 		Cursor:    q.Get("cursor"),
 		Limit:     limit,
 		Offset:    offset,
+		Loc:       timeutil.LoadLocation(q.Get("tz")),
 	}
 }
 
@@ -1029,7 +1038,7 @@ func (h *Handler) GetTrafficStats(w http.ResponseWriter, r *http.Request) {
 	if endDate == "" {
 		endDate = q.Get("end_date")
 	}
-	stats, err := h.traffic.GetDashboardStats(period, startDate, endDate)
+	stats, err := h.traffic.GetDashboardStats(period, startDate, endDate, requestLocation(r))
 	if err != nil {
 		slog.Error("failed to get traffic stats", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to retrieve traffic statistics")
@@ -1049,7 +1058,7 @@ func (h *Handler) GetUsageReport(w http.ResponseWriter, r *http.Request) {
 	if endDate == "" {
 		endDate = q.Get("end_date")
 	}
-	report, err := h.traffic.GetUsageReports(period, startDate, endDate)
+	report, err := h.traffic.GetUsageReports(period, startDate, endDate, requestLocation(r))
 	if err != nil {
 		slog.Error("failed to get usage report", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to retrieve usage report")

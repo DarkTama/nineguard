@@ -1,6 +1,6 @@
 // Usage Reports: In-depth breakdowns per API Key (consumers) and per Model with custom date range.
 import { api } from '../api.js';
-import { h, icon, emptyState, fmtNum, fmtCompact, toast } from '../ui.js';
+import { h, icon, emptyState, fmtNum, fmtCompact, fmtAgo, fmtDateTime, tzLabel, toast } from '../ui.js';
 import { setRoute } from '../state.js';
 
 export function mount(root) {
@@ -225,6 +225,17 @@ export function mount(root) {
       start: currentPeriod === 'custom' ? customStart : '',
       end: currentPeriod === 'custom' ? customEnd : ''
     });
+  }
+
+  // ── Last Active (all-time, not limited to the selected period) ──
+  function renderLastActive(ts) {
+    const ms = ts ? Date.parse(ts) : NaN;
+    if (isNaN(ms)) return h('span', { class: 'muted', style: { fontSize: '11px' } }, 'Last active: Never');
+    return h('span', {
+      class: 'muted',
+      style: { fontSize: '11px' },
+      title: `${fmtDateTime(ms)} (${tzLabel()}) · all-time, any status`,
+    }, `Last active: ${fmtAgo(ms)}`);
   }
 
   // ── Visual Token Ratio Bar Helper ──
@@ -532,7 +543,7 @@ export function mount(root) {
         const detailSection = h('div', { style: { padding: '16px 20px', background: 'var(--bg)' } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' } },
             h('b', { style: { fontSize: '13px' } }, `Models Used by "${k.key_name}"`),
-            h('span', { class: 'muted', style: { fontSize: '11px' } }, k.last_active_at ? `Last active: ${new Date(k.last_active_at).toLocaleString()}` : '')
+            renderLastActive(k.last_active_at)
           ),
           h('div', { class: 'table-wrap', style: { background: 'var(--panel)', borderRadius: '6px', border: '1px solid var(--border)' } },
             h('table', { class: 'table' },
@@ -703,7 +714,7 @@ export function mount(root) {
         const detailSection = h('div', { style: { padding: '16px 20px', background: 'var(--bg)' } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' } },
             h('b', { style: { fontSize: '13px' } }, `Token Consumers for "${m.model}" ("Siapa saja pemakai model ini")`),
-            h('span', { class: 'muted', style: { fontSize: '11px' } }, m.last_active_at ? `Last active: ${new Date(m.last_active_at).toLocaleString()}` : '')
+            renderLastActive(m.last_active_at)
           ),
           h('div', { class: 'table-wrap', style: { background: 'var(--panel)', borderRadius: '6px', border: '1px solid var(--border)' } },
             h('table', { class: 'table' },

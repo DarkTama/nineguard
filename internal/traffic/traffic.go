@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"nineguard/internal/db"
+	"nineguard/internal/timeutil"
 )
 
 type LogEntry struct {
@@ -45,6 +46,7 @@ type FilterParams struct {
 	Limit     int
 	Offset    int
 	Cursor    string // id cursor for pagination
+	Loc       *time.Location // viewer timezone for Period/StartDate/EndDate; nil = UTC
 }
 
 type VolumeBucket struct {
@@ -231,76 +233,21 @@ func sanitizeDate(d string) string {
 	return ""
 }
 
-func buildDateFilter(period, startDate, endDate string) (string, []interface{}) {
-	sDate := sanitizeDate(startDate)
-	eDate := sanitizeDate(endDate)
+// nowFunc is the clock used for period resolution; tests may replace it.
+var nowFunc = time.Now
 
-	if sDate != "" && eDate != "" {
-		return "timestamp >= datetime(?) AND timestamp <= datetime(?)", []interface{}{sDate + " 00:00:00", eDate + " 23:59:59"}
-	}
-	if sDate != "" {
-		return "timestamp >= datetime(?)", []interface{}{sDate + " 00:00:00"}
-	}
-	if eDate != "" {
-		return "timestamp <= datetime(?)", []interface{}{eDate + " 23:59:59"}
-	}
-
-	switch period {
-	case "yesterday":
-		return "timestamp >= datetime('now', '-1 day', 'start of day') AND timestamp < date('now', 'start of day')", nil
-	case "7d":
-		return "timestamp >= datetime('now', '-7 days')", nil
-	case "14d":
-		return "timestamp >= datetime('now', '-14 days')", nil
-	case "30d":
-		return "timestamp >= datetime('now', '-30 days')", nil
-	case "month", "this_month":
-		return "timestamp >= date('now', 'start of month')", nil
-	case "last_month":
-		return "timestamp >= date('now', 'start of month', '-1 month') AND timestamp < date('now', 'start of month')", nil
-	case "all":
-		return "1=1", nil
-	case "today":
-		fallthrough
-	default:
-		return "timestamp >= date('now', 'start of day')", nil
-	}
+// buildDateFilter returns the WHERE fragment for the current report window,
+// with calendar boundaries in loc (nil = UTC).
+func buildDateFilter(period, startDate, endDate string, loc *time.Location) (string, []interface{}) {
+	cur, _ := timeutil.ResolvePeriod(period, sanitizeDate(startDate), sanitizeDate(endDate), loc, nowFunc())
+	return cur.SQL("timestamp")
 }
 
-func buildPrevDateFilter(period, startDate, endDate string) (string, []interface{}) {
-	sDate := sanitizeDate(startDate)
-	eDate := sanitizeDate(endDate)
-
-	if sDate != "" && eDate != "" {
-		t1, err1 := time.Parse("2006-01-02", sDate)
-		t2, err2 := time.Parse("2006-01-02", eDate)
-		if err1 == nil && err2 == nil {
-			diffDays := int(t2.Sub(t1).Hours()/24) + 1
-			if diffDays < 1 {
-				diffDays = 1
-			}
-			prevStart := t1.AddDate(0, 0, -diffDays).Format("2006-01-02")
-			prevEnd := t1.AddDate(0, 0, -1).Format("2006-01-02")
-			return "timestamp >= datetime(?) AND timestamp <= datetime(?)", []interface{}{prevStart + " 00:00:00", prevEnd + " 23:59:59"}
-		}
-	}
-
-	switch period {
-	case "7d":
-		return "timestamp >= datetime('now', '-14 days') AND timestamp < datetime('now', '-7 days')", nil
-	case "14d":
-		return "timestamp >= datetime('now', '-28 days') AND timestamp < datetime('now', '-14 days')", nil
-	case "30d":
-		return "timestamp >= datetime('now', '-60 days') AND timestamp < datetime('now', '-30 days')", nil
-	case "yesterday":
-		return "timestamp >= datetime('now', '-2 days', 'start of day') AND timestamp < datetime('now', '-1 day', 'start of day')", nil
-	case "month", "this_month":
-		return "timestamp >= date('now', 'start of month', '-1 month') AND timestamp < date('now', 'start of month')", nil
-	case "today":
-		fallthrough
-	default:
-		return "timestamp >= datetime('now', '-1 day', 'start of day') AND timestamp < date('now', 'start of day')", nil
-	}
+// buildPrevDateFilter returns the WHERE fragment for the window preceding the
+// current one, used for period-over-period comparison.
+func buildPrevDateFilter(period, startDate, endDate string, loc *time.Location) (string, []interface{}) {
+	_, prev := timeutil.ResolvePeriod(period, sanitizeDate(startDate), sanitizeDate(endDate), loc, nowFunc())
+	return prev.SQL("timestamp")
 }
 
 type Manager struct {
@@ -472,7 +419,7 @@ func (m *Manager) QueryLogs(p FilterParams) ([]LogEntry, int, error) {
 		args = append(args, tTo.Format("2006-01-02 15:04:05"))
 	}
 	if p.From == "" && p.To == "" {
-		dateCond, dateArgs := buildDateFilter(p.Period, p.StartDate, p.EndDate)
+		dateCond, dateArgs := buildDateFilter(p.Period, p.StartDate, p.EndDate, p.Loc)
 		if dateCond != "" && dateCond != "1=1" {
 			conditions = append(conditions, dateCond)
 			args = append(args, dateArgs...)
@@ -700,28 +647,7 @@ func (m *Manager) GetVolume(p FilterParams, buckets int) (*VolumeResult, error) 
 		to = time.Now().UTC()
 	}
 	if from, ok = parseTimeParam(p.From); !ok {
-		if p.StartDate != "" && p.EndDate != "" {
-			t1, _ := time.Parse("2006-01-02", p.StartDate)
-			t2, _ := time.Parse("2006-01-02", p.EndDate)
-			from = t1.UTC()
-			to = t2.Add(24*time.Hour - time.Second).UTC()
-		} else {
-			switch p.Period {
-			case "7d":
-				from = to.Add(-7 * 24 * time.Hour)
-			case "14d":
-				from = to.Add(-14 * 24 * time.Hour)
-			case "30d":
-				from = to.Add(-30 * 24 * time.Hour)
-			case "yesterday":
-				yest := to.AddDate(0, 0, -1)
-				from = time.Date(yest.Year(), yest.Month(), yest.Day(), 0, 0, 0, 0, time.UTC)
-				to = time.Date(yest.Year(), yest.Month(), yest.Day(), 23, 59, 59, 0, time.UTC)
-			default:
-				from = time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, time.UTC)
-				to = from.Add(24*time.Hour - time.Second)
-			}
-		}
+		from, to = periodVolumeWindow(p.Period, p.StartDate, p.EndDate, p.Loc, to)
 	}
 	if !from.Before(to) {
 		from = to.Add(-24 * time.Hour)
@@ -972,9 +898,12 @@ func (m *Manager) GetVolume(p FilterParams, buckets int) (*VolumeResult, error) 
 	return res, nil
 }
 
-func (m *Manager) GetDashboardStats(period, startDate, endDate string) (*DashboardStats, error) {
-	dateFilter, dateFilterArgs := buildDateFilter(period, startDate, endDate)
-	prevFilter, prevFilterArgs := buildPrevDateFilter(period, startDate, endDate)
+func (m *Manager) GetDashboardStats(period, startDate, endDate string, loc *time.Location) (*DashboardStats, error) {
+	if loc == nil {
+		loc = time.UTC
+	}
+	dateFilter, dateFilterArgs := buildDateFilter(period, startDate, endDate, loc)
+	prevFilter, prevFilterArgs := buildPrevDateFilter(period, startDate, endDate, loc)
 
 	stats := &DashboardStats{}
 
@@ -1143,21 +1072,25 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string) (*Dashboa
 		},
 	}
 
-	// Time series setup
+	// Time series setup. Bucket labels are in the viewer's zone: SQLite
+	// timestamps (UTC) are shifted by loc's offset at the start of the window.
 	var timeFmt string
-	var groupFmt string
 	var timeSlots []string
-	now := time.Now()
+	now := nowFunc().In(loc)
+	curPeriod, _ := timeutil.ResolvePeriod(period, sanitizeDate(startDate), sanitizeDate(endDate), loc, nowFunc())
+	offsetAt := curPeriod.From
+	if offsetAt.IsZero() {
+		offsetAt = now
+	}
+	offsetMod := timeutil.SQLiteOffsetModifier(loc, offsetAt)
 
 	if period == "today" || period == "" {
 		timeFmt = "%H:00"
-		groupFmt = "strftime('%H:00', timestamp)"
 		for h := 0; h < 24; h++ {
 			timeSlots = append(timeSlots, fmt.Sprintf("%02d:00", h))
 		}
 	} else if startDate != "" && endDate != "" {
 		timeFmt = "%m-%d"
-		groupFmt = "strftime('%m-%d', timestamp)"
 		t1, err1 := time.Parse("2006-01-02", startDate)
 		t2, err2 := time.Parse("2006-01-02", endDate)
 		if err1 == nil && err2 == nil && !t2.Before(t1) {
@@ -1171,7 +1104,6 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string) (*Dashboa
 		}
 	} else {
 		timeFmt = "%m-%d"
-		groupFmt = "strftime('%m-%d', timestamp)"
 		days := 14
 		switch period {
 		case "7d":
@@ -1185,6 +1117,9 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string) (*Dashboa
 			timeSlots = append(timeSlots, now.AddDate(0, 0, -d).Format("01-02"))
 		}
 	}
+	// slotExpr is the SQL expression producing a bucket label for a row.
+	slotExpr := fmt.Sprintf("strftime('%s', timestamp, '%s')", timeFmt, offsetMod)
+	groupFmt := slotExpr
 
 	slotMap := make(map[string]*TimeSeriesPoint)
 	for _, slot := range timeSlots {
@@ -1193,7 +1128,7 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string) (*Dashboa
 
 	seriesQuery := fmt.Sprintf(`
 		SELECT 
-			strftime('%s', timestamp) as time_slot,
+			%s as time_slot,
 			COUNT(*) as reqs,
 			COALESCE(SUM(total_tokens), 0) as toks,
 			COALESCE(SUM(prompt_tokens), 0) as p_toks,
@@ -1206,7 +1141,7 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string) (*Dashboa
 		WHERE %s
 		GROUP BY %s
 		ORDER BY timestamp ASC
-	`, timeFmt, dateFilter, groupFmt)
+	`, slotExpr, dateFilter, groupFmt)
 
 	rowsSeries, err := m.db.Query(seriesQuery, dateFilterArgs...)
 	if err == nil {
@@ -1276,11 +1211,11 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string) (*Dashboa
 	}
 	if len(stats.TopModels) > 0 {
 		trendQ := fmt.Sprintf(`
-			SELECT model, strftime('%s', timestamp) as ts, COUNT(*) 
+			SELECT model, %s as ts, COUNT(*) 
 			FROM traffic_logs
 			WHERE %s
 			GROUP BY model, ts
-		`, timeFmt, dateFilter)
+		`, slotExpr, dateFilter)
 		if rTr, errTr := m.db.Query(trendQ, dateFilterArgs...); errTr == nil {
 			for rTr.Next() {
 				var mod, ts string
@@ -1334,11 +1269,11 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string) (*Dashboa
 	}
 	if len(stats.TopKeys) > 0 {
 		trendKeyQ := fmt.Sprintf(`
-			SELECT COALESCE(NULLIF(api_key_name, ''), api_key) as k_name, strftime('%s', timestamp) as ts, COUNT(*) 
+			SELECT COALESCE(NULLIF(api_key_name, ''), api_key) as k_name, %s as ts, COUNT(*) 
 			FROM traffic_logs
 			WHERE %s
 			GROUP BY k_name, ts
-		`, timeFmt, dateFilter)
+		`, slotExpr, dateFilter)
 		if rTr, errTr := m.db.Query(trendKeyQ, dateFilterArgs...); errTr == nil {
 			for rTr.Next() {
 				var kn, ts string
@@ -1394,11 +1329,11 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string) (*Dashboa
 	}
 	if len(stats.TopErrorSources) > 0 {
 		trendErrQ := fmt.Sprintf(`
-			SELECT model, strftime('%s', timestamp) as ts, COUNT(*) 
+			SELECT model, %s as ts, COUNT(*) 
 			FROM traffic_logs
 			WHERE status_code >= 400 AND %s
 			GROUP BY model, ts
-		`, timeFmt, dateFilter)
+		`, slotExpr, dateFilter)
 		if rTrend, errTrend := m.db.Query(trendErrQ, dateFilterArgs...); errTrend == nil {
 			for rTrend.Next() {
 				var mod, ts string
@@ -1418,7 +1353,7 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string) (*Dashboa
 	// Query API Key usage breakdown over date/time slots
 	keySeriesQuery := fmt.Sprintf(`
 		SELECT 
-			strftime('%s', timestamp) as time_slot,
+			%s as time_slot,
 			COALESCE(NULLIF(api_key_name, ''), api_key) as key_name,
 			api_key,
 			COUNT(*) as reqs,
@@ -1427,7 +1362,7 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string) (*Dashboa
 		WHERE %s
 		GROUP BY %s, COALESCE(NULLIF(api_key_name, ''), api_key), api_key
 		ORDER BY timestamp ASC
-	`, timeFmt, dateFilter, groupFmt)
+	`, slotExpr, dateFilter, groupFmt)
 
 	rowsKeySeries, err := m.db.Query(keySeriesQuery, dateFilterArgs...)
 	if err == nil {
@@ -1443,8 +1378,11 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string) (*Dashboa
 	return stats, nil
 }
 
-func (m *Manager) GetUsageReports(period, startDate, endDate string) (*UsageReport, error) {
-	dateFilter, dateFilterArgs := buildDateFilter(period, startDate, endDate)
+func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.Location) (*UsageReport, error) {
+	if loc == nil {
+		loc = time.UTC
+	}
+	dateFilter, dateFilterArgs := buildDateFilter(period, startDate, endDate, loc)
 
 	report := &UsageReport{
 		Period:          period,
@@ -1519,7 +1457,11 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string) (*UsageRepo
 		}
 	}
 
-	// 3. Query Grouping per API Key
+	// 3. Last Active per key and per model: all-time, any status (not period-bound).
+	keyLastActive := m.lastActiveBy(`COALESCE(NULLIF(api_key_name, ''), api_key) || '||' || api_key`)
+	modelLastActive := m.lastActiveBy("model")
+
+	// 4. Query Grouping per API Key
 	keysQuery := fmt.Sprintf(`
 		SELECT 
 			COALESCE(NULLIF(api_key_name, ''), api_key) as key_name,
@@ -1531,8 +1473,7 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string) (*UsageRepo
 			COALESCE(SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END), 0) as ok_reqs,
 			COALESCE(SUM(CASE WHEN status_code >= 400 AND status_code != 403 THEN 1 ELSE 0 END), 0) as err_reqs,
 			COALESCE(SUM(CASE WHEN status_code = 403 THEN 1 ELSE 0 END), 0) as blk_reqs,
-			COALESCE(ROUND(AVG(duration_ms)), 0) as avg_dur,
-			MAX(timestamp) as last_seen
+			COALESCE(ROUND(AVG(duration_ms)), 0) as avg_dur
 		FROM traffic_logs
 		WHERE %s
 		GROUP BY COALESCE(NULLIF(api_key_name, ''), api_key), api_key
@@ -1544,19 +1485,16 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string) (*UsageRepo
 		defer kRows.Close()
 		for kRows.Next() {
 			var kb KeyUsageBreakdown
-			var lastSeen sql.NullString
 			if err := kRows.Scan(
 				&kb.KeyName, &kb.Key, &kb.TotalTokens, &kb.PromptTokens, &kb.CompletionTokens,
 				&kb.TotalRequests, &kb.SuccessRequests, &kb.ErrorRequests, &kb.BlockedRequests,
-				&kb.AvgDurationMs, &lastSeen,
+				&kb.AvgDurationMs,
 			); err == nil {
 				if report.TotalTokens > 0 {
 					kb.TokenShare = float64(kb.TotalTokens) / float64(report.TotalTokens) * 100
 				}
-				if lastSeen.Valid {
-					kb.LastActiveAt = &lastSeen.String
-				}
 				kId := kb.KeyName + "||" + kb.Key
+				kb.LastActiveAt = keyLastActive[kId]
 				modelsUsed := keyModelMap[kId]
 				for i := range modelsUsed {
 					if kb.TotalTokens > 0 {
@@ -1569,7 +1507,7 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string) (*UsageRepo
 		}
 	}
 
-	// 4. Query Grouping per Model
+	// 5. Query Grouping per Model
 	modelsQuery := fmt.Sprintf(`
 		SELECT 
 			t.model,
@@ -1581,8 +1519,7 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string) (*UsageRepo
 			COALESCE(SUM(CASE WHEN t.status_code >= 200 AND t.status_code < 400 THEN 1 ELSE 0 END), 0) as ok_reqs,
 			COALESCE(SUM(CASE WHEN t.status_code >= 400 AND t.status_code != 403 THEN 1 ELSE 0 END), 0) as err_reqs,
 			COALESCE(SUM(CASE WHEN t.status_code = 403 THEN 1 ELSE 0 END), 0) as blk_reqs,
-			COALESCE(ROUND(AVG(t.duration_ms)), 0) as avg_dur,
-			MAX(t.timestamp) as last_seen
+			COALESCE(ROUND(AVG(t.duration_ms)), 0) as avg_dur
 		FROM traffic_logs t
 		LEFT JOIN models m ON t.model = m.id
 		WHERE %s
@@ -1596,19 +1533,16 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string) (*UsageRepo
 		for mRows.Next() {
 			var mb ModelUsageBreakdown
 			var enInt int
-			var lastSeen sql.NullString
 			if err := mRows.Scan(
 				&mb.Model, &enInt, &mb.TotalTokens, &mb.PromptTokens, &mb.CompletionTokens,
 				&mb.TotalRequests, &mb.SuccessRequests, &mb.ErrorRequests, &mb.BlockedRequests,
-				&mb.AvgDurationMs, &lastSeen,
+				&mb.AvgDurationMs,
 			); err == nil {
 				mb.Enabled = (enInt == 1)
 				if report.TotalTokens > 0 {
 					mb.TokenShare = float64(mb.TotalTokens) / float64(report.TotalTokens) * 100
 				}
-				if lastSeen.Valid {
-					mb.LastActiveAt = &lastSeen.String
-				}
+				mb.LastActiveAt = modelLastActive[mb.Model]
 				consumers := modelKeyMap[mb.Model]
 				for i := range consumers {
 					if mb.TotalTokens > 0 {
@@ -1629,4 +1563,45 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string) (*UsageRepo
 	}
 
 	return report, nil
+}
+
+// lastActiveBy returns MAX(timestamp) over all traffic (no period filter, all
+// status codes) grouped by the given SQL expression, normalized to RFC 3339 UTC.
+// groupExpr must be a trusted constant expression, never user input.
+func (m *Manager) lastActiveBy(groupExpr string) map[string]*string {
+	out := make(map[string]*string)
+	rows, err := m.db.Query(fmt.Sprintf(
+		"SELECT %s AS g, MAX(timestamp) FROM traffic_logs GROUP BY g", groupExpr))
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var g sql.NullString
+		var ts sql.NullString
+		if err := rows.Scan(&g, &ts); err == nil && g.Valid {
+			out[g.String] = timeutil.NullTimeString(ts)
+		}
+	}
+	return out
+}
+
+// periodVolumeWindow converts a period into the [from, to] span used by volume
+// histograms, with calendar boundaries in loc. "today" spans the whole local
+// day so the chart has a stable width; open-ended windows end at to.
+func periodVolumeWindow(period, startDate, endDate string, loc *time.Location, to time.Time) (time.Time, time.Time) {
+	if loc == nil {
+		loc = time.UTC
+	}
+	cur, _ := timeutil.ResolvePeriod(period, startDate, endDate, loc, nowFunc())
+	from := cur.From
+	if !cur.To.IsZero() {
+		to = cur.To.Add(-time.Second)
+	} else if !from.IsZero() && (period == "" || period == "today") && startDate == "" && endDate == "" {
+		to = from.In(loc).AddDate(0, 0, 1).UTC().Add(-time.Second)
+	}
+	if from.IsZero() {
+		from = to.Add(-24 * time.Hour)
+	}
+	return from, to
 }

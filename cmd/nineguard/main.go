@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // embed zoneinfo so viewer timezones resolve without system tzdata
 
 	"github.com/mattn/go-isatty"
 

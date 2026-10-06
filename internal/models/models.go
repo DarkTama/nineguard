@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"nineguard/internal/db"
+	"nineguard/internal/timeutil"
 	"nineguard/internal/providers"
 )
 
@@ -134,9 +135,7 @@ func (m *Manager) ListModels(providerFilter string) ([]ModelInfo, error) {
 				mi.ProviderID = mi.ID[:idx]
 			}
 		}
-		if lastUsed.Valid {
-			mi.LastUsedAt = &lastUsed.String
-		}
+		mi.LastUsedAt = timeutil.NullTimeString(lastUsed)
 		list = append(list, mi)
 	}
 	return list, nil

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"nineguard/internal/db"
+	"nineguard/internal/timeutil"
 )
 
 type KeyInfo struct {
@@ -619,9 +620,7 @@ func (m *Manager) ListKeys() ([]KeyInfo, error) {
 		ki.ModelGroupIDs = ParseAllowedModels(rawGroupIDs)
 		ki.AllowedModels = ParseAllowedModels(rawModels)
 		ki.manager = m
-		if lastUsed.Valid {
-			ki.LastUsedAt = &lastUsed.String
-		}
+		ki.LastUsedAt = timeutil.NullTimeString(lastUsed)
 		list = append(list, ki)
 	}
 

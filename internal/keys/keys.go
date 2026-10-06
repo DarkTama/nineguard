@@ -177,15 +177,15 @@ func matchModelPattern(allowed, model string) bool {
 		}
 	}
 	// Provider prefix matching:
-	// 1. Key allows "gpt-4o", but request is "provider/gpt-4o"
-	if strings.Contains(model, "/") {
+	// 1. Key allows bare "gpt-4o", but request is "provider/gpt-4o"
+	if strings.Contains(model, "/") && !strings.Contains(allowed, "/") {
 		parts := strings.SplitN(model, "/", 2)
 		if strings.EqualFold(parts[1], allowed) {
 			return true
 		}
 	}
-	// 2. Key allows "provider/gpt-4o", but request is "gpt-4o"
-	if strings.Contains(allowed, "/") {
+	// 2. Key allows "provider/gpt-4o", but request is bare "gpt-4o"
+	if strings.Contains(allowed, "/") && !strings.Contains(model, "/") {
 		parts := strings.SplitN(allowed, "/", 2)
 		if strings.EqualFold(parts[1], model) {
 			return true

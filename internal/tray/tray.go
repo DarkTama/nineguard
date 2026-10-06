@@ -34,4 +34,3 @@ func HasDesktopEnvironment() bool {
 		os.Getenv("GDMSESSION") != "" ||
 		os.Getenv("WINDOWMANAGER") != ""
 }
-

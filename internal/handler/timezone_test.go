@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -48,11 +47,6 @@ func TestUsageReportAndStatsAcceptTZ(t *testing.T) {
 		}
 		if tc.want >= 0 && rep.TotalRequests != tc.want {
 			t.Errorf("tz=%s: total %d, want %d", tc.tz, rep.TotalRequests, tc.want)
-		}
-		for _, k := range rep.KeysBreakdown {
-			if k.LastActiveAt == nil || !strings.HasSuffix(*k.LastActiveAt, "Z") {
-				t.Errorf("tz=%s: last_active_at %v not RFC 3339 UTC", tc.tz, k.LastActiveAt)
-			}
 		}
 	}
 

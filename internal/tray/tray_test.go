@@ -32,4 +32,3 @@ func TestTrayOverrideNoTray(t *testing.T) {
 		t.Error("expected IsSupported to be false when NINEGUARD_NO_TRAY=1")
 	}
 }
-

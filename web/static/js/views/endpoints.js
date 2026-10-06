@@ -1,6 +1,6 @@
 // Endpoints & Agent Setup: Upstream provider configuration, NineGuard API key generation, and IDE guides.
 import { api } from '../api.js';
-import { h, icon, toast, fmtNum, fmtCompact, emptyState, formDialog, confirmDialog, searchableSelect } from '../ui.js';
+import { h, icon, toast, copy, fmtNum, fmtCompact, emptyState, formDialog, confirmDialog, searchableSelect } from '../ui.js';
 import { setRoute } from '../state.js';
 
 export function mount(root) {
@@ -28,11 +28,7 @@ export function mount(root) {
 
   // ── Copy Helper ──
   function copyText(text, label = 'Copied to clipboard!') {
-    navigator.clipboard.writeText(text).then(() => {
-      toast(label, 'ok');
-    }).catch(() => {
-      toast('Failed to copy', 'error');
-    });
+    return copy(text, label);
   }
 
   function copyField(label, val) {

@@ -561,35 +561,32 @@ func (m *Manager) GetKey(id string) (*KeyInfo, error) {
 	return &ki, nil
 }
 
-// ListKeys returns all NineGuard API keys with request and token stats
-func (m *Manager) ListKeys() ([]KeyInfo, error) {
-	query := `
-		SELECT 
-			k.id,
-			k.key,
-			k.prefix,
-			k.name,
-			k.is_active,
-			COALESCE(k.model_access_mode, 'all'),
-			COALESCE(k.model_group_ids, '[]'),
-			COALESCE(k.allowed_models, ''),
-			k.created_at,
-			k.updated_at,
-			COUNT(t.id) as total_requests,
-			COALESCE(SUM(t.total_tokens), 0) as total_tokens,
-			MAX(t.timestamp) as last_used_at
-		FROM api_keys k
-		LEFT JOIN traffic_logs t ON (t.api_key = k.key OR t.api_key_name = k.name OR t.api_key LIKE '%' || k.prefix || '%')
-		GROUP BY k.id
-		ORDER BY k.created_at DESC
-	`
-	rows, err := m.db.Query(query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+// keyStatsFrom is the FROM clause shared by ListKeys and ListKeysPage: every
+// key with its all-time traffic stats, linked by traffic_logs.api_key_id.
+const keyStatsFrom = `
+	FROM api_keys k
+	LEFT JOIN (
+		SELECT api_key_id,
+		       COUNT(*) AS total_requests,
+		       COALESCE(SUM(total_tokens), 0) AS total_tokens,
+		       MAX(timestamp) AS last_used_at
+		FROM traffic_logs
+		WHERE api_key_id IS NOT NULL
+		GROUP BY api_key_id
+	) s ON s.api_key_id = k.id`
 
-	var list []KeyInfo
+const keyStatsColumns = `
+	k.id, k.key, k.prefix, k.name, k.is_active,
+	COALESCE(k.model_access_mode, 'all'),
+	COALESCE(k.model_group_ids, '[]'),
+	COALESCE(k.allowed_models, ''),
+	k.created_at, k.updated_at,
+	COALESCE(s.total_requests, 0),
+	COALESCE(s.total_tokens, 0),
+	s.last_used_at`
+
+func (m *Manager) scanKeyRows(rows *sql.Rows) ([]KeyInfo, error) {
+	list := make([]KeyInfo, 0)
 	for rows.Next() {
 		var ki KeyInfo
 		var rawKey string
@@ -597,19 +594,10 @@ func (m *Manager) ListKeys() ([]KeyInfo, error) {
 		var mode, rawGroupIDs, rawModels string
 		var lastUsed sql.NullString
 		if err := rows.Scan(
-			&ki.ID,
-			&rawKey,
-			&ki.Prefix,
-			&ki.Name,
-			&isActiveInt,
-			&mode,
-			&rawGroupIDs,
-			&rawModels,
-			&ki.CreatedAt,
-			&ki.UpdatedAt,
-			&ki.TotalRequests,
-			&ki.TotalTokens,
-			&lastUsed,
+			&ki.ID, &rawKey, &ki.Prefix, &ki.Name, &isActiveInt,
+			&mode, &rawGroupIDs, &rawModels,
+			&ki.CreatedAt, &ki.UpdatedAt,
+			&ki.TotalRequests, &ki.TotalTokens, &lastUsed,
 		); err != nil {
 			return nil, err
 		}
@@ -623,8 +611,18 @@ func (m *Manager) ListKeys() ([]KeyInfo, error) {
 		ki.LastUsedAt = timeutil.NullTimeString(lastUsed)
 		list = append(list, ki)
 	}
+	return list, rows.Err()
+}
 
-	return list, nil
+// ListKeys returns all NineGuard API keys with all-time request and token
+// stats, newest first. Used by the legacy (unpaged) GET /api/v1/keys.
+func (m *Manager) ListKeys() ([]KeyInfo, error) {
+	rows, err := m.db.Query("SELECT " + keyStatsColumns + keyStatsFrom + " ORDER BY k.created_at DESC, k.id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return m.scanKeyRows(rows)
 }
 
 // ToggleKey activates or deactivates an API key

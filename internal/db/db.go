@@ -166,6 +166,14 @@ func (d *DB) migrate() error {
 	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_traffic_provider ON traffic_logs(provider_id)")
 	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_models_provider ON models(provider_id)")
 
+	// Traffic linked to API keys by ID (ADR 0003).
+	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN api_key_id TEXT")
+	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_traffic_key_id ON traffic_logs(api_key_id)")
+	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_traffic_key_id_ts ON traffic_logs(api_key_id, timestamp)")
+	if err := d.backfillTrafficKeyID(); err != nil {
+		return fmt.Errorf("backfill traffic_logs.api_key_id: %w", err)
+	}
+
 	// Ensure at most one default provider exists across the database
 	_, _ = d.Exec(`
 		UPDATE providers SET is_default = 0
@@ -181,4 +189,49 @@ func (d *DB) migrate() error {
 	`)
 
 	return nil
+}
+
+// BackfilledTrafficKeyIDs is the number of traffic rows linked to a key by the
+// one-time backfill during this process's InitDB (0 when the backfill already
+// ran earlier). main logs it after the system log is ready.
+var BackfilledTrafficKeyIDs int64
+
+// backfillTrafficKeyID links historical traffic rows to API keys by matching
+// key name plus the last 4 characters of the key. Rows with zero or several
+// matching keys stay NULL. Runs once, guarded by a settings row.
+func (d *DB) backfillTrafficKeyID() error {
+	BackfilledTrafficKeyIDs = 0
+	var done string
+	err := d.QueryRow("SELECT value FROM settings WHERE key = 'migration.traffic_key_id'").Scan(&done)
+	if err == nil && done == "done" {
+		return nil
+	}
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+
+	res, err := d.Exec(`
+		UPDATE traffic_logs
+		SET api_key_id = (
+			SELECT k.id FROM api_keys k
+			WHERE k.name = traffic_logs.api_key_name
+			  AND substr(k.key, -4) = substr(traffic_logs.api_key, -4)
+		)
+		WHERE api_key_id IS NULL
+		  AND (
+			SELECT COUNT(*) FROM api_keys k
+			WHERE k.name = traffic_logs.api_key_name
+			  AND substr(k.key, -4) = substr(traffic_logs.api_key, -4)
+		  ) = 1
+	`)
+	if err != nil {
+		return err
+	}
+	BackfilledTrafficKeyIDs, _ = res.RowsAffected()
+
+	_, err = d.Exec(`
+		INSERT INTO settings (key, value, updated_at) VALUES ('migration.traffic_key_id', 'done', CURRENT_TIMESTAMP)
+		ON CONFLICT(key) DO UPDATE SET value = 'done', updated_at = CURRENT_TIMESTAMP
+	`)
+	return err
 }

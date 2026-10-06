@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"nineguard/internal/db"
-	"nineguard/internal/timeutil"
 	"nineguard/internal/providers"
+	"nineguard/internal/timeutil"
 )
 
 type ModelInfo struct {

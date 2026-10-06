@@ -16,6 +16,7 @@ type LogEntry struct {
 	Timestamp        time.Time `json:"timestamp"`
 	APIKey           string    `json:"api_key"`
 	APIKeyName       string    `json:"api_key_name"`
+	APIKeyID         string    `json:"api_key_id,omitempty"`
 	ProviderID       string    `json:"provider_id,omitempty"`
 	Model            string    `json:"model"`
 	PromptTokens     int       `json:"prompt_tokens"`
@@ -45,7 +46,8 @@ type FilterParams struct {
 	Search    string // search term / query string
 	Limit     int
 	Offset    int
-	Cursor    string // id cursor for pagination
+	Cursor    string         // id cursor for pagination
+	APIKeyID  string         // exact traffic_logs.api_key_id match
 	Loc       *time.Location // viewer timezone for Period/StartDate/EndDate; nil = UTC
 }
 
@@ -56,7 +58,7 @@ type VolumeBucket struct {
 
 type VolumeResult struct {
 	From        int64            `json:"from"` // unix nano
-	To          int64            `json:"to"` // unix nano
+	To          int64            `json:"to"`   // unix nano
 	BucketNanos int64            `json:"bucket_nanos"`
 	Buckets     []VolumeBucket   `json:"buckets"`
 	Totals      map[string]int64 `json:"totals"`
@@ -71,6 +73,8 @@ type ModelStat struct {
 }
 
 type KeyStat struct {
+	KeyID    string  `json:"key_id,omitempty"` // empty for unlinked / deleted keys
+	Unlinked bool    `json:"unlinked"`
 	Name     string  `json:"name"`
 	Key      string  `json:"key"`
 	Requests int     `json:"requests"`
@@ -81,6 +85,7 @@ type KeyStat struct {
 
 type KeyUsageTrendPoint struct {
 	Time     string `json:"time"`
+	KeyID    string `json:"key_id,omitempty"`
 	KeyName  string `json:"key_name"`
 	Key      string `json:"key"`
 	Requests int    `json:"requests"`
@@ -168,6 +173,8 @@ type ModelUsageSummary struct {
 }
 
 type KeyUsageSummary struct {
+	KeyID        string  `json:"key_id,omitempty"`
+	Unlinked     bool    `json:"unlinked"`
 	KeyName      string  `json:"key_name"`
 	Key          string  `json:"key"`
 	TotalTokens  int     `json:"total_tokens"`
@@ -178,6 +185,8 @@ type KeyUsageSummary struct {
 }
 
 type KeyUsageBreakdown struct {
+	KeyID            string              `json:"key_id,omitempty"` // empty for unlinked / deleted keys
+	Unlinked         bool                `json:"unlinked"`         // true: grouped by historical key name
 	KeyName          string              `json:"key_name"`
 	Key              string              `json:"key"`
 	TotalTokens      int                 `json:"total_tokens"`
@@ -248,6 +257,24 @@ func buildDateFilter(period, startDate, endDate string, loc *time.Location) (str
 func buildPrevDateFilter(period, startDate, endDate string, loc *time.Location) (string, []interface{}) {
 	_, prev := timeutil.ResolvePeriod(period, sanitizeDate(startDate), sanitizeDate(endDate), loc, nowFunc())
 	return prev.SQL("timestamp")
+}
+
+// Key grouping (ADR 0003). Traffic rows are grouped by API key ID when the
+// key still exists; otherwise (NULL api_key_id, or the key was deleted) they
+// fall into "unlinked" groups by historical key name. The expressions require
+// traffic_logs aliased as t with keyJoin applied.
+const (
+	keyJoin      = " LEFT JOIN api_keys k ON k.id = t.api_key_id"
+	keyGroupExpr = "CASE WHEN k.id IS NOT NULL THEN 'id:' || k.id ELSE 'name:' || COALESCE(NULLIF(t.api_key_name, ''), t.api_key, '') END"
+	keyNameExpr  = "CASE WHEN k.id IS NOT NULL THEN k.name ELSE COALESCE(NULLIF(t.api_key_name, ''), t.api_key, '') END"
+)
+
+// splitKeyGroup turns a keyGroupExpr value into (key ID, unlinked).
+func splitKeyGroup(g string) (string, bool) {
+	if strings.HasPrefix(g, "id:") {
+		return strings.TrimPrefix(g, "id:"), false
+	}
+	return "", true
 }
 
 type Manager struct {
@@ -378,12 +405,14 @@ func (m *Manager) Record(entry *LogEntry) error {
 	maskedKey := maskAPIKey(entry.APIKey)
 	entry.ComputeLevelAndMessage()
 
+	keyID := sql.NullString{String: entry.APIKeyID, Valid: entry.APIKeyID != ""}
+
 	_, err := m.db.Exec(`
 		INSERT INTO traffic_logs (
-			timestamp, api_key, api_key_name, provider_id, model, prompt_tokens, completion_tokens, total_tokens,
+			timestamp, api_key, api_key_name, api_key_id, provider_id, model, prompt_tokens, completion_tokens, total_tokens,
 			duration_ms, status_code, client_ip, stream, error_message, level
-		) VALUES (CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, maskedKey, entry.APIKeyName, entry.ProviderID, entry.Model, entry.PromptTokens, entry.CompletionTokens, entry.TotalTokens,
+		) VALUES (CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, maskedKey, entry.APIKeyName, keyID, entry.ProviderID, entry.Model, entry.PromptTokens, entry.CompletionTokens, entry.TotalTokens,
 		entry.DurationMs, entry.StatusCode, entry.ClientIP, streamInt, errMsg, entry.Level)
 
 	// Ensure model is recorded in models table
@@ -439,6 +468,10 @@ func (m *Manager) QueryLogs(p FilterParams) ([]LogEntry, int, error) {
 	if p.APIKey != "" {
 		conditions = append(conditions, "(api_key = ? OR api_key_name = ? OR api_key LIKE ? OR api_key_name LIKE ?)")
 		args = append(args, p.APIKey, p.APIKey, "%"+p.APIKey+"%", "%"+p.APIKey+"%")
+	}
+	if p.APIKeyID != "" {
+		conditions = append(conditions, "api_key_id = ?")
+		args = append(args, p.APIKeyID)
 	}
 
 	if p.ClientIP != "" {
@@ -600,7 +633,7 @@ func (m *Manager) QueryLogs(p FilterParams) ([]LogEntry, int, error) {
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id, timestamp, api_key, COALESCE(api_key_name, ''), COALESCE(provider_id, ''), model, prompt_tokens, completion_tokens, total_tokens,
+		SELECT id, timestamp, api_key, COALESCE(api_key_name, ''), COALESCE(api_key_id, ''), COALESCE(provider_id, ''), model, prompt_tokens, completion_tokens, total_tokens,
 		       duration_ms, status_code, client_ip, stream, error_message, COALESCE(level, '')
 		FROM traffic_logs
 		%s
@@ -622,7 +655,7 @@ func (m *Manager) QueryLogs(p FilterParams) ([]LogEntry, int, error) {
 		var errMsg sql.NullString
 		var lvlStr string
 		if err := rows.Scan(
-			&e.ID, &e.Timestamp, &e.APIKey, &e.APIKeyName, &e.ProviderID, &e.Model,
+			&e.ID, &e.Timestamp, &e.APIKey, &e.APIKeyName, &e.APIKeyID, &e.ProviderID, &e.Model,
 			&e.PromptTokens, &e.CompletionTokens, &e.TotalTokens,
 			&e.DurationMs, &e.StatusCode, &e.ClientIP, &streamInt, &errMsg, &lvlStr,
 		); err != nil {
@@ -710,6 +743,10 @@ func (m *Manager) GetVolume(p FilterParams, buckets int) (*VolumeResult, error) 
 	if p.APIKey != "" {
 		conditions = append(conditions, "(api_key = ? OR api_key_name = ? OR api_key LIKE ? OR api_key_name LIKE ?)")
 		args = append(args, p.APIKey, p.APIKey, "%"+p.APIKey+"%", "%"+p.APIKey+"%")
+	}
+	if p.APIKeyID != "" {
+		conditions = append(conditions, "api_key_id = ?")
+		args = append(args, p.APIKeyID)
 	}
 	if p.ClientIP != "" {
 		conditions = append(conditions, "(client_ip = ? OR client_ip LIKE ?)")
@@ -921,8 +958,7 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string, loc *time
 			COALESCE(MIN(CASE WHEN duration_ms > 0 THEN duration_ms ELSE NULL END), 0),
 			COALESCE(MAX(duration_ms), 0),
 			COALESCE(SUM(CASE WHEN stream = 1 THEN 1 ELSE 0 END), 0),
-			COUNT(DISTINCT model),
-			COUNT(DISTINCT api_key)
+			COUNT(DISTINCT model)
 		FROM traffic_logs
 		WHERE %s
 	`, dateFilter)
@@ -940,11 +976,14 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string, loc *time
 		&stats.MaxDurationMs,
 		&stats.StreamRequests,
 		&stats.ActiveModels,
-		&stats.ActiveKeys,
 	)
 	if err != nil {
 		return nil, err
 	}
+
+	// Active keys: distinct key groups (key ID, or historical name when unlinked).
+	_ = m.db.QueryRow(fmt.Sprintf(`SELECT COUNT(DISTINCT %s) FROM traffic_logs t%s WHERE %s`,
+		keyGroupExpr, keyJoin, dateFilter), dateFilterArgs...).Scan(&stats.ActiveKeys)
 
 	stats.SyncRequests = stats.TotalRequests - stats.StreamRequests
 	if stats.SyncRequests < 0 {
@@ -1235,51 +1274,50 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string, loc *time
 	// Model Mix (for share bar)
 	stats.ModelMix = stats.TopModels
 
-	// Top API Keys
+	// Top API Keys, grouped by key ID (unlinked rows by historical name).
+	tSlotExpr := strings.ReplaceAll(slotExpr, "timestamp", "t.timestamp")
 	topKeysQuery := fmt.Sprintf(`
-		SELECT COALESCE(NULLIF(api_key_name, ''), api_key) as key_name, api_key, COUNT(*) as reqs, COALESCE(SUM(total_tokens), 0) as toks
-		FROM traffic_logs
+		SELECT %s AS g, %s AS key_name, MAX(t.api_key), COUNT(*) AS reqs, COALESCE(SUM(t.total_tokens), 0) AS toks
+		FROM traffic_logs t%s
 		WHERE %s
-		GROUP BY COALESCE(NULLIF(api_key_name, ''), api_key), api_key
+		GROUP BY g
 		ORDER BY toks DESC, reqs DESC
 		LIMIT 8
-	`, dateFilter)
+	`, keyGroupExpr, keyNameExpr, keyJoin, dateFilter)
+	keyIdx := make(map[string]int)
 	rowsKeys, err := m.db.Query(topKeysQuery, dateFilterArgs...)
 	if err == nil {
 		for rowsKeys.Next() {
 			var ks KeyStat
-			if err := rowsKeys.Scan(&ks.Name, &ks.Key, &ks.Requests, &ks.Tokens); err == nil {
+			var g string
+			var masked sql.NullString
+			if err := rowsKeys.Scan(&g, &ks.Name, &masked, &ks.Requests, &ks.Tokens); err == nil {
+				ks.KeyID, ks.Unlinked = splitKeyGroup(g)
+				ks.Key = masked.String
 				if stats.TotalTokens > 0 {
 					ks.Share = float64(ks.Tokens) / float64(stats.TotalTokens) * 100
 				}
 				ks.Trend = make([]int, len(timeSlots))
+				keyIdx[g] = len(stats.TopKeys)
 				stats.TopKeys = append(stats.TopKeys, ks)
 			}
 		}
 		rowsKeys.Close()
 	}
 
-	keyIdx := make(map[string]int)
-	for i, tk := range stats.TopKeys {
-		kId := tk.Name
-		if kId == "" {
-			kId = tk.Key
-		}
-		keyIdx[kId] = i
-	}
 	if len(stats.TopKeys) > 0 {
 		trendKeyQ := fmt.Sprintf(`
-			SELECT COALESCE(NULLIF(api_key_name, ''), api_key) as k_name, %s as ts, COUNT(*) 
-			FROM traffic_logs
+			SELECT %s AS g, %s AS ts, COUNT(*)
+			FROM traffic_logs t%s
 			WHERE %s
-			GROUP BY k_name, ts
-		`, slotExpr, dateFilter)
+			GROUP BY g, ts
+		`, keyGroupExpr, tSlotExpr, keyJoin, dateFilter)
 		if rTr, errTr := m.db.Query(trendKeyQ, dateFilterArgs...); errTr == nil {
 			for rTr.Next() {
-				var kn, ts string
+				var g, ts string
 				var cnt int
-				if err := rTr.Scan(&kn, &ts, &cnt); err == nil {
-					if kIdx, ok := keyIdx[kn]; ok {
+				if err := rTr.Scan(&g, &ts, &cnt); err == nil {
+					if kIdx, ok := keyIdx[g]; ok {
 						if tIdx, ok2 := slotIdx[ts]; ok2 {
 							stats.TopKeys[kIdx].Trend[tIdx] = cnt
 						}
@@ -1352,24 +1390,29 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string, loc *time
 
 	// Query API Key usage breakdown over date/time slots
 	keySeriesQuery := fmt.Sprintf(`
-		SELECT 
-			%s as time_slot,
-			COALESCE(NULLIF(api_key_name, ''), api_key) as key_name,
-			api_key,
-			COUNT(*) as reqs,
-			COALESCE(SUM(total_tokens), 0) as toks
-		FROM traffic_logs
+		SELECT
+			%s AS time_slot,
+			%s AS g,
+			%s AS key_name,
+			MAX(t.api_key),
+			COUNT(*) AS reqs,
+			COALESCE(SUM(t.total_tokens), 0) AS toks
+		FROM traffic_logs t%s
 		WHERE %s
-		GROUP BY %s, COALESCE(NULLIF(api_key_name, ''), api_key), api_key
-		ORDER BY timestamp ASC
-	`, slotExpr, dateFilter, groupFmt)
+		GROUP BY time_slot, g
+		ORDER BY time_slot ASC
+	`, tSlotExpr, keyGroupExpr, keyNameExpr, keyJoin, dateFilter)
 
 	rowsKeySeries, err := m.db.Query(keySeriesQuery, dateFilterArgs...)
 	if err == nil {
 		defer rowsKeySeries.Close()
 		for rowsKeySeries.Next() {
 			var kp KeyUsageTrendPoint
-			if err := rowsKeySeries.Scan(&kp.Time, &kp.KeyName, &kp.Key, &kp.Requests, &kp.Tokens); err == nil {
+			var g string
+			var masked sql.NullString
+			if err := rowsKeySeries.Scan(&kp.Time, &g, &kp.KeyName, &masked, &kp.Requests, &kp.Tokens); err == nil {
+				kp.KeyID, _ = splitKeyGroup(g)
+				kp.Key = masked.String
 				stats.KeyUsageTrends = append(stats.KeyUsageTrends, kp)
 			}
 		}
@@ -1410,44 +1453,47 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 		&report.CompletionTokens,
 	)
 
-	// 2. Query Key-Model Cross Breakdown
+	// 2. Query Key-Model Cross Breakdown, grouped by key ID (unlinked rows by historical name).
 	keyModelMap := make(map[string][]ModelUsageSummary)
 	modelKeyMap := make(map[string][]KeyUsageSummary)
 
 	crossQuery := fmt.Sprintf(`
-		SELECT 
-			COALESCE(NULLIF(api_key_name, ''), api_key) as key_name,
-			api_key,
-			model,
-			COALESCE(SUM(total_tokens), 0) as tot_toks,
-			COALESCE(SUM(prompt_tokens), 0) as p_toks,
-			COALESCE(SUM(completion_tokens), 0) as c_toks,
-			COUNT(*) as reqs
-		FROM traffic_logs
+		SELECT
+			%s AS g,
+			%s AS key_name,
+			MAX(t.api_key),
+			t.model,
+			COALESCE(SUM(t.total_tokens), 0) AS tot_toks,
+			COALESCE(SUM(t.prompt_tokens), 0) AS p_toks,
+			COALESCE(SUM(t.completion_tokens), 0) AS c_toks,
+			COUNT(*) AS reqs
+		FROM traffic_logs t%s
 		WHERE %s
-		GROUP BY COALESCE(NULLIF(api_key_name, ''), api_key), api_key, model
+		GROUP BY g, t.model
 		ORDER BY tot_toks DESC
-	`, dateFilter)
+	`, keyGroupExpr, keyNameExpr, keyJoin, dateFilter)
 
 	crossRows, err := m.db.Query(crossQuery, dateFilterArgs...)
 	if err == nil {
 		defer crossRows.Close()
 		for crossRows.Next() {
-			var kn, k, mod string
+			var g, kn, mod string
+			var masked sql.NullString
 			var tot, pt, ct, reqs int
-			if err := crossRows.Scan(&kn, &k, &mod, &tot, &pt, &ct, &reqs); err == nil {
-				kId := kn + "||" + k
-				keyModelMap[kId] = append(keyModelMap[kId], ModelUsageSummary{
+			if err := crossRows.Scan(&g, &kn, &masked, &mod, &tot, &pt, &ct, &reqs); err == nil {
+				keyID, unlinked := splitKeyGroup(g)
+				keyModelMap[g] = append(keyModelMap[g], ModelUsageSummary{
 					Model:        mod,
 					TotalTokens:  tot,
 					PromptTokens: pt,
 					CompTokens:   ct,
 					Requests:     reqs,
 				})
-
 				modelKeyMap[mod] = append(modelKeyMap[mod], KeyUsageSummary{
+					KeyID:        keyID,
+					Unlinked:     unlinked,
 					KeyName:      kn,
-					Key:          k,
+					Key:          masked.String,
 					TotalTokens:  tot,
 					PromptTokens: pt,
 					CompTokens:   ct,
@@ -1458,44 +1504,48 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 	}
 
 	// 3. Last Active per key and per model: all-time, any status (not period-bound).
-	keyLastActive := m.lastActiveBy(`COALESCE(NULLIF(api_key_name, ''), api_key) || '||' || api_key`)
-	modelLastActive := m.lastActiveBy("model")
+	keyLastActive := m.lastActiveBy(keyGroupExpr, keyJoin)
+	modelLastActive := m.lastActiveBy("t.model", "")
 
 	// 4. Query Grouping per API Key
 	keysQuery := fmt.Sprintf(`
-		SELECT 
-			COALESCE(NULLIF(api_key_name, ''), api_key) as key_name,
-			api_key,
-			COALESCE(SUM(total_tokens), 0) as tot_toks,
-			COALESCE(SUM(prompt_tokens), 0) as p_toks,
-			COALESCE(SUM(completion_tokens), 0) as c_toks,
-			COUNT(*) as tot_reqs,
-			COALESCE(SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END), 0) as ok_reqs,
-			COALESCE(SUM(CASE WHEN status_code >= 400 AND status_code != 403 THEN 1 ELSE 0 END), 0) as err_reqs,
-			COALESCE(SUM(CASE WHEN status_code = 403 THEN 1 ELSE 0 END), 0) as blk_reqs,
-			COALESCE(ROUND(AVG(duration_ms)), 0) as avg_dur
-		FROM traffic_logs
+		SELECT
+			%s AS g,
+			%s AS key_name,
+			MAX(t.api_key),
+			COALESCE(SUM(t.total_tokens), 0) AS tot_toks,
+			COALESCE(SUM(t.prompt_tokens), 0) AS p_toks,
+			COALESCE(SUM(t.completion_tokens), 0) AS c_toks,
+			COUNT(*) AS tot_reqs,
+			COALESCE(SUM(CASE WHEN t.status_code >= 200 AND t.status_code < 400 THEN 1 ELSE 0 END), 0) AS ok_reqs,
+			COALESCE(SUM(CASE WHEN t.status_code >= 400 AND t.status_code != 403 THEN 1 ELSE 0 END), 0) AS err_reqs,
+			COALESCE(SUM(CASE WHEN t.status_code = 403 THEN 1 ELSE 0 END), 0) AS blk_reqs,
+			COALESCE(ROUND(AVG(t.duration_ms)), 0) AS avg_dur
+		FROM traffic_logs t%s
 		WHERE %s
-		GROUP BY COALESCE(NULLIF(api_key_name, ''), api_key), api_key
+		GROUP BY g
 		ORDER BY tot_toks DESC, tot_reqs DESC
-	`, dateFilter)
+	`, keyGroupExpr, keyNameExpr, keyJoin, dateFilter)
 
 	kRows, err := m.db.Query(keysQuery, dateFilterArgs...)
 	if err == nil {
 		defer kRows.Close()
 		for kRows.Next() {
 			var kb KeyUsageBreakdown
+			var g string
+			var masked sql.NullString
 			if err := kRows.Scan(
-				&kb.KeyName, &kb.Key, &kb.TotalTokens, &kb.PromptTokens, &kb.CompletionTokens,
+				&g, &kb.KeyName, &masked, &kb.TotalTokens, &kb.PromptTokens, &kb.CompletionTokens,
 				&kb.TotalRequests, &kb.SuccessRequests, &kb.ErrorRequests, &kb.BlockedRequests,
 				&kb.AvgDurationMs,
 			); err == nil {
+				kb.KeyID, kb.Unlinked = splitKeyGroup(g)
+				kb.Key = masked.String
 				if report.TotalTokens > 0 {
 					kb.TokenShare = float64(kb.TotalTokens) / float64(report.TotalTokens) * 100
 				}
-				kId := kb.KeyName + "||" + kb.Key
-				kb.LastActiveAt = keyLastActive[kId]
-				modelsUsed := keyModelMap[kId]
+				kb.LastActiveAt = keyLastActive[g]
+				modelsUsed := keyModelMap[g]
 				for i := range modelsUsed {
 					if kb.TotalTokens > 0 {
 						modelsUsed[i].Share = float64(modelsUsed[i].TotalTokens) / float64(kb.TotalTokens) * 100
@@ -1566,12 +1616,13 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 }
 
 // lastActiveBy returns MAX(timestamp) over all traffic (no period filter, all
-// status codes) grouped by the given SQL expression, normalized to RFC 3339 UTC.
-// groupExpr must be a trusted constant expression, never user input.
-func (m *Manager) lastActiveBy(groupExpr string) map[string]*string {
+// status codes) grouped by groupExpr, normalized to RFC 3339 UTC. traffic_logs
+// is aliased t and join is appended after it. Both arguments must be trusted
+// constants, never user input.
+func (m *Manager) lastActiveBy(groupExpr, join string) map[string]*string {
 	out := make(map[string]*string)
 	rows, err := m.db.Query(fmt.Sprintf(
-		"SELECT %s AS g, MAX(timestamp) FROM traffic_logs GROUP BY g", groupExpr))
+		"SELECT %s AS g, MAX(t.timestamp) FROM traffic_logs t%s GROUP BY g", groupExpr, join))
 	if err != nil {
 		return out
 	}

@@ -49,7 +49,7 @@ type VolumeBucket struct {
 
 type VolumeResult struct {
 	From        int64            `json:"from"` // unix nano
-	To          int64            `json:"to"` // unix nano
+	To          int64            `json:"to"`   // unix nano
 	BucketNanos int64            `json:"bucket_nanos"`
 	Buckets     []VolumeBucket   `json:"buckets"`
 	Totals      map[string]int64 `json:"totals"`

@@ -174,6 +174,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = p.traffic.Record(&traffic.LogEntry{
 			APIKey:       maskedKey,
 			APIKeyName:   keyName,
+			APIKeyID:     keyInfo.ID,
 			Model:        modelName,
 			DurationMs:   int(time.Since(start).Milliseconds()),
 			StatusCode:   http.StatusForbidden,
@@ -204,6 +205,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = p.traffic.Record(&traffic.LogEntry{
 			APIKey:       maskedKey,
 			APIKeyName:   keyName,
+			APIKeyID:     keyInfo.ID,
 			Model:        modelName,
 			DurationMs:   int(time.Since(start).Milliseconds()),
 			StatusCode:   http.StatusForbidden,
@@ -301,6 +303,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = p.traffic.Record(&traffic.LogEntry{
 			APIKey:       maskedKey,
 			APIKeyName:   keyName,
+			APIKeyID:     keyInfo.ID,
 			ProviderID:   provider.ID,
 			Model:        modelName,
 			DurationMs:   int(time.Since(start).Milliseconds()),
@@ -390,6 +393,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = p.traffic.Record(&traffic.LogEntry{
 			APIKey:           maskedKey,
 			APIKeyName:       keyName,
+			APIKeyID:         keyInfo.ID,
 			ProviderID:       provider.ID,
 			Model:            modelName,
 			PromptTokens:     promptTokens,

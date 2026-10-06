@@ -18,4 +18,3 @@ func Run(opts Options) {
 
 // Quit is a no-op fallback.
 func Quit() {}
-

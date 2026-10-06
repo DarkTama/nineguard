@@ -45,6 +45,21 @@ A plugin a client may switch off for one request. Plugins that protect (fail-clo
 **Rejection**
 A plugin's decision to block a request outright instead of transforming it.
 
+**Token Saver**
+A plugin whose purpose is reducing tokens: any plugin in the `input_compression` or `output_style` category.
+
+**Plugin Category**
+Which side of the exchange a plugin reduces. *Input compression* shrinks what is sent to the model (Headroom). *Output style* instructs the model to answer more briefly (Caveman, Ponytail). *Other* covers everything else.
+
+**Overlap Warning**
+An advisory notice that token savers stack for some API Key and model: two output-style plugins together, or a token saver on a provider marked as doing its own token saving. Never blocks a request.
+
+**Upstream Token Saving**
+A flag on a Provider declaring that the provider already applies token saving itself (e.g. 9router RTK, another NineGuard). Declared by the user because NineGuard cannot detect it.
+
+**Overcompression**
+Loss of answer quality caused by stacking token savers: needed context removed, or style rules piled up until answers become too terse.
+
 ## Reporting
 
 **Last Active**

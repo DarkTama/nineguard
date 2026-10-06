@@ -2,6 +2,7 @@
 
 - Date: 2026-10-06
 - Status: Draft, awaiting review
+- Revision 1 (2026-10-06): plugin categories, overlap warnings, upstream token-saving flag on providers, idempotency (prompt marker + applied header), built-in guidance text, worked example (§4.8, §4.9, §5.5, §9.1).
 - Related: `GLOSSARY.md`, `docs/adr/0001-http-plugins.md`, `docs/adr/0002-model-group-dual-role.md`
 
 ## 1. Goal
@@ -20,6 +21,9 @@ Unlike 9router, where token savers are global, NineGuard scopes plugins so diffe
 - **Plugin Bindings** at Global, Model Group, and API Key scope with precedence.
 - Global **Plugin Pipeline** order.
 - Failure policy, rejection, per-request bypass header.
+- **Plugin Categories** and **Overlap Warnings** (warn, never block) for stacked token savers.
+- **Upstream Token Saving** flag on providers.
+- Idempotency: built-ins never apply twice when the request already went through another NineGuard.
 - Telemetry: plugins applied, tokens saved, plugin overhead, plugin errors, plugin latency.
 - Dashboard UI and REST API for all of the above.
 - RBAC and audit logging.
@@ -32,6 +36,9 @@ Unlike 9router, where token savers are global, NineGuard scopes plugins so diffe
 - Automatic `X-9Router-Token-Saver: off` injection. Users disable 9router's RTK manually.
 - Encryption of stored secrets (tracked separately, see §13).
 - Token estimation via tokenizer.
+- Automatic detection of token saving performed by upstream providers (not observable; users declare it via the provider flag).
+- Hard mutual exclusion between plugins. Overlaps produce warnings only.
+- Detecting client-side prompts (e.g. a Caveman skill installed in the agent) that carry no NineGuard marker.
 
 ## 3. Request Flow
 
@@ -45,8 +52,10 @@ Current flow in `internal/proxy/proxy.go`, with the new step inserted:
 6. **NEW — Plugin Pipeline** (only for `POST /v1/chat/completions`):
    1. Resolve effective plugin set for (API Key, model).
    2. Drop bypassable plugins if `X-NineGuard-Plugins: off` is present.
-   3. Run plugins in global pipeline order on the request body.
-   4. On rejection → 403 `plugin_rejected`. On fail-closed error → 503 `plugin_unavailable`. On fail-open error → continue with the body from before that plugin.
+   3. Drop bypassable built-ins already listed in an incoming `X-NineGuard-Plugins-Applied` header (§4.9).
+   4. Run plugins in global pipeline order on the request body. Caveman/Ponytail additionally skip themselves when their marker is already present (§4.9).
+   5. Set `X-NineGuard-Plugins-Applied` on the upstream request (§4.9).
+   6. On rejection → 403 `plugin_rejected`. On fail-closed error → 503 `plugin_unavailable`. On fail-open error → continue with the body from before that plugin.
 7. Rewrite model ID (strip prefix) and forward upstream.
 8. Stream/relay response, record traffic (now including plugin telemetry).
 
@@ -91,6 +100,7 @@ Each registered plugin (built-in or HTTP) has:
 |---|---|
 | `id` | Stable ID. Built-ins: `caveman`, `ponytail`, `headroom`. HTTP: generated. |
 | `kind` | `builtin` or `http` |
+| `category` | `input_compression`, `output_style`, or `other` (§4.8). Built-ins fixed; HTTP plugins choose on registration, default `other`. |
 | `name`, `description` | Display |
 | `url` | HTTP only (also used by Headroom connector) |
 | `secret` | HTTP only, generated on registration |
@@ -118,7 +128,8 @@ Each registered plugin (built-in or HTTP) has:
 
 - New `system` message **prepended at index 0**. Client's own system message is untouched.
 - Text is deterministic for a given settings combination so the provider prefix cache stays stable.
-- When both Caveman and Ponytail apply, each prepends in pipeline order; final order is deterministic.
+- When both Caveman and Ponytail apply, each prepends in pipeline order; final order is deterministic. This combination is allowed but triggers the `output_style_overlap` warning (§4.8).
+- Each injected message starts with a marker line (§4.9). The marker is part of the deterministic text, so prefix caching is unaffected.
 
 ### 4.6 Built-in: Headroom connector
 
@@ -172,6 +183,56 @@ Responses accepted:
 
 The plugin must not change `model`. If it does, NineGuard restores the original value and logs a warning.
 
+### 4.8 Plugin Categories and guidance
+
+Every plugin has a **category** describing which part of the exchange it reduces:
+
+| Category | Acts on | Built-ins | Risk when stacked |
+|---|---|---|---|
+| `input_compression` | Conversation history / tool output sent to the model | Headroom | Context the model needed is removed; the model becomes forgetful, re-asks, or makes mistakes. |
+| `output_style` | How the model writes its answer (instruction prompt) | Caveman, Ponytail | Overlapping or conflicting style rules; answers become too terse and reasoning quality drops. |
+| `other` | Anything else (PII filters, policy checks, …) | — | No overlap warnings. |
+
+`input_compression` + `output_style` together is **not** an overlap (they act on different sides) and produces no warning.
+
+Built-ins ship fixed guidance text (Go constants, not stored in DB), returned by `GET /api/v1/plugins` as `guidance`:
+
+| Plugin | `summary` | `recommended_for` | `not_recommended_for` |
+|---|---|---|---|
+| Headroom | Compresses older messages and tool outputs before they are sent. Reduces input tokens; does not change answer style. | Long agent sessions, large tool outputs, expensive models. | Short chats (little to compress); providers that already compress input. |
+| Caveman | Instructs the model to answer tersely, dropping filler. Reduces output tokens. | Coding agents, CLI tools. | Roleplay, creative writing, teaching/explanations; combining with Ponytail. |
+| Ponytail | Instructs the model to answer compactly at a chosen level (lite/full/ultra). Reduces output tokens. | Coding agents wanting a milder style than Caveman (`lite`). | Roleplay, creative writing; combining with Caveman. |
+
+HTTP plugins may supply `summary` at registration (optional free text); `recommended_for` / `not_recommended_for` are empty for them.
+
+#### Overlap Warnings
+
+Warnings are computed server-side for a resolved (API Key, model) pair. They never block a request or a save.
+
+| Code | Condition | Message (template) |
+|---|---|---|
+| `output_style_overlap` | ≥ 2 effective plugins with category `output_style` | "{A} and {B} both change answer style. Stacking them can make answers too terse and lower quality. Enable only one." |
+| `upstream_token_saving` | ≥ 1 effective plugin with category `input_compression` or `output_style`, and the request's provider has `upstream_token_saving = 1` | "Provider {P} is marked as already applying token saving ({note}). {plugins} may compress twice and remove context the model needs." |
+
+The Go function is pure: `Warnings(effective []ResolvedPlugin, provider ProviderInfo) []Warning`, with `Warning{Code, Plugins []string, Provider string, Message string}`.
+
+### 4.9 Idempotency
+
+Prevents a built-in from applying twice when requests pass through several NineGuard instances (e.g. a provider that is itself a NineGuard).
+
+**Prompt marker (Caveman, Ponytail).**
+- The injected system message's first line is exactly `[nineguard:caveman]` or `[nineguard:ponytail]`.
+- Before injecting, the plugin scans every message with role `system` or `developer` (string content, or text parts of array content). If its own marker is present, it returns the request unchanged with `Skipped = true` (reason `marker_present`), overhead 0.
+- Detects only NineGuard-injected prompts. Client-side prompts without the marker are not detected (out of scope).
+
+**Applied header (all built-ins).**
+- After the pipeline, NineGuard sets `X-NineGuard-Plugins-Applied` on the upstream request: comma-separated, sorted, de-duplicated union of the incoming header value (built-in IDs only) and the built-in IDs that ran successfully in this instance. Omitted when empty.
+- On an incoming request carrying the header, a built-in listed in it is skipped (reason `already_applied`) **only if that plugin is bypassable**. Non-bypassable plugins always run, since any client can send this header.
+- Only built-in IDs (`headroom`, `caveman`, `ponytail`) are read from or written to the header. HTTP plugin IDs are instance-local and ignored.
+- The incoming header is not forwarded as-is; the recomputed union replaces it.
+
+`Result` gains `Skipped bool` and `SkipReason string`. Skipped plugins are recorded in telemetry (§10) but not in `plugins_applied`.
+
 ## 5. Bindings and Resolution
 
 ### 5.1 Binding record
@@ -205,6 +266,41 @@ Settings merge order: plugin `default_settings` ← global ← group ← key.
 ### 5.4 Caching
 
 Plugins, bindings, and group membership are loaded into memory (same pattern as `keys.Manager.ReloadGroupCache`) and reloaded on any write. Resolution must not touch the database per request.
+
+### 5.5 Worked example (reference scenario, also a test fixture)
+
+Providers: `9r/` (9router, `upstream_token_saving = 0` after RTK is turned off) and `office/` (another NineGuard).
+
+| Group | Models | Linked keys | Role |
+|---|---|---|---|
+| Coding | `office/claude-sonnet-4`, `office/gpt-5`, `9r/claude-opus-4`, `9r/qwen3-coder` | pi-dev | access |
+| Roleplay | `9r/claude-opus-4`, `9r/deepseek-v3` | marinara | access |
+| Demanding | `office/claude-sonnet-4`, `9r/claude-opus-4` | none | plugins only |
+
+| Plugin | Global | Coding | Roleplay | Demanding | Key pi-dev | Key marinara |
+|---|---|---|---|---|---|---|
+| Headroom | off | inherit | inherit | on | inherit | inherit |
+| Caveman | off | inherit | inherit | inherit | on | inherit |
+| Ponytail | off | inherit | inherit | inherit | inherit | inherit |
+
+Expected effective sets:
+
+| Key → Model | Runs |
+|---|---|
+| pi-dev → `office/claude-sonnet-4` | Headroom, Caveman |
+| pi-dev → `9r/claude-opus-4` | Headroom, Caveman |
+| pi-dev → `office/gpt-5` | Caveman |
+| pi-dev → `9r/qwen3-coder` | Caveman |
+| marinara → `9r/claude-opus-4` | Headroom |
+| marinara → `9r/deepseek-v3` | none |
+| marinara → `office/gpt-5` | 403 `model_not_allowed` before plugins |
+
+Variations used as tests:
+- Key marinara Headroom = `off` → marinara → `9r/claude-opus-4` runs nothing (key overrides group).
+- Key pi-dev Ponytail = `on` → `output_style_overlap` warning for every pi-dev pair.
+- Provider `office` flagged `upstream_token_saving = 1` → `upstream_token_saving` warning for pi-dev → `office/*` pairs; no warning for marinara → `9r/deepseek-v3` (nothing runs).
+
+Guidance for users (README + UI help): bind behaviour that belongs to an **agent** on the API Key; bind behaviour that belongs to a **model** on a plugin-only Model Group linked to no key; leave access-control groups at `inherit`.
 
 ## 6. Pipeline Execution
 
@@ -271,10 +367,15 @@ CREATE TABLE IF NOT EXISTS plugin_bindings (
 );
 ```
 
+`plugins` also has `category TEXT NOT NULL DEFAULT 'other'` and `summary TEXT DEFAULT ''` (HTTP plugins only; built-ins use Go constants).
+
 Column additions (via existing `ALTER TABLE ... ADD COLUMN` migration style in `internal/db/db.go`):
 
 ```sql
 ALTER TABLE model_groups ADD COLUMN priority INTEGER DEFAULT 0;
+ALTER TABLE providers ADD COLUMN upstream_token_saving INTEGER DEFAULT 0;
+ALTER TABLE providers ADD COLUMN upstream_token_saving_note TEXT DEFAULT '';
+ALTER TABLE traffic_logs ADD COLUMN plugins_skipped TEXT DEFAULT '';   -- comma-separated id:reason
 ALTER TABLE traffic_logs ADD COLUMN plugins_applied TEXT DEFAULT '';   -- comma-separated IDs
 ALTER TABLE traffic_logs ADD COLUMN tokens_saved INTEGER DEFAULT 0;
 ALTER TABLE traffic_logs ADD COLUMN tokens_overhead INTEGER DEFAULT 0;
@@ -282,7 +383,7 @@ ALTER TABLE traffic_logs ADD COLUMN plugin_errors TEXT DEFAULT '';     -- comma-
 ALTER TABLE traffic_logs ADD COLUMN plugin_ms INTEGER DEFAULT 0;
 ```
 
-Seed on startup (idempotent): insert built-ins `headroom` (order 10), `ponytail` (order 20), `caveman` (order 30) and their Global bindings with state `off`.
+Seed on startup (idempotent): insert built-ins `headroom` (order 10, `input_compression`), `ponytail` (order 20, `output_style`), `caveman` (order 30, `output_style`) and their Global bindings with state `off`. Seeding also corrects `category` on existing built-in rows.
 
 Cascade rules:
 - Deleting an API Key deletes its bindings.
@@ -296,7 +397,7 @@ All under existing session auth.
 | Method | Path | Role | Purpose |
 |---|---|---|---|
 | GET | `/api/v1/plugins` | any | List plugins (secret masked) with global binding |
-| POST | `/api/v1/plugins` | admin | Register HTTP plugin; returns secret once |
+| POST | `/api/v1/plugins` | admin | Register HTTP plugin (incl. optional `category`, `summary`); returns secret once |
 | PUT | `/api/v1/plugins/{id}` | admin for `url`/`secret`/`failure_policy`; operator for the rest | Update plugin |
 | POST | `/api/v1/plugins/{id}/rotate-secret` | admin | New secret, returned once |
 | DELETE | `/api/v1/plugins/{id}` | admin | Delete HTTP plugin (built-ins rejected) |
@@ -304,10 +405,15 @@ All under existing session auth.
 | PUT | `/api/v1/plugins/order` | any | Body: ordered list of IDs |
 | GET | `/api/v1/plugins/{id}/bindings` | any | All bindings for plugin |
 | PUT | `/api/v1/plugins/{id}/bindings` | any | Upsert one binding `{scope_type, scope_id, state, settings}` |
-| GET | `/api/v1/plugins/resolve?key_id=&model=` | any | Preview effective plugins and settings for a key + model |
+| GET | `/api/v1/plugins/resolve?key_id=&model=` | any | Preview effective plugins and settings for a key + model, plus `warnings` |
+| GET | `/api/v1/plugins/warnings` | any | All current Overlap Warnings across scopes (see §9.1) |
 | POST | `/api/v1/plugins/{id}/reset-prompt` | any | Clear `prompt_override` (Caveman/Ponytail) |
 
 `PUT /api/v1/model-groups/{id}` accepts optional `priority`.
+
+`PUT /api/v1/providers/{id}` and `POST /api/v1/providers` accept optional `upstream_token_saving` (bool) and `upstream_token_saving_note` (string, max 200 chars); provider list returns both.
+
+`PUT /api/v1/plugins/{id}/bindings` responds with the saved binding plus `warnings`: the Overlap Warnings this scope now produces (same shape as §9.1 entries, filtered to the scope).
 
 Admin checks follow the existing pattern `user.Role != "admin"` in `internal/handler/handler.go`. Every write emits an audit log entry (`plugin.create`, `plugin.update`, `plugin.delete`, `plugin.rotate_secret`, `plugin.binding.update`, `plugin.order.update`).
 
@@ -323,15 +429,31 @@ New page **Gateway → Plugins** (`web/static/js/views/plugins.js`):
   - Bindings table: Global row, one row per Model Group, one row per API Key, each with `on/off/inherit` and settings override.
   - Conflict warning for equal-priority groups.
 - "Register HTTP Plugin" modal (admin only): name, URL, timeout, failure policy, bypassable. Shows generated secret once with Copy button.
-- **Resolve preview**: pick API Key + model → shows which plugins run and with what settings.
+- **Resolve preview**: pick API Key + model → shows which plugins run and with what settings, plus warning badges.
+- Each built-in card shows its guidance (§4.8): summary, "Recommended for", "Not recommended for".
 
 Changes to existing pages:
 
 - **Model Groups**: priority field.
+- **Providers**: checkbox "Upstream already applies token saving" with note field and help text: "Tick this if the provider does its own token saving (for example 9router RTK or another NineGuard with plugins on). NineGuard will warn when its own token savers stack on top." Badge on flagged providers in the list.
 - **Endpoints & Keys**: per-key "Plugins" section linking to bindings.
 - **Traffic Explorer**: columns for plugins applied, tokens saved, overhead, plugin errors, plugin ms.
 - **Dashboard**: "Tokens Saved" KPI card.
 - **Usage Reports**: tokens saved per key and per plugin.
+
+### 9.1 Warnings in the UI
+
+All warnings are advisory. Three surfaces:
+
+1. **Confirm on enable.** Switching a binding of an `input_compression` or `output_style` plugin to `on` (from `off`/`inherit`) opens a dialog with the plugin's guidance and a checklist: "Check that your upstream providers do not already apply token saving (e.g. 9router RTK, another NineGuard). Stacked token savers can remove context and lower answer quality." Buttons: Cancel / Enable. Checkbox "Don't show again for this plugin" stored in `localStorage` (`ng.plugins.ack.{plugin_id}`).
+2. **After save.** Warnings returned by the binding upsert are shown as a toast plus inline list under the bindings table.
+3. **Persistent indicators.** The Plugins page calls `GET /api/v1/plugins/warnings`; a summary banner ("N warnings") and a ⚠️ icon on affected binding rows link to details.
+
+`GET /api/v1/plugins/warnings` evaluation (in memory, no per-request cost):
+- Iterate active API Keys × enabled models in the `models` table that the key may access (same ACL as the proxy).
+- Resolve each pair, compute `Warnings`, and group by (key, code, plugin set, provider).
+- Response entries: `{code, message, plugins[], provider, key_id, key_name, model_count, models_sample[≤5]}`.
+- Hard cap of 50,000 evaluated pairs; beyond that, return `truncated: true`.
 
 ## 10. Telemetry
 
@@ -339,6 +461,7 @@ Changes to existing pages:
 - `tokens_overhead`: sum of plugin-reported overhead; for Caveman/Ponytail this is a character-based estimate labelled "(est.)".
 - `plugin_ms`: wall time of the whole pipeline.
 - `plugin_errors`: IDs of plugins that failed (fail-open or fail-closed).
+- `plugins_skipped`: `id:reason` entries for idempotency skips (`marker_present`, `already_applied`). Shown in Traffic Explorer detail.
 - System log entries (`source=plugin`) for every plugin error with plugin ID, key name, model, and error.
 
 ## 11. Security
@@ -349,6 +472,7 @@ Changes to existing pages:
 - Plugin URL must be `http` or `https`. No other validation in v1 (admin trust boundary). Loopback and private addresses are allowed because Headroom and local plugins live there.
 - Client IP never sent to plugins.
 - `X-NineGuard-Plugins` header never forwarded upstream.
+- `X-NineGuard-Plugins-Applied` can be forged by any client, so it only skips bypassable plugins (§4.9). It reveals which built-ins ran to the upstream provider; acceptable since upstreams are admin-configured.
 - Fail-closed plugins cannot be bypassable (enforced server-side).
 
 ## 12. Deployment Notes
@@ -357,7 +481,8 @@ For the current VM (NineGuard with `--network host`, Headroom in Docker with pub
 
 - Headroom sees NineGuard's call as non-loopback (Docker bridge) and returns 404. Set `HEADROOM_COMPRESS_ALLOW_REMOTE=1` on the Headroom container.
 - Close 8787, 8317, and 20128 in the cloud Security Group. Docker-published ports bypass ufw.
-- Turn off RTK in 9router dashboard to avoid double compression.
+- Turn off RTK in 9router dashboard to avoid double compression. If RTK must stay on, tick "Upstream already applies token saving" on the 9router provider so NineGuard warns.
+- A provider that is another NineGuard: built-ins applied here are skipped there automatically (§4.9) as long as they are bypassable on the downstream instance; tick the provider flag if that instance runs other token savers.
 - On a 2 vCPU / 2 GB VM, Headroom adds roughly 1–3 s per request. Plugin latency is visible in Traffic Explorer.
 
 These notes go into the README plugin section.
@@ -376,6 +501,9 @@ These notes go into the README plugin section.
 - **Unit**
   - Resolution: global/group/key precedence, `inherit`, group priority, tie-break, pattern matching parity with access control.
   - Settings merge.
+  - Worked example §5.5 and its variations as a table-driven test.
+  - `Warnings`: output-style overlap, upstream flag, input+output combination produces none, `other` category ignored.
+  - Idempotency: marker skip in string and array content, `developer` role; applied header parse/union/sort; header ignored for non-bypassable plugins; HTTP IDs never emitted.
   - Pipeline: ordering, fail-open skip, fail-closed 503, reject 403, bypass header respects `bypassable`, model field restored if plugin changes it.
   - Caveman/Ponytail injection: prepend position, deterministic output, client system message untouched.
   - Headroom adapter: `frozen_message_count` calculation, `system`/`tools` preservation, `compression_skipped` handling (with `httptest` server).
@@ -384,10 +512,13 @@ These notes go into the README plugin section.
   - End-to-end chat request through plugins to a fake upstream; verify forwarded body and traffic log columns.
   - Non-chat endpoints bypass plugins.
   - `X-NineGuard-Plugins` stripped before upstream.
+  - `X-NineGuard-Plugins-Applied` set on upstream request; two chained proxies apply Caveman once.
 - **Handler**
   - RBAC: operator cannot register/delete HTTP plugins or change URL/secret/failure policy.
   - Audit entries written.
   - Built-in deletion rejected.
+  - Binding upsert returns scope warnings; `/plugins/warnings` grouping and truncation.
+  - Provider `upstream_token_saving` round-trip.
 - **Migration**
   - Fresh DB and existing DB both end with seeded built-ins, all global `off`.
 - Build checks: `go test ./...` and `CGO_ENABLED=0 go test -tags server ./...`.

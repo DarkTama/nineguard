@@ -423,7 +423,7 @@ export function mount(root) {
     const headerEl = renderListHeader('keys');
 
     const cards = sortedList.map((k) => {
-      const cardId = k.key_name + '||' + k.key;
+      const cardId = k.key_id ? `id:${k.key_id}` : `name:${k.key_name}`;
       const isExpanded = expandedKeys.has(cardId);
 
       const chevron = icon(isExpanded ? 'chevron-down' : 'chevron-right');
@@ -455,6 +455,7 @@ export function mount(root) {
             h('span', { class: 'badge', style: { background: 'var(--hover)', fontWeight: 'bold', fontSize: '12.5px', padding: '4px 8px' } },
               icon('key'), ' ', k.key_name
             ),
+            k.unlinked ? h('span', { class: 'badge muted', style: { fontSize: '10.5px' }, title: 'Traffic from a deleted key, or recorded before keys were linked by ID. Grouped by the key name at the time of the request.' }, 'unlinked') : null,
             h('code', { class: 'muted', style: { fontSize: '12px' } }, k.key)
           ),
 
@@ -575,7 +576,12 @@ export function mount(root) {
       return itemCard;
     });
 
-    return h('div', null, legendEl, headerEl, ...cards);
+    // Linked keys first; traffic from deleted / unlinked keys in its own section.
+    const linkedCards = cards.filter((_, i) => !sortedList[i].unlinked);
+    const unlinkedCards = cards.filter((_, i) => sortedList[i].unlinked);
+    return h('div', null, legendEl, headerEl, ...linkedCards,
+      unlinkedCards.length ? h('h3', { class: 'muted', style: { fontSize: '12px', margin: '18px 0 8px' } }, 'Unlinked / deleted keys') : null,
+      ...unlinkedCards);
   }
 
   // ── Render Group By Model ──
@@ -692,7 +698,8 @@ export function mount(root) {
           return h('tr', null,
             h('td', { class: 'strong' },
               h('span', { class: 'badge', style: { background: 'var(--hover)', marginRight: '6px' } }, icon('key')),
-              c.key_name
+              c.key_name,
+              c.unlinked ? h('span', { class: 'badge muted', style: { fontSize: '10.5px', marginLeft: '6px' } }, 'unlinked') : null
             ),
             h('td', null, h('code', { class: 'muted' }, c.key)),
             h('td', { class: 'num' }, fmtNum(c.requests)),

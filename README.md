@@ -293,6 +293,112 @@ Atur pengaturan OpenAI-compatible pada agent atau IDE Anda:
 
 ---
 
+## Model Groups (Template Akses Model)
+
+**Model Group** adalah template daftar model yang diizinkan. Alih-alih mengatur whitelist model satu per satu di setiap API key, buat satu grup (misal *Claude*, *Model Murah*, *Tim Frontend*) lalu tautkan ke banyak key sekaligus. Setiap agent/pengguna yang memakai key tersebut hanya bisa mengakses model di dalam grupnya.
+
+### Mode Akses API Key
+
+Setiap API key memiliki tepat **satu** mode akses (`model_access_mode`):
+
+| Mode | Sumber Daftar Model | Kegunaan |
+|---|---|---|
+| `all` | Semua model aktif di firewall global | Admin / key internal tepercaya |
+| `group` | Gabungan (*union*) model dari grup yang ditautkan | Template akses yang dipakai bersama banyak key |
+| `custom` | Whitelist manual pada key itu sendiri | Pengecualian khusus satu key |
+
+Mode `group` dan `custom` tidak bisa dicampur dalam satu key.
+
+### Contoh Alur via Dashboard
+
+1. Masuk ke **Gateway $\rightarrow$ Models**, klik **`Fetch from Providers`** agar daftar model tersedia.
+2. Buka tab **Model Groups**, klik **`+ Create Model Group`**.
+3. Isi nama (misal `Claude`), deskripsi, lalu pilih model dari daftar atau ketik ID/pola model (misal `9router/*`). Lihat **Aturan Pola Model** di bawah.
+4. Masuk ke **Gateway $\rightarrow$ Endpoints & Keys**, klik **`+ Generate New Key`** (atau edit key yang sudah ada).
+5. Pada **Allowed Models**, pilih mode **Model Groups** dan centang satu atau beberapa grup.
+6. Simpan. Key langsung terbatas pada model di grup tersebut.
+
+### Perilaku Penting
+
+* **Multi-grup = gabungan.** Key yang ditautkan ke grup `Claude` dan `GPT` mendapat semua model dari kedua grup (duplikat otomatis dihapus).
+* **Sinkronisasi langsung.** Mengubah isi grup langsung berlaku ke semua key yang tertaut — tanpa generate ulang key dan tanpa restart server.
+* **Grup kosong = tolak semua.** Key mode `group` yang grupnya tidak berisi model akan ditolak (HTTP 403) untuk setiap model. (Berbeda dengan mode `custom` kosong, yang dianggap mengizinkan semua.)
+* **Grup terlindungi dari penghapusan.** Grup yang masih ditautkan ke API key tidak bisa dihapus; pesan error menyebutkan key yang memakainya. Lepaskan tautan dari key terlebih dahulu.
+* **`GET /v1/models` ikut terfilter.** Agent hanya melihat model yang diizinkan untuk key-nya, sehingga dropdown model di IDE otomatis sesuai grup.
+* **Firewall global tetap berlaku.** Model yang ada di grup tetapi di-disable di **Gateway $\rightarrow$ Models** tetap ditolak (`model_disabled`).
+
+### Aturan Pola Model
+
+Anggota grup bisa berupa ID model persis atau pola:
+
+| Pola | Cocok Dengan | Contoh |
+|---|---|---|
+| `*` atau `all` | Semua model | — |
+| `prefix/*` | Semua model dari satu provider/prefix | `openrouter/*` |
+| `*.suffix` | Model dengan akhiran tertentu | `*.flash` |
+| ID persis | Model itu saja (tidak case-sensitive) | `openrouter/anthropic/claude-3.5-sonnet` |
+
+Pola di tengah nama seperti `9router/claude-*` **tidak didukung**. Gunakan `prefix/*` atau daftar ID model lengkap.
+
+Prefix provider bersifat fleksibel: anggota `gpt-4o` juga cocok dengan request `openrouter/gpt-4o`, dan sebaliknya anggota `openrouter/gpt-4o` cocok dengan request `gpt-4o`.
+
+### Respons Saat Ditolak
+
+Request ke model di luar grup mendapat HTTP 403 dengan format kompatibel OpenAI:
+
+```json
+{
+  "error": {
+    "message": "Model 'openrouter/gpt-4o' is not allowed for API key 'Cursor IDE'.",
+    "type": "permission_error",
+    "param": "model",
+    "code": "model_not_allowed"
+  }
+}
+```
+
+Penolakan ini juga tercatat di **Traffic Explorer** dengan status 403.
+
+### Contoh via REST API
+
+Management API memakai sesi cookie dashboard. Login terlebih dahulu dan simpan cookie:
+
+```bash
+# 1. Login
+curl -c cookies.txt -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"PASSWORD_ANDA"}'
+
+# 2. Buat model group
+curl -b cookies.txt -X POST http://localhost:8080/api/v1/model-groups \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Claude",
+    "description": "Akses model Claude via 9router",
+    "models": ["9router/*", "openrouter/anthropic/claude-3.5-sonnet"]
+  }'
+# Respons berisi "id" grup — gunakan pada langkah berikutnya.
+
+# 3. Buat API key yang ditautkan ke grup
+curl -b cookies.txt -X POST http://localhost:8080/api/v1/keys \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Cursor IDE",
+    "model_access_mode": "group",
+    "model_group_ids": ["ID_GRUP"]
+  }'
+# Respons berisi key sk-ng-... (hanya ditampilkan sekali).
+
+# 4. Perbarui isi grup (langsung berlaku ke semua key tertaut)
+curl -b cookies.txt -X PUT http://localhost:8080/api/v1/model-groups/ID_GRUP \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Claude","description":"","models":["9router/*"]}'
+```
+
+> **Catatan:** `PUT /api/v1/model-groups/{id}` mengganti seluruh daftar model (bukan menambahkan). Kirim daftar lengkap setiap kali memperbarui.
+
+---
+
 ## REST API Endpoint
 
 ### OpenAI-Compatible Proxy (Memerlukan NineGuard API Key)

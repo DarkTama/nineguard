@@ -28,7 +28,7 @@ A third-party plugin running as a separate service that NineGuard calls over HTT
 The attachment of a plugin to a Scope, with a state (`on`, `off`, or `inherit`) and optional settings overrides.
 
 **Scope**
-Where a Plugin Binding applies: Global (every request), Model Group (requests for a model in that group), or API Key (requests from that key).
+Where a Plugin Binding applies: Global (every request), Model Group (requests for a model in that group), or API Key (requests from that key). The UI always labels Global as "All keys, all models".
 
 **Precedence**
 How conflicting Plugin Bindings resolve: API Key overrides Model Group, which overrides Global. `inherit` defers to the next broader scope.

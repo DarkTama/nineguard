@@ -3,6 +3,7 @@
 - Date: 2026-10-06
 - Status: Draft, awaiting review
 - Revision 1 (2026-10-06): plugin categories, overlap warnings, upstream token-saving flag on providers, idempotency (prompt marker + applied header), built-in guidance text, worked example (§4.8, §4.9, §5.5, §9.1).
+- Revision 2 (2026-10-06): scope labelling and "decided by" explanations in the UI (§9.2).
 - Related: `GLOSSARY.md`, `docs/adr/0001-http-plugins.md`, `docs/adr/0002-model-group-dual-role.md`
 
 ## 1. Goal
@@ -455,6 +456,34 @@ All warnings are advisory. Three surfaces:
 - Response entries: `{code, message, plugins[], provider, key_id, key_name, model_count, models_sample[≤5]}`.
 - Hard cap of 50,000 evaluated pairs; beyond that, return `truncated: true`.
 
+### 9.2 Scope labelling
+
+Users must never have to guess what a scope covers. Fixed labels (same strings everywhere: plugin list, bindings table, confirm dialog, resolve preview, key and group pages):
+
+| Scope | Label | Sub-label |
+|---|---|---|
+| Global | **All keys, all models** | "Default for every request. Groups and keys below can override it." |
+| Model Group | **Models in "{group}"** | "{n} models · any key" (plus "linked to {k} keys for access" if linked, else "plugin-only group") |
+| API Key | **Key "{key}"** | "Any model this key uses" |
+
+Rules:
+- The word "Global" alone is never shown as a scope name. The plugin list column showing the Global state is titled "All keys, all models".
+- State options render as **On**, **Off**, **Inherit (use {next broader label})**. For example, the Inherit option on a key row reads "Inherit (use group or All keys, all models)". The Global row has no Inherit option.
+- Group rows show member count and a "View models" expander, because group scope follows the requested model, not the key's linked groups.
+- **Confirm on enable** (§9.1) for the Global row adds: "This turns {plugin} on for all {k} keys and all {m} models, including keys and models added later." ({k} active keys, {m} enabled models, from memory.)
+- The Plugins page header shows a short legend: "Key beats Group beats All keys, all models. Inherit = no opinion, ask the broader scope."
+- Global plugin state is a different control from the global model on/off switch (model firewall). The Models page tooltip for the firewall reads "Blocks this model for everyone. Unrelated to plugins."
+
+**Decided by.** Resolve preview and the per-key Plugins section show, for every plugin, the final state and which binding decided it:
+
+| Plugin | Runs | Decided by |
+|---|---|---|
+| Headroom | On | Models in "Demanding" |
+| Caveman | On | Key "pi-dev" |
+| Ponytail | Off | All keys, all models (default) |
+
+`GET /api/v1/plugins/resolve` returns this per plugin as `decided_by: {scope_type, scope_id, label}`. When groups were candidates but lost on priority, it also returns `overridden: [{scope_type, scope_id, label, state}]`, shown as a muted "also matched" line.
+
 ## 10. Telemetry
 
 - `tokens_saved`: sum of plugin-reported values only. Never estimated.
@@ -501,7 +530,8 @@ These notes go into the README plugin section.
 - **Unit**
   - Resolution: global/group/key precedence, `inherit`, group priority, tie-break, pattern matching parity with access control.
   - Settings merge.
-  - Worked example §5.5 and its variations as a table-driven test.
+  - Worked example §5.5 and its variations as a table-driven test, asserting `decided_by` for each plugin.
+  - Scope label helper: Global/group/key labels and Inherit option text.
   - `Warnings`: output-style overlap, upstream flag, input+output combination produces none, `other` category ignored.
   - Idempotency: marker skip in string and array content, `developer` role; applied header parse/union/sort; header ignored for non-bypassable plugins; HTTP IDs never emitted.
   - Pipeline: ordering, fail-open skip, fail-closed 503, reject 403, bypass header respects `bypassable`, model field restored if plugin changes it.

@@ -47,6 +47,12 @@ A plugin's decision to block a request outright instead of transforming it.
 
 ## Reporting
 
+**Last Active**
+The time of the most recent request authenticated with an API Key (or sent to a model), regardless of outcome — blocked and failed requests count. Never limited to a report period.
+
+**Period**
+The time window a report or filter covers, with day boundaries in the viewer's own timezone.
+
 **Tokens Saved**
 Input tokens a plugin removed from a request, as reported by the plugin itself. Never estimated.
 

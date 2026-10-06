@@ -17,6 +17,7 @@ import (
 	"nineguard/internal/providers"
 	"nineguard/internal/proxy"
 	"nineguard/internal/syslog"
+	"nineguard/internal/timeutil"
 	"nineguard/internal/traffic"
 	"nineguard/internal/version"
 )
@@ -723,6 +724,12 @@ func (h *Handler) DeleteModelGroup(w http.ResponseWriter, r *http.Request) {
 
 // ── System Logs Handlers (Log Explorer) ──
 
+// requestLocation returns the viewer's timezone from the "tz" query parameter
+// (IANA name, e.g. "Asia/Jakarta"). Missing or invalid values yield UTC.
+func requestLocation(r *http.Request) *time.Location {
+	return timeutil.LoadLocation(r.URL.Query().Get("tz"))
+}
+
 func parseSyslogFilterParams(q url.Values) syslog.FilterParams {
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
@@ -753,6 +760,7 @@ func parseSyslogFilterParams(q url.Values) syslog.FilterParams {
 		Cursor:    q.Get("cursor"),
 		Limit:     limit,
 		Offset:    offset,
+		Loc:       timeutil.LoadLocation(q.Get("tz")),
 	}
 }
 
@@ -896,6 +904,7 @@ func parseFilterParams(q url.Values) traffic.FilterParams {
 		To:        q.Get("to"),
 		Model:     q.Get("model"),
 		APIKey:    apiKey,
+		APIKeyID:  q.Get("key_id"),
 		Provider:  q.Get("provider"),
 		ClientIP:  clientIP,
 		Status:    q.Get("status"),
@@ -904,6 +913,7 @@ func parseFilterParams(q url.Values) traffic.FilterParams {
 		Cursor:    q.Get("cursor"),
 		Limit:     limit,
 		Offset:    offset,
+		Loc:       timeutil.LoadLocation(q.Get("tz")),
 	}
 }
 
@@ -1029,7 +1039,7 @@ func (h *Handler) GetTrafficStats(w http.ResponseWriter, r *http.Request) {
 	if endDate == "" {
 		endDate = q.Get("end_date")
 	}
-	stats, err := h.traffic.GetDashboardStats(period, startDate, endDate)
+	stats, err := h.traffic.GetDashboardStats(period, startDate, endDate, requestLocation(r))
 	if err != nil {
 		slog.Error("failed to get traffic stats", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to retrieve traffic statistics")
@@ -1049,7 +1059,7 @@ func (h *Handler) GetUsageReport(w http.ResponseWriter, r *http.Request) {
 	if endDate == "" {
 		endDate = q.Get("end_date")
 	}
-	report, err := h.traffic.GetUsageReports(period, startDate, endDate)
+	report, err := h.traffic.GetUsageReports(period, startDate, endDate, requestLocation(r))
 	if err != nil {
 		slog.Error("failed to get usage report", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to retrieve usage report")
@@ -1062,18 +1072,58 @@ func (h *Handler) GetUsageReport(w http.ResponseWriter, r *http.Request) {
 
 // ── API Keys & Upstream Settings Handlers ──
 
+// ListKeys serves GET /api/v1/keys. Without "page" it returns every key
+// ({"keys": [...]}, legacy shape used by dropdowns and scripts). With "page"
+// it returns one page: {"keys", "total", "page", "limit"}.
 func (h *Handler) ListKeys(w http.ResponseWriter, r *http.Request) {
 	if h.keys == nil {
 		jsonResponse(w, http.StatusOK, map[string]interface{}{"keys": []keys.KeyInfo{}})
 		return
 	}
-	list, err := h.keys.ListKeys()
+	q := r.URL.Query()
+	if !q.Has("page") {
+		list, err := h.keys.ListKeys()
+		if err != nil {
+			slog.Error("failed to list keys", "error", err)
+			jsonError(w, http.StatusInternalServerError, "Failed to retrieve API keys")
+			return
+		}
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"keys": list})
+		return
+	}
+
+	pageNum, err := strconv.Atoi(q.Get("page"))
+	if err != nil || pageNum < 1 {
+		jsonError(w, http.StatusBadRequest, "invalid page: must be an integer >= 1")
+		return
+	}
+	limit := 0
+	if v := q.Get("limit"); v != "" {
+		if limit, err = strconv.Atoi(v); err != nil {
+			jsonError(w, http.StatusBadRequest, "invalid limit: must be an integer")
+			return
+		}
+	}
+	opts := keys.ListOptions{
+		Page:   pageNum,
+		Limit:  limit,
+		Sort:   q.Get("sort"),
+		Order:  q.Get("order"),
+		Query:  q.Get("q"),
+		Status: q.Get("status"),
+		Mode:   q.Get("mode"),
+	}
+	if err := opts.Normalize(); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	pageRes, err := h.keys.ListKeysPage(opts)
 	if err != nil {
-		slog.Error("failed to list keys", "error", err)
+		slog.Error("failed to list keys page", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to retrieve API keys")
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]interface{}{"keys": list})
+	jsonResponse(w, http.StatusOK, pageRes)
 }
 
 func (h *Handler) CreateKey(w http.ResponseWriter, r *http.Request) {

@@ -44,6 +44,7 @@ export function queryParams(p) {
   return {
     provider: p.provider || '',
     key: p.key || '',
+    key_id: p.key_id || '',
     model: p.model || '',
     ip: p.ip || '',
     status: p.status || '',

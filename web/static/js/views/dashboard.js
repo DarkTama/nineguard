@@ -593,7 +593,7 @@ export function mount(root) {
       return h('div', {
         class: 'source-item wide-count',
         style: { cursor: 'pointer' },
-        onclick: () => setRoute('traffic', { api_key: k.key }),
+        onclick: () => setRoute('traffic', k.key_id ? { key_id: k.key_id } : { key: k.name || k.key }),
         title: `Click to filter traffic for key: ${k.name || k.key}`
       },
         h('div', { class: 'source-details' },

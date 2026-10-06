@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // embed zoneinfo so viewer timezones resolve without system tzdata
 
 	"github.com/mattn/go-isatty"
 
@@ -109,6 +110,9 @@ func main() {
 	// Wrap slog: records to syslogMgr (SQLite) and LogHub (live UI / stream)
 	baseHandler := ui.NewLogHubHandler(logHub, nil)
 	slog.SetDefault(slog.New(syslog.NewSlogHandler(syslogMgr, baseHandler)))
+	if n := db.BackfilledTrafficKeyIDs; n > 0 {
+		slog.Info("linked historical traffic to API keys", "rows", n)
+	}
 
 	authMgr := auth.NewManager(database, cfg.AuthEnabled)
 	keysMgr := keys.NewManager(database, cfg.RouterAPIKey)

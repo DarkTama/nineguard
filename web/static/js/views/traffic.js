@@ -60,7 +60,7 @@ export function mount(root) {
 
   const clearBtn = h('button', {
     class: 'btn btn-sm', type: 'button',
-    onclick: () => patch({ key: '', model: '', provider: '', ip: '', status: '', q: '' }),
+    onclick: () => patch({ key: '', key_id: '', model: '', provider: '', ip: '', status: '', q: '' }),
   }, icon('x'), 'Clear');
 
   const searchIn = h('input', {
@@ -214,7 +214,7 @@ export function mount(root) {
 
     const set = statusSet();
     chips.forEach((c, i) => c.classList.toggle('active', set.has(TRAFFIC_STATUSES[i].id)));
-    clearBtn.hidden = !(p.key || p.model || p.provider || p.ip || p.status || p.q);
+    clearBtn.hidden = !(p.key || p.key_id || p.model || p.provider || p.ip || p.status || p.q);
 
     liveBtn.classList.toggle('active', !!p.live);
     liveBtn.title = p.live ? 'Stop following new requests' : 'Follow new requests in real time';
@@ -393,7 +393,7 @@ export function mount(root) {
     return emptyState('inbox', 'No traffic recorded yet', 'Nothing in this time range matches the current filters.',
       h('span', { class: 'input-group' },
         h('button', { class: 'btn btn-sm', onclick: () => patch({ range: '24h', date: '', from: '', to: '' }) }, 'Last 24 hours'),
-        h('button', { class: 'btn btn-sm', onclick: () => patch({ range: '', date: '', from: '', to: '', key: '', model: '', provider: '', ip: '', status: '', q: '' }) }, 'Reset filters')));
+        h('button', { class: 'btn btn-sm', onclick: () => patch({ range: '', date: '', from: '', to: '', key: '', key_id: '', model: '', provider: '', ip: '', status: '', q: '' }) }, 'Reset filters')));
   }
 
   function renderStatusBadge(code) {
@@ -518,13 +518,13 @@ export function mount(root) {
       h('div', { class: 'detail-actions' },
         action('copy', 'Copy message', () => copy(e.message || '')),
         action('copy', 'Copy JSON', () => copy(JSON.stringify(e, null, 2))),
-        e.api_key_name || e.api_key ? action('key', 'Filter key', () => patch({ key: e.api_key_name || e.api_key })) : null,
+        e.api_key_name || e.api_key ? action('key', 'Filter key', () => patch(e.api_key_id ? { key_id: e.api_key_id, key: '' } : { key: e.api_key_name || e.api_key, key_id: '' })) : null,
         e.model ? action('box', 'Filter model', () => patch({ model: e.model })) : null,
         e.provider_id ? action('server', 'Filter provider', () => patch({ provider: e.provider_id })) : null,
         e.status_code ? action('shield', `Filter status ${e.status_code}`, () => patch({ status: `${e.status_code}` })) : null,
         e.client_ip ? action('search', 'Filter IP', () => patch({ q: `ip:${e.client_ip}` })) : null,
         action('crosshair', 'Surrounding requests', () => patch({
-          key: '', model: '', provider: '', ip: '', status: '', q: '', live: '', date: '',
+          key: '', key_id: '', model: '', provider: '', ip: '', status: '', q: '', live: '', date: '',
           range: 'custom', from: toLocalInput(ms - 60e3), to: toLocalInput(ms + 60e3),
         }))));
   }

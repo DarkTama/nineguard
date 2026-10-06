@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.24-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -23,6 +23,9 @@ RUN mkdir -p /data && chown -R appuser:appgroup /data /app
 USER 10001:10001
 EXPOSE 8080
 VOLUME ["/data"]
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD wget -qO- "http://127.0.0.1:${NINEGUARD_PORT}/healthz" >/dev/null || exit 1
 
 ENV NINEGUARD_PORT=8080 \
     NINEGUARD_AUTH_ENABLED=true \

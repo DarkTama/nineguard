@@ -192,13 +192,32 @@ GOOS=windows GOARCH=amd64 go build -ldflags="-H=windowsgui" -o nineguard.exe cmd
 # 1. Build image Docker
 docker build -t nineguard:latest .
 
-# 2. Jalankan container
+# 2. Jalankan container (bind ke localhost saja)
 docker run -d \
   --name nineguard \
-  -p 8080:8080 \
+  -p 127.0.0.1:8080:8080 \
   -v nineguard-data:/data \
   nineguard:latest
 ```
+
+#### Docker Compose (NineGuard + 9router)
+
+```bash
+# 1. Siapkan secret 9router
+cp .env.example .env
+# isi NINEROUTER_* di .env (generate: openssl rand -hex 32)
+
+# 2. Jalankan stack
+docker compose up -d --build
+
+# 3. Akses dari mesin lokal via SSH tunnel
+ssh -L 8080:localhost:8080 -L 20128:localhost:20128 user@VM_IP
+```
+
+* NineGuard: `http://localhost:8080/` (buat akun admin pada kunjungan pertama).
+* 9router: `http://localhost:20128/dashboard` — buat API key di sini.
+* Daftarkan 9router di NineGuard (**Gateway → Providers**) dengan URL `http://9router:20128/v1` dan API key 9router.
+* Kedua port hanya bind ke `127.0.0.1`. Untuk akses publik, gunakan reverse proxy dengan TLS (Caddy/nginx).
 
 ---
 

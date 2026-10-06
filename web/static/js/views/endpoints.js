@@ -307,34 +307,40 @@ export function mount(root) {
     );
   }
 
-  function renderKeysCard() {
-    const head = h('div', { class: 'card-head', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+  // Card chrome is built once so the search box keeps focus while typing;
+  // renderKeysCard() only refreshes control values and the body.
+  const keyStatusSel = selectEl([['all', 'All statuses'], ['active', 'Active'], ['disabled', 'Disabled']], keyState.status,
+    (v) => setKeyState(withFilter(keyState, { status: v })), 'Status');
+  const keyModeSel = selectEl([['any', 'Any access mode'], ['all', 'All models'], ['group', 'Model groups'], ['custom', 'Custom list']], keyState.mode,
+    (v) => setKeyState(withFilter(keyState, { mode: v })), 'Access mode');
+  const keyLimitSel = selectEl(PAGE_SIZES.map((n) => [String(n), `${n} / page`]), keyState.limit,
+    (v) => setKeyState(withFilter(keyState, { limit: Number(v) })), 'Page size');
+  const keysBody = h('div');
+  keysCard.append(
+    h('div', { class: 'card-head', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
       h('div', null,
         h('h2', null, 'NineGuard Client API Keys'),
         h('p', { class: 'card-sub' }, 'Generate dedicated keys for Cursor, Cline, Pi, and developers. Every token and request is tracked per key.')
       ),
       h('button', { class: 'btn btn-sm btn-primary', type: 'button', onclick: () => openKeyModal() }, icon('plus'), 'Generate New Key')
-    );
+    ),
+    h('div', { class: 'toolbar' }, keySearch, keyStatusSel, keyModeSel, h('span', { class: 'spacer' }), keyLimitSel),
+    keysBody
+  );
 
+  function renderKeysCard() {
     if (document.activeElement !== keySearch) keySearch.value = keyState.q;
-    const toolbar = h('div', { class: 'toolbar' },
-      keySearch,
-      selectEl([['all', 'All statuses'], ['active', 'Active'], ['disabled', 'Disabled']], keyState.status,
-        (v) => setKeyState(withFilter(keyState, { status: v })), 'Status'),
-      selectEl([['any', 'Any access mode'], ['all', 'All models'], ['group', 'Model groups'], ['custom', 'Custom list']], keyState.mode,
-        (v) => setKeyState(withFilter(keyState, { mode: v })), 'Access mode'),
-      h('span', { class: 'spacer' }),
-      selectEl(PAGE_SIZES.map((n) => [String(n), `${n} / page`]), keyState.limit,
-        (v) => setKeyState(withFilter(keyState, { limit: Number(v) })), 'Page size')
-    );
+    keyStatusSel.value = keyState.status;
+    keyModeSel.value = keyState.mode;
+    keyLimitSel.value = String(keyState.limit);
 
     const filtered = keyState.q || keyState.status !== 'all' || keyState.mode !== 'any';
     if (keyPage.error) {
-      keysCard.replaceChildren(head, toolbar, emptyState('alert', 'Could not load API keys', keyPage.error));
+      keysBody.replaceChildren(emptyState('alert', 'Could not load API keys', keyPage.error));
       return;
     }
     if (!keyPage.total) {
-      keysCard.replaceChildren(head, toolbar, filtered
+      keysBody.replaceChildren(filtered
         ? emptyState('search', 'No keys match these filters', 'Clear the search or filters to see all keys.')
         : emptyState('key', 'No NineGuard API keys generated yet', 'Click "Generate New Key" to issue your first API key for an agent.'));
       return;
@@ -357,7 +363,7 @@ export function mount(root) {
       h('tbody', null, ...(keyPage.keys || []).map(keyRow))
     );
 
-    keysCard.replaceChildren(head, toolbar, h('div', { class: 'table-wrap' }, table), renderPager());
+    keysBody.replaceChildren(h('div', { class: 'table-wrap' }, table), renderPager());
   }
 
   function openKeyModal(existingKey = null) {

@@ -250,6 +250,7 @@ func main() {
 	mux.HandleFunc("GET /api/v1/traffic/export", h.ExportTrafficLogs)
 	mux.HandleFunc("GET /api/v1/traffic/stats", h.GetTrafficStats)
 	mux.HandleFunc("GET /api/v1/traffic/report", h.GetUsageReport)
+	mux.HandleFunc("GET /api/v1/traffic/{id}/payload", h.GetTrafficPayload)
 
 	mux.HandleFunc("GET /api/v1/logs", h.GetSystemLogs)
 	mux.HandleFunc("GET /api/v1/logs/volume", h.GetSystemLogVolume)

@@ -37,8 +37,10 @@ export function mount(root) {
   let terms = [];
 
   let heavyThreshold = 8000;
+  let recordPayloads = 'disabled';
   api.get('/settings/traffic').then(s => {
     if (s && s.heavy_token_threshold > 0) heavyThreshold = s.heavy_token_threshold;
+    if (s && s.record_payloads) recordPayloads = s.record_payloads;
   }).catch(() => {});
 
   function openTrafficSettingsModal() {
@@ -49,8 +51,14 @@ export function mount(root) {
       step: '1000',
       value: String(heavyThreshold)
     });
+    const payloadSel = h('select', { class: 'input' },
+      h('option', { value: 'disabled', selected: recordPayloads === 'disabled' }, 'Disabled (Do not record)'),
+      h('option', { value: 'errors_only', selected: recordPayloads === 'errors_only' }, 'Errors Only (4xx, 5xx)'),
+      h('option', { value: 'all', selected: recordPayloads === 'all' }, 'All Requests')
+    );
+
     formDialog({
-      title: 'Traffic Alert Thresholds',
+      title: 'Traffic Explorer Settings',
       submitText: 'Save Settings',
       fields: [
         {
@@ -61,14 +69,25 @@ export function mount(root) {
               'Requests consuming at or above this token count are flagged with ⚠️ Heavy badge in Traffic Explorer and trigger WARN logs.'
             )
           )
+        },
+        {
+          label: 'Payload Recording (Inspector & Replay)',
+          node: h('div', null,
+            payloadSel,
+            h('p', { class: 'muted', style: { fontSize: '11.5px', margin: '4px 0 0' } },
+              'Stores request and response bodies for debugging. Capped at 512KB per body; auto-purged after 7 days.'
+            )
+          )
         }
       ],
       onSubmit: async () => {
         const val = parseInt(input.value, 10);
         if (isNaN(val) || val <= 0) throw new Error('Threshold must be a positive number');
-        await api.post('/settings/traffic', { heavy_token_threshold: val });
+        const pMode = payloadSel.value;
+        await api.post('/settings/traffic', { heavy_token_threshold: val, record_payloads: pMode });
         heavyThreshold = val;
-        toast('Traffic alert settings updated', 'ok');
+        recordPayloads = pMode;
+        toast('Traffic settings updated', 'ok');
         renderRows();
       }
     });
@@ -616,10 +635,75 @@ export function mount(root) {
 
     const action = (ic, text, fn) => h('button', { class: 'btn btn-sm', type: 'button', onclick: fn }, icon(ic), text);
 
+    const payloadContainer = h('div', { class: 'payload-container', style: { marginTop: '12px', borderTop: '1px solid var(--border)', paddingTop: '10px' } });
+
+    api.get(`/traffic/${e.id}/payload`).then((pay) => {
+      if (!pay || (!pay.request_body && !pay.response_body)) return;
+
+      const reqPre = h('pre', { class: 'detail-msg', style: { maxHeight: '250px', overflowY: 'auto' } });
+      const respPre = h('pre', { class: 'detail-msg', style: { maxHeight: '250px', overflowY: 'auto' } });
+
+      try {
+        reqPre.textContent = JSON.stringify(JSON.parse(pay.request_body), null, 2);
+      } catch {
+        reqPre.textContent = pay.request_body || '(empty)';
+      }
+
+      try {
+        respPre.textContent = JSON.stringify(JSON.parse(pay.response_body), null, 2);
+      } catch {
+        respPre.textContent = pay.response_body || '(empty)';
+      }
+
+      const btnReq = h('button', {
+        class: 'tab active',
+        type: 'button',
+        onclick: () => {
+          btnReq.classList.add('active');
+          btnResp.classList.remove('active');
+          reqPre.style.display = 'block';
+          respPre.style.display = 'none';
+        }
+      }, 'Prompt / Request Body');
+
+      const btnResp = h('button', {
+        class: 'tab',
+        type: 'button',
+        onclick: () => {
+          btnResp.classList.add('active');
+          btnReq.classList.remove('active');
+          reqPre.style.display = 'none';
+          respPre.style.display = 'block';
+        }
+      }, 'Response Body');
+
+      respPre.style.display = 'none';
+
+      const copyCurlBtn = h('button', {
+        class: 'btn btn-sm',
+        type: 'button',
+        onclick: () => {
+          const origin = location.origin || 'http://localhost:8080';
+          const curl = `curl -X POST ${origin}/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer <NINEGUARD_API_KEY>" \\\n  -d '${(pay.request_body || '').replace(/'/g, "'\\''")}'`;
+          copy(curl);
+        }
+      }, icon('copy'), 'Copy as cURL');
+
+      payloadContainer.replaceChildren(
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' } },
+          h('div', { class: 'tabs', style: { padding: '2px', display: 'inline-flex', gap: '4px' } }, btnReq, btnResp),
+          h('div', { style: { display: 'flex', gap: '6px' } }, copyCurlBtn)
+        ),
+        reqPre,
+        respPre
+      );
+    }).catch(() => {});
+
     return h('div', { class: 'detail' },
       h('div', { class: 'detail-meta' }, meta.map(([k, v]) => h('div', null, h('span', { class: 'k' }, k), h('span', { class: 'v', title: v }, v || '-')))),
       e.error_message ? h('div', { class: 'note warn', style: { marginBottom: '10px' } }, icon('alert'), h('b', null, 'Error: '), e.error_message) : null,
       h('pre', { class: 'detail-msg' }, highlight(e.message || JSON.stringify(e, null, 2), terms)),
+      payloadContainer,
       h('div', { class: 'detail-actions' },
         action('copy', 'Copy message', () => copy(e.message || '')),
         action('copy', 'Copy JSON', () => copy(JSON.stringify(e, null, 2))),

@@ -125,7 +125,7 @@ export function mount(root) {
           testBtn.disabled = true;
           latencyLabel.textContent = 'Testing...';
           try {
-            const res = await api(`/plugins/${encodeURIComponent(p.id)}/test`, { method: 'POST' });
+            const res = await api.post(`/plugins/${encodeURIComponent(p.id)}/test`);
             latencyLabel.textContent = `${res.latency_ms || 0}ms (${res.status || 'ok'})`;
           } catch (e) {
             latencyLabel.textContent = `Error: ${e.message}`;
@@ -223,7 +223,7 @@ export function mount(root) {
     sorted.splice(toIdx, 0, item);
     const orderedIDs = sorted.map((p) => p.id);
     try {
-      await api('/plugins/order', { method: 'PUT', body: { order: orderedIDs } });
+      await api.put('/plugins/order', { order: orderedIDs });
       toast('Pipeline order updated');
       reload();
     } catch (e) {
@@ -234,9 +234,8 @@ export function mount(root) {
   // ── Save Binding ──
   async function saveBinding(pluginID, scopeType, scopeID, state, settings = '{}') {
     try {
-      const res = await api(`/plugins/${encodeURIComponent(pluginID)}/bindings`, {
-        method: 'PUT',
-        body: { scope_type: scopeType, scope_id: scopeID, state, settings }
+      const res = await api.put(`/plugins/${encodeURIComponent(pluginID)}/bindings`, {
+        scope_type: scopeType, scope_id: scopeID, state, settings
       });
       toast(`Binding updated: ${state}`);
       if (res.warnings && res.warnings.length) {
@@ -251,7 +250,7 @@ export function mount(root) {
   async function openDrawer(p) {
     let bindings = [];
     try {
-      const bRes = await api(`/plugins/${encodeURIComponent(p.id)}/bindings`);
+      const bRes = await api.get(`/plugins/${encodeURIComponent(p.id)}/bindings`);
       bindings = bRes.bindings || [];
     } catch { /* ignore */ }
 
@@ -362,7 +361,7 @@ export function mount(root) {
             class: 'btn btn-sm',
             onclick: async () => {
               try {
-                await api(`/plugins/${encodeURIComponent(p.id)}/reset-prompt`, { method: 'POST' });
+                await api.post(`/plugins/${encodeURIComponent(p.id)}/reset-prompt`);
                 toast('Prompt override reset to default');
                 reload();
               } catch (e) {
@@ -429,17 +428,14 @@ export function mount(root) {
       ],
       onSubmit: async (data) => {
         try {
-          const res = await api('/plugins', {
-            method: 'POST',
-            body: {
-              name: data.name,
-              url: data.url,
-              category: data.category || 'other',
-              timeout_ms: parseInt(data.timeout_ms || '3000', 10),
-              failure_policy: data.failure_policy || 'open',
-              bypassable: true,
-              summary: data.summary || '',
-            }
+          const res = await api.post('/plugins', {
+            name: data.name,
+            url: data.url,
+            category: data.category || 'other',
+            timeout_ms: parseInt(data.timeout_ms || '3000', 10),
+            failure_policy: data.failure_policy || 'open',
+            bypassable: true,
+            summary: data.summary || '',
           });
           toast('Plugin registered');
           reload();
@@ -487,7 +483,7 @@ export function mount(root) {
           const q = new URLSearchParams();
           if (keyID) q.set('key_id', keyID);
           if (model) q.set('model', model);
-          const res = await api(`/plugins/resolve?${q.toString()}`);
+          const res = await api.get(`/plugins/resolve?${q.toString()}`);
 
           previewOut.replaceChildren(
             h('table', { class: 'table', style: { width: '100%', fontSize: '12px' } },
@@ -535,10 +531,10 @@ export function mount(root) {
   async function reload() {
     try {
       const [pRes, gRes, kRes, wRes] = await Promise.all([
-        api('/plugins'),
-        api('/model-groups'),
-        api('/keys'),
-        api('/plugins/warnings'),
+        api.get('/plugins'),
+        api.get('/model-groups'),
+        api.get('/keys'),
+        api.get('/plugins/warnings'),
       ]);
       pluginsList = pRes.plugins || [];
       groupsList = gRes.groups || [];

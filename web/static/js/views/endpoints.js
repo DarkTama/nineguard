@@ -895,16 +895,31 @@ export function mount(root) {
         },
         {
           label: 'Token Quota (Rate Limiting)',
-          node: h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } },
-            h('div', null,
-              h('label', { class: 'label', style: { fontSize: '12px' } }, 'Token Limit'),
-              quotaLimitInput,
-              h('p', { class: 'muted', style: { fontSize: '11px', margin: '3px 0 0' } }, 'Max tokens. 0 = unlimited.')
+          node: h('div', {
+            style: {
+              padding: '12px 14px',
+              background: 'var(--hover)',
+              borderRadius: '8px',
+              border: '1px solid var(--border)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '10px'
+            }
+          },
+            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' } },
+              h('div', { class: 'field', style: { marginBottom: 0 } },
+                h('span', { style: { fontSize: '11.5px', fontWeight: '600' } }, 'Token Limit'),
+                quotaLimitInput,
+                h('small', { class: 'muted', style: { fontSize: '11px' } }, 'Max tokens. Set 0 for unlimited.')
+              ),
+              h('div', { class: 'field', style: { marginBottom: 0 } },
+                h('span', { style: { fontSize: '11.5px', fontWeight: '600' } }, 'Reset Period'),
+                quotaPeriodSelect,
+                h('small', { class: 'muted', style: { fontSize: '11px' } }, 'Anchors to UTC calendar boundaries.')
+              )
             ),
-            h('div', null,
-              h('label', { class: 'label', style: { fontSize: '12px' } }, 'Reset Period'),
-              quotaPeriodSelect,
-              h('p', { class: 'muted', style: { fontSize: '11px', margin: '3px 0 0' } }, 'Anchors to UTC calendar boundaries.')
+            h('p', { class: 'muted', style: { fontSize: '11px', margin: 0, lineHeight: 1.4 } },
+              '🛡️ Soft Post-Facto Gating: Requests are blocked with HTTP 429 once consumed tokens reach quota. Admitted requests run to completion.'
             )
           )
         },

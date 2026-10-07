@@ -35,6 +35,8 @@ type LogEntry struct {
 	TokensOverhead   int       `json:"tokens_overhead"`
 	PluginErrors     string    `json:"plugin_errors"`
 	PluginMs         int       `json:"plugin_ms"`
+	HasImages        bool      `json:"has_images"`
+	ImageCount       int       `json:"image_count"`
 }
 
 type FilterParams struct {
@@ -55,6 +57,7 @@ type FilterParams struct {
 	Cursor    string         // id cursor for pagination
 	APIKeyID  string         // exact traffic_logs.api_key_id match
 	Loc       *time.Location // viewer timezone for Period/StartDate/EndDate; nil = UTC
+	HasImages *bool          // filter multimodal requests
 }
 
 type VolumeBucket struct {
@@ -430,16 +433,22 @@ func (m *Manager) Record(entry *LogEntry) error {
 	entry.ComputeLevelAndMessage()
 
 	keyID := sql.NullString{String: entry.APIKeyID, Valid: entry.APIKeyID != ""}
+	hasImagesInt := 0
+	if entry.HasImages {
+		hasImagesInt = 1
+	}
 
 	_, err := m.db.Exec(`
 		INSERT INTO traffic_logs (
 			timestamp, api_key, api_key_name, api_key_id, provider_id, model, prompt_tokens, completion_tokens, total_tokens,
 			duration_ms, status_code, client_ip, stream, error_message, level,
-			plugins_skipped, plugins_applied, tokens_saved, tokens_overhead, plugin_errors, plugin_ms
-		) VALUES (CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			plugins_skipped, plugins_applied, tokens_saved, tokens_overhead, plugin_errors, plugin_ms,
+			has_images, image_count
+		) VALUES (CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, maskedKey, entry.APIKeyName, keyID, entry.ProviderID, entry.Model, entry.PromptTokens, entry.CompletionTokens, entry.TotalTokens,
 		entry.DurationMs, entry.StatusCode, entry.ClientIP, streamInt, errMsg, entry.Level,
-		entry.PluginsSkipped, entry.PluginsApplied, entry.TokensSaved, entry.TokensOverhead, entry.PluginErrors, entry.PluginMs)
+		entry.PluginsSkipped, entry.PluginsApplied, entry.TokensSaved, entry.TokensOverhead, entry.PluginErrors, entry.PluginMs,
+		hasImagesInt, entry.ImageCount)
 
 	// Ensure model is recorded in models table
 	_, _ = m.db.Exec("INSERT OR IGNORE INTO models (id, name, enabled) VALUES (?, ?, 1)", entry.Model, entry.Model)
@@ -498,6 +507,14 @@ func (m *Manager) QueryLogs(p FilterParams) ([]LogEntry, int, error) {
 	if p.APIKeyID != "" {
 		conditions = append(conditions, "api_key_id = ?")
 		args = append(args, p.APIKeyID)
+	}
+
+	if p.HasImages != nil {
+		if *p.HasImages {
+			conditions = append(conditions, "has_images = 1")
+		} else {
+			conditions = append(conditions, "has_images = 0")
+		}
 	}
 
 	if p.ClientIP != "" {
@@ -662,7 +679,8 @@ func (m *Manager) QueryLogs(p FilterParams) ([]LogEntry, int, error) {
 		SELECT id, timestamp, api_key, COALESCE(api_key_name, ''), COALESCE(api_key_id, ''), COALESCE(provider_id, ''), model, prompt_tokens, completion_tokens, total_tokens,
 		       duration_ms, status_code, client_ip, stream, error_message, COALESCE(level, ''),
 		       COALESCE(plugins_skipped, ''), COALESCE(plugins_applied, ''), COALESCE(tokens_saved, 0), COALESCE(tokens_overhead, 0),
-		       COALESCE(plugin_errors, ''), COALESCE(plugin_ms, 0)
+		       COALESCE(plugin_errors, ''), COALESCE(plugin_ms, 0),
+		       COALESCE(has_images, 0), COALESCE(image_count, 0)
 		FROM traffic_logs
 		%s
 		ORDER BY id DESC
@@ -682,12 +700,14 @@ func (m *Manager) QueryLogs(p FilterParams) ([]LogEntry, int, error) {
 		var streamInt int
 		var errMsg sql.NullString
 		var lvlStr string
+		var hasImgInt, imgCount int
 		if err := rows.Scan(
 			&e.ID, &e.Timestamp, &e.APIKey, &e.APIKeyName, &e.APIKeyID, &e.ProviderID, &e.Model,
 			&e.PromptTokens, &e.CompletionTokens, &e.TotalTokens,
 			&e.DurationMs, &e.StatusCode, &e.ClientIP, &streamInt, &errMsg, &lvlStr,
 			&e.PluginsSkipped, &e.PluginsApplied, &e.TokensSaved, &e.TokensOverhead,
 			&e.PluginErrors, &e.PluginMs,
+			&hasImgInt, &imgCount,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -696,6 +716,8 @@ func (m *Manager) QueryLogs(p FilterParams) ([]LogEntry, int, error) {
 			e.ErrorMessage = &errMsg.String
 		}
 		e.Level = lvlStr
+		e.HasImages = (hasImgInt == 1)
+		e.ImageCount = imgCount
 		e.ComputeLevelAndMessage()
 		list = append(list, e)
 	}

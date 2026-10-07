@@ -61,6 +61,22 @@ func (m *Manager) GetHeavyTokenThreshold() int {
 	return 8000
 }
 
+// SetHeavyTokenThreshold updates the configured heavy token threshold in settings.
+func (m *Manager) SetHeavyTokenThreshold(threshold int) error {
+	if m == nil || m.db == nil {
+		return nil
+	}
+	if threshold <= 0 {
+		return fmt.Errorf("threshold must be greater than zero")
+	}
+	_, err := m.db.Exec(`
+		INSERT INTO settings (key, value, updated_at)
+		VALUES ('heavy_token_threshold', ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+	`, strconv.Itoa(threshold))
+	return err
+}
+
 // GetQuotaUsage queries cumulative tokens consumed by apiKeyID within its active quota window.
 func GetQuotaUsage(d *db.DB, apiKeyID string, period string, now time.Time) (int64, time.Time, error) {
 	if period == "none" || period == "" {

@@ -486,6 +486,20 @@ export function mount(root) {
       h('span', { class: 'c-model', title: `${e.model || '-'}${e.error_message ? `\nError: ${e.error_message}` : ''}` },
         modPrefix ? h('span', { class: 'source-ns' }, modPrefix) : null,
         h('span', { class: 'strong' }, highlight(modShort, terms)),
+        (heavyThreshold > 0 && (e.total_tokens || 0) >= heavyThreshold) ? h('span', {
+          class: 'badge',
+          style: {
+            fontSize: '9.5px',
+            padding: '1px 5px',
+            marginLeft: '6px',
+            background: 'rgba(234, 179, 8, 0.15)',
+            color: 'var(--lv-warn)',
+            border: '1px solid rgba(234, 179, 8, 0.35)',
+            fontWeight: '600',
+            whiteSpace: 'nowrap'
+          },
+          title: `Heavy request: ${fmtNum(e.total_tokens)} tokens (>= ${fmtNum(heavyThreshold)} threshold)`
+        }, '⚠️ Heavy') : null,
         e.plugins_applied ? h('span', {
           class: 'badge',
           style: {
@@ -510,20 +524,7 @@ export function mount(root) {
       h('span', { class: 'num c-tokens' },
         h('span', { title: `Prompt: ${fmtNum(e.prompt_tokens || 0)} · Comp: ${fmtNum(e.completion_tokens || 0)}` },
           fmtCompact(e.total_tokens || 0)
-        ),
-        (heavyThreshold > 0 && (e.total_tokens || 0) >= heavyThreshold) ? h('span', {
-          class: 'badge',
-          style: {
-            fontSize: '9px',
-            padding: '1px 4px',
-            marginLeft: '4px',
-            background: 'rgba(234, 179, 8, 0.15)',
-            color: 'var(--lv-warn)',
-            border: '1px solid rgba(234, 179, 8, 0.35)',
-            fontWeight: '600'
-          },
-          title: `Heavy request: ${fmtNum(e.total_tokens)} tokens (>= ${fmtNum(heavyThreshold)} threshold)`
-        }, '⚠️ Heavy') : null
+        )
       ),
       // 6. Latency
       h('span', { class: 'num c-lat' },

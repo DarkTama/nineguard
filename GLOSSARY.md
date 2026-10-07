@@ -79,3 +79,18 @@ Input tokens a plugin added to a request (e.g. an injected prompt).
 
 **Failure Policy**
 What happens when a plugin errors or times out. *Fail-open*: forward the request unmodified. *Fail-closed*: reject the request.
+
+## Quotas & Traffic Controls
+
+**Token Quota**
+The maximum cumulative tokens (`total_tokens`) an API Key may consume within its Quota Period before subsequent requests are blocked.
+
+**Quota Period**
+The fixed time cycle for resetting a Token Quota: `daily`, `weekly`, `monthly`, or `total` (all-time). Unlike reporting periods, Quota Periods always anchor to UTC midnight (ISO Monday 00:00 UTC for weekly; 1st of month 00:00 UTC for monthly).
+
+**Soft Post-Facto Enforcement**
+The mechanism where pre-flight checks block requests only when accumulated tokens already meet or exceed the quota. An admitted request is never truncated mid-flight; final token count is tallied on completion.
+
+**Heavy Request**
+A request whose total tokens meet or exceed the system-wide `heavy_token_threshold`, triggering an advisory warning badge and system log alert without blocking traffic.
+

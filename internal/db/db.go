@@ -131,6 +131,34 @@ func (d *DB) migrate() error {
 		attrs TEXT DEFAULT '{}'
 	);
 
+	CREATE TABLE IF NOT EXISTS plugins (
+		id TEXT PRIMARY KEY,
+		kind TEXT NOT NULL,
+		name TEXT NOT NULL,
+		description TEXT DEFAULT '',
+		url TEXT DEFAULT '',
+		secret TEXT DEFAULT '',
+		timeout_ms INTEGER DEFAULT 3000,
+		failure_policy TEXT DEFAULT 'open',
+		bypassable INTEGER DEFAULT 1,
+		pipeline_order INTEGER DEFAULT 100,
+		category TEXT NOT NULL DEFAULT 'other',
+		summary TEXT DEFAULT '',
+		default_settings TEXT DEFAULT '{}',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS plugin_bindings (
+		plugin_id TEXT NOT NULL,
+		scope_type TEXT NOT NULL,
+		scope_id TEXT NOT NULL DEFAULT '',
+		state TEXT NOT NULL DEFAULT 'inherit',
+		settings TEXT DEFAULT '{}',
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (plugin_id, scope_type, scope_id)
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_traffic_timestamp ON traffic_logs(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_traffic_model ON traffic_logs(model);
 	CREATE INDEX IF NOT EXISTS idx_traffic_api_key ON traffic_logs(api_key);
@@ -143,6 +171,9 @@ func (d *DB) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_syslogs_level ON system_logs(level);
 	CREATE INDEX IF NOT EXISTS idx_syslogs_source ON system_logs(source);
 	CREATE INDEX IF NOT EXISTS idx_model_groups_name ON model_groups(name);
+	CREATE INDEX IF NOT EXISTS idx_plugins_order ON plugins(pipeline_order);
+	CREATE INDEX IF NOT EXISTS idx_plugin_bindings_plugin ON plugin_bindings(plugin_id);
+	CREATE INDEX IF NOT EXISTS idx_plugin_bindings_scope ON plugin_bindings(scope_type, scope_id);
 	`
 	if _, err := d.Exec(schema); err != nil {
 		return err
@@ -172,6 +203,21 @@ func (d *DB) migrate() error {
 	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_traffic_key_id_ts ON traffic_logs(api_key_id, timestamp)")
 	if err := d.backfillTrafficKeyID(); err != nil {
 		return fmt.Errorf("backfill traffic_logs.api_key_id: %w", err)
+	}
+
+	// Plugin system schema extensions
+	_, _ = d.Exec("ALTER TABLE model_groups ADD COLUMN priority INTEGER DEFAULT 0")
+	_, _ = d.Exec("ALTER TABLE providers ADD COLUMN upstream_token_saving INTEGER DEFAULT 0")
+	_, _ = d.Exec("ALTER TABLE providers ADD COLUMN upstream_token_saving_note TEXT DEFAULT ''")
+	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN plugins_skipped TEXT DEFAULT ''")
+	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN plugins_applied TEXT DEFAULT ''")
+	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN tokens_saved INTEGER DEFAULT 0")
+	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN tokens_overhead INTEGER DEFAULT 0")
+	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN plugin_errors TEXT DEFAULT ''")
+	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN plugin_ms INTEGER DEFAULT 0")
+
+	if err := d.seedPlugins(); err != nil {
+		return fmt.Errorf("seed plugins: %w", err)
 	}
 
 	// Ensure at most one default provider exists across the database
@@ -235,3 +281,40 @@ func (d *DB) backfillTrafficKeyID() error {
 	`)
 	return err
 }
+
+func (d *DB) seedPlugins() error {
+	builtins := []struct {
+		id, name, desc, category string
+		order                    int
+		settings                 string
+	}{
+		{"headroom", "Headroom", "Compresses message history before forwarding to model", "input_compression", 10, `{"url":"http://127.0.0.1:8787","mode":"incremental","compress_user_messages":false}`},
+		{"ponytail", "Ponytail", "Instructs model to respond with compact formatting", "output_style", 20, `{"level":"full"}`},
+		{"caveman", "Caveman", "Instructs model to respond in terse caveman style", "output_style", 30, `{"variant":"caveman"}`},
+	}
+	for _, b := range builtins {
+		_, err := d.Exec(`
+			INSERT INTO plugins (id, kind, name, description, category, bypassable, pipeline_order, failure_policy, default_settings, created_at, updated_at)
+			VALUES (?, 'builtin', ?, ?, ?, 1, ?, 'open', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+			ON CONFLICT(id) DO UPDATE SET
+				name = excluded.name,
+				category = excluded.category,
+				pipeline_order = excluded.pipeline_order,
+				default_settings = excluded.default_settings
+		`, b.id, b.name, b.desc, b.category, b.order, b.settings)
+		if err != nil {
+			return err
+		}
+
+		_, err = d.Exec(`
+			INSERT INTO plugin_bindings (plugin_id, scope_type, scope_id, state, settings, updated_at)
+			VALUES (?, 'global', '', 'off', '{}', CURRENT_TIMESTAMP)
+			ON CONFLICT(plugin_id, scope_type, scope_id) DO NOTHING
+		`, b.id)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+

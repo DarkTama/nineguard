@@ -274,6 +274,7 @@ export function mount(root) {
       h('td', { class: 'muted', title: isNaN(created) ? '' : `${fmtDateTime(created)} (${tzLabel()})` }, isNaN(created) ? '-' : fmtDateTime(created).slice(0, 10)),
       h('td', { style: { textAlign: 'right' } },
         h('div', { style: { display: 'inline-flex', gap: '6px' } },
+          h('a', { class: 'btn btn-sm', href: '#/plugins', title: 'Manage plugins and token savers' }, icon('puzzle'), 'Plugins'),
           h('button', { class: 'btn btn-sm', type: 'button', title: 'Edit Key & Model Access', onclick: () => openKeyModal(k) }, icon('pencil'), 'Edit'),
           h('button', { class: 'btn btn-sm', type: 'button', title: 'Copy NineGuard API Key', onclick: () => copyText(raw, `Key "${k.name}" copied!`) }, icon('copy'), 'Copy Key'),
           h('button', { class: 'btn btn-sm btn-danger', type: 'button', title: 'Delete Key', onclick: () => confirmDeleteKey(k) }, icon('trash'))

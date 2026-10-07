@@ -6,6 +6,7 @@ import {
   stateFromParams, paramsFromState, apiQuery, nextSort, withFilter,
   totalPages, rangeLabel, pageItems, pageAfterReload, PAGE_SIZES,
 } from '../keylist.js';
+import { quotaPercent, formatQuotaUsage, isQuotaExhausted, quotaPeriodLabel, formatTokensCompact } from '../quotahelpers.js';
 
 export function mount(root) {
   let alive = true;
@@ -243,6 +244,45 @@ export function mount(root) {
     return h('td', null, h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '2px', alignItems: 'center' } }, ...badges));
   }
 
+  function quotaCell(k) {
+    if (!k.quota_limit || k.quota_limit <= 0 || !k.quota_period || k.quota_period === 'none') {
+      return h('td', { class: 'muted', style: { fontSize: '12px' } }, 'Unlimited');
+    }
+    const pct = quotaPercent(k.total_tokens || 0, k.quota_limit);
+    const exhausted = isQuotaExhausted(k.total_tokens || 0, k.quota_limit, k.quota_period);
+    const label = `${formatTokensCompact(k.total_tokens || 0)} / ${formatTokensCompact(k.quota_limit)} ${k.quota_period}`;
+
+    const bar = h('div', {
+      style: {
+        width: '90px',
+        height: '5px',
+        background: 'var(--border)',
+        borderRadius: '3px',
+        overflow: 'hidden',
+        marginTop: '3px'
+      }
+    },
+      h('div', {
+        style: {
+          width: `${pct}%`,
+          height: '100%',
+          background: exhausted ? 'var(--err, #ef4444)' : 'var(--accent, #6366f1)',
+          borderRadius: '3px'
+        }
+      })
+    );
+
+    return h('td', { style: { verticalAlign: 'middle' } },
+      h('div', null,
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' } },
+          h('span', { class: exhausted ? 'badge err' : '' }, label),
+          h('span', { class: 'muted' }, `(${pct}%)`)
+        ),
+        bar
+      )
+    );
+  }
+
   function keyRow(k) {
     const raw = k.raw_key || k.key;
     const statusBtn = h('button', {
@@ -269,6 +309,7 @@ export function mount(root) {
       allowedModelsCell(k),
       h('td', { class: 'num' }, fmtNum(k.total_requests || 0)),
       h('td', { class: 'num' }, fmtCompact(k.total_tokens || 0)),
+      quotaCell(k),
       lastActiveCell(k.last_used_at),
       h('td', null, statusBtn),
       h('td', { class: 'muted', title: isNaN(created) ? '' : `${fmtDateTime(created)} (${tzLabel()})` }, isNaN(created) ? '-' : fmtDateTime(created).slice(0, 10)),
@@ -351,6 +392,7 @@ export function mount(root) {
           h('th', null, 'Allowed Models'),
           sortHeader('Requests', 'requests', { class: 'num' }),
           sortHeader('Tokens', 'tokens', { class: 'num' }),
+          h('th', null, 'Quota'),
           sortHeader('Last Active', 'last_active'),
           sortHeader('Status', 'status'),
           sortHeader('Created', 'created'),
@@ -431,6 +473,23 @@ export function mount(root) {
       placeholder: 'e.g. Cursor IDE, Cline Mac, Pi Agent',
       value: existingKey ? existingKey.name : 'Cursor IDE'
     });
+
+    const quotaLimitInput = h('input', {
+      class: 'input',
+      type: 'number',
+      min: '0',
+      step: '1000',
+      placeholder: '0 (unlimited)',
+      value: (existingKey && existingKey.quota_limit) ? String(existingKey.quota_limit) : '0'
+    });
+
+    const quotaPeriodSelect = h('select', { class: 'input' },
+      h('option', { value: 'none', selected: !existingKey || !existingKey.quota_period || existingKey.quota_period === 'none' }, 'None (Unlimited)'),
+      h('option', { value: 'daily', selected: existingKey && existingKey.quota_period === 'daily' }, 'Daily (UTC midnight)'),
+      h('option', { value: 'weekly', selected: existingKey && existingKey.quota_period === 'weekly' }, 'Weekly (UTC Monday)'),
+      h('option', { value: 'monthly', selected: existingKey && existingKey.quota_period === 'monthly' }, 'Monthly (UTC 1st)'),
+      h('option', { value: 'total', selected: existingKey && existingKey.quota_period === 'total' }, 'Lifetime (All-time)')
+    );
 
     let mode = initialMode;
 
@@ -835,6 +894,21 @@ export function mount(root) {
           )
         },
         {
+          label: 'Token Quota (Rate Limiting)',
+          node: h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' } },
+            h('div', null,
+              h('label', { class: 'label', style: { fontSize: '12px' } }, 'Token Limit'),
+              quotaLimitInput,
+              h('p', { class: 'muted', style: { fontSize: '11px', margin: '3px 0 0' } }, 'Max tokens. 0 = unlimited.')
+            ),
+            h('div', null,
+              h('label', { class: 'label', style: { fontSize: '12px' } }, 'Reset Period'),
+              quotaPeriodSelect,
+              h('p', { class: 'muted', style: { fontSize: '11px', margin: '3px 0 0' } }, 'Anchors to UTC calendar boundaries.')
+            )
+          )
+        },
+        {
           label: 'Plugin Overrides (Optional)',
           node: h('div', null,
             pluginsWrap,
@@ -874,11 +948,15 @@ export function mount(root) {
           allowed_models = selected;
         }
 
+        const quota_limit = parseInt(quotaLimitInput.value, 10) || 0;
+        const quota_period = quotaPeriodSelect.value;
         const payload = {
           name,
           model_access_mode,
           model_group_ids,
-          allowed_models
+          allowed_models,
+          quota_limit,
+          quota_period
         };
 
         try {

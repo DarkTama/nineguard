@@ -54,9 +54,33 @@ func NewProxy(mm *models.Manager, tm *traffic.Manager, km *keys.Manager, pm *pro
 	}, nil
 }
 
+type chatMessage struct {
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"`
+}
+
 type chatRequest struct {
-	Model  string `json:"model"`
-	Stream bool   `json:"stream"`
+	Model    string        `json:"model"`
+	Stream   bool          `json:"stream"`
+	Messages []chatMessage `json:"messages"`
+}
+
+func detectImages(messages []chatMessage) (bool, int) {
+	count := 0
+	for _, m := range messages {
+		switch parts := m.Content.(type) {
+		case []interface{}:
+			for _, part := range parts {
+				if obj, ok := part.(map[string]interface{}); ok {
+					pType, _ := obj["type"].(string)
+					if pType == "image_url" || pType == "input_image" || obj["image_url"] != nil {
+						count++
+					}
+				}
+			}
+		}
+	}
+	return count > 0, count
 }
 
 type openAIUsage struct {
@@ -204,6 +228,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var req chatRequest
 	_ = json.Unmarshal(bodyBytes, &req)
 	modelName := strings.TrimSpace(req.Model)
+	hasImages, imageCount := detectImages(req.Messages)
 
 	// Check Allowed Models for this API Key
 	if modelName != "" && keyInfo != nil && !keyInfo.IsModelAllowed(modelName) {
@@ -551,6 +576,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			TokensOverhead:   tokensOverhead,
 			PluginErrors:     pluginErrors,
 			PluginMs:         pluginMs,
+			HasImages:        hasImages,
+			ImageCount:       imageCount,
 		})
 		if resp.StatusCode >= 400 {
 			slog.Warn("proxy request failed", "model", modelName, "status", resp.StatusCode, "duration_ms", durMs, "source", "proxy", "plugins", pluginsApplied)

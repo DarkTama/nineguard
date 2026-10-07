@@ -904,6 +904,12 @@ func parseFilterParams(q url.Values) traffic.FilterParams {
 		clientIP = q.Get("ip")
 	}
 
+	var hasImages *bool
+	if imgParam := q.Get("has_images"); imgParam != "" {
+		val := (imgParam == "1" || strings.EqualFold(imgParam, "true"))
+		hasImages = &val
+	}
+
 	return traffic.FilterParams{
 		Period:    q.Get("period"),
 		StartDate: startDate,
@@ -922,6 +928,7 @@ func parseFilterParams(q url.Values) traffic.FilterParams {
 		Limit:     limit,
 		Offset:    offset,
 		Loc:       timeutil.LoadLocation(q.Get("tz")),
+		HasImages: hasImages,
 	}
 }
 

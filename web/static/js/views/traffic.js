@@ -104,7 +104,7 @@ export function mount(root) {
 
   const clearBtn = h('button', {
     class: 'btn btn-sm', type: 'button',
-    onclick: () => patch({ key: '', key_id: '', model: '', provider: '', ip: '', status: '', q: '' }),
+    onclick: () => patch({ key: '', key_id: '', model: '', provider: '', ip: '', status: '', q: '', has_images: '' }),
   }, icon('x'), 'Clear');
 
   const searchIn = h('input', {
@@ -128,6 +128,14 @@ export function mount(root) {
     onclick: () => toggleStatus(s.id)
   }, h('i', { class: 'dot' }), s.label));
 
+  const imgChip = h('button', {
+    class: `chip ${p.has_images ? 'active' : ''}`,
+    type: 'button',
+    title: 'Filter requests containing attached images',
+    onclick: () => patch({ has_images: p.has_images ? '' : '1' }),
+    style: p.has_images ? { background: 'rgba(56, 189, 248, 0.2)', color: '#38bdf8', borderColor: '#38bdf8' } : {}
+  }, '🖼️ Images');
+
   const liveBtn = h('button', { class: 'chip live', type: 'button', onclick: toggleLive });
 
   const exportBtn = h('button', {
@@ -146,7 +154,7 @@ export function mount(root) {
   root.append(h('div', { class: 'page-fill' },
     h('div', { class: 'toolbar' },
       searchBox, range.el, h('span', { class: 'sep' }), keySel, modelSel, providerSel, clearBtn,
-      h('span', { class: 'spacer' }), h('span', { class: 'chips' }, chips), liveBtn, alertBtn, exportBtn),
+      h('span', { class: 'spacer' }), h('span', { class: 'chips' }, ...chips, imgChip), liveBtn, alertBtn, exportBtn),
     chartBox,
     h('div', { class: 'log-table traffic-table' },
       h('div', { class: 'log-head' },
@@ -500,6 +508,20 @@ export function mount(root) {
           },
           title: `Heavy request: ${fmtNum(e.total_tokens)} tokens (>= ${fmtNum(heavyThreshold)} threshold)`
         }, '⚠️ Heavy') : null,
+        e.has_images ? h('span', {
+          class: 'badge',
+          style: {
+            fontSize: '9.5px',
+            padding: '1px 5px',
+            marginLeft: '4px',
+            background: 'rgba(56, 189, 248, 0.15)',
+            color: '#38bdf8',
+            border: '1px solid rgba(56, 189, 248, 0.35)',
+            fontWeight: '600',
+            whiteSpace: 'nowrap'
+          },
+          title: `Multimodal request: contains ${e.image_count || 1} attached image(s)`
+        }, `🖼️ ${e.image_count > 1 ? e.image_count + ' imgs' : 'img'}`) : null,
         e.plugins_applied ? h('span', {
           class: 'badge',
           style: {
@@ -578,6 +600,7 @@ export function mount(root) {
       ['Guard Status', statusText],
       ['Client Key', e.api_key_name ? `${e.api_key_name} (${e.api_key})` : (e.api_key || '-')],
       ['Target Model', e.model || '-'],
+      ['Images Attached', e.has_images ? `${e.image_count || 1} image(s)` : 'None (text only)'],
       ['Provider', e.provider_id || '(default upstream)'],
       ['Tokens', `${fmtNum(e.total_tokens)} (prompt: ${fmtNum(e.prompt_tokens)}, completion: ${fmtNum(e.completion_tokens)})`],
       ['Tokens Saved', e.tokens_saved ? `${fmtNum(e.tokens_saved)} tokens` : '0'],

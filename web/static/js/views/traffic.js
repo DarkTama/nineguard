@@ -1,6 +1,6 @@
 // Traffic Explorer: Kibana/Discover-style HTTP request, latency and token telemetry.
 import { api } from '../api.js';
-import { h, icon, fmtTime, fmtNum, fmtCompact, localDate, tzLabel, msOf, podColor, copy, toast, menu, emptyState, skeletonRows, debounce, searchableSelect } from '../ui.js';
+import { h, icon, fmtTime, fmtNum, fmtCompact, localDate, tzLabel, msOf, podColor, copy, toast, menu, emptyState, skeletonRows, debounce, searchableSelect, formDialog } from '../ui.js';
 import { patchRoute } from '../state.js';
 import { queryParams, rangeControls, searchTerms, highlight, toLocalInput, iso } from '../filters.js';
 import { volumeChart } from '../chart.js';
@@ -35,6 +35,50 @@ export function mount(root) {
   let liveState = '';
   let chart = null;
   let terms = [];
+
+  let heavyThreshold = 8000;
+  api.get('/settings/traffic').then(s => {
+    if (s && s.heavy_token_threshold > 0) heavyThreshold = s.heavy_token_threshold;
+  }).catch(() => {});
+
+  function openTrafficSettingsModal() {
+    const input = h('input', {
+      class: 'input',
+      type: 'number',
+      min: '1000',
+      step: '1000',
+      value: String(heavyThreshold)
+    });
+    formDialog({
+      title: 'Traffic Alert Thresholds',
+      submitText: 'Save Settings',
+      fields: [
+        {
+          label: 'Heavy Request Threshold (Tokens)',
+          node: h('div', null,
+            input,
+            h('p', { class: 'muted', style: { fontSize: '11.5px', margin: '4px 0 0' } },
+              'Requests consuming at or above this token count are flagged with ⚠️ Heavy badge in Traffic Explorer and trigger WARN logs.'
+            )
+          )
+        }
+      ],
+      onSubmit: async () => {
+        const val = parseInt(input.value, 10);
+        if (isNaN(val) || val <= 0) throw new Error('Threshold must be a positive number');
+        await api.post('/settings/traffic', { heavy_token_threshold: val });
+        heavyThreshold = val;
+        toast('Traffic alert settings updated', 'ok');
+        renderRows();
+      }
+    });
+  }
+
+  const alertBtn = h('button', {
+    class: 'btn btn-sm', type: 'button',
+    title: 'Configure Traffic Spike Alert Threshold',
+    onclick: openTrafficSettingsModal,
+  }, icon('alert'), 'Alerts');
 
   let availableKeys = [];
   let availableModels = [];
@@ -102,7 +146,7 @@ export function mount(root) {
   root.append(h('div', { class: 'page-fill' },
     h('div', { class: 'toolbar' },
       searchBox, range.el, h('span', { class: 'sep' }), keySel, modelSel, providerSel, clearBtn,
-      h('span', { class: 'spacer' }), h('span', { class: 'chips' }, chips), liveBtn, exportBtn),
+      h('span', { class: 'spacer' }), h('span', { class: 'chips' }, chips), liveBtn, alertBtn, exportBtn),
     chartBox,
     h('div', { class: 'log-table traffic-table' },
       h('div', { class: 'log-head' },
@@ -466,7 +510,20 @@ export function mount(root) {
       h('span', { class: 'num c-tokens' },
         h('span', { title: `Prompt: ${fmtNum(e.prompt_tokens || 0)} · Comp: ${fmtNum(e.completion_tokens || 0)}` },
           fmtCompact(e.total_tokens || 0)
-        )
+        ),
+        (heavyThreshold > 0 && (e.total_tokens || 0) >= heavyThreshold) ? h('span', {
+          class: 'badge',
+          style: {
+            fontSize: '9px',
+            padding: '1px 4px',
+            marginLeft: '4px',
+            background: 'rgba(234, 179, 8, 0.15)',
+            color: 'var(--lv-warn)',
+            border: '1px solid rgba(234, 179, 8, 0.35)',
+            fontWeight: '600'
+          },
+          title: `Heavy request: ${fmtNum(e.total_tokens)} tokens (>= ${fmtNum(heavyThreshold)} threshold)`
+        }, '⚠️ Heavy') : null
       ),
       // 6. Latency
       h('span', { class: 'num c-lat' },

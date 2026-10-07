@@ -4,6 +4,88 @@ import { h, icon, toast, formDialog, confirmDialog } from '../ui.js';
 import { store } from '../state.js';
 import { scopeLabel, scopeSubLabel, formatInheritText, sortPipeline, warningBannerText } from '../pluginhelpers.js';
 
+function promptSecretGuardMode(currentAction = 'block', onSave) {
+  let selected = currentAction || 'block';
+
+  const modes = [
+    {
+      id: 'block',
+      title: '🛡️ Block Request (Recommended)',
+      desc: 'Immediately rejects the request with HTTP 403 Forbidden before it reaches upstream LLM. Prevents any accidental leak. Ideal for sensitive company codebases.',
+      badge: 'Strict'
+    },
+    {
+      id: 'redact',
+      title: '✂️ Redact In-Flight',
+      desc: 'Replaces detected secrets with [REDACTED_SECRET:<type>] in real-time, allowing the LLM request to complete without leaking actual credentials.',
+      badge: 'Safe Pass'
+    },
+    {
+      id: 'warn_only',
+      title: '⚠️ Warn Only (Audit Mode)',
+      desc: 'Forwards the prompt unmodified to the model, but records a WARN security audit in System Logs. Useful for testing rule sensitivity without blocking agents.',
+      badge: 'Monitor'
+    }
+  ];
+
+  const radioContainer = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', margin: '8px 0' } });
+
+  function renderOptions() {
+    radioContainer.replaceChildren(
+      ...modes.map(m => {
+        const isSel = selected === m.id;
+        return h('label', {
+          style: {
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '10px',
+            padding: '10px 12px',
+            borderRadius: '8px',
+            border: `1px solid ${isSel ? 'var(--accent, #6366f1)' : 'var(--border)'}`,
+            background: isSel ? 'var(--hover)' : 'var(--panel)',
+            cursor: 'pointer'
+          },
+          onclick: () => {
+            selected = m.id;
+            renderOptions();
+          }
+        },
+          h('input', {
+            type: 'radio',
+            name: 'sg_mode',
+            value: m.id,
+            checked: isSel,
+            style: { marginTop: '3px' }
+          }),
+          h('div', { style: { flex: 1 } },
+            h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' } },
+              h('b', { style: { fontSize: '13px' } }, m.title),
+              h('span', { class: 'badge', style: { fontSize: '10px' } }, m.badge)
+            ),
+            h('p', { class: 'muted', style: { fontSize: '11.5px', margin: 0, lineHeight: 1.4 } }, m.desc)
+          )
+        );
+      })
+    );
+  }
+  renderOptions();
+
+  formDialog({
+    title: 'SecretGuard: Select Guardrail Mode',
+    submitText: 'Enable SecretGuard',
+    wide: true,
+    fields: [
+      {
+        label: 'Choose how SecretGuard handles detected secrets (API keys, private keys, .env credentials):',
+        node: radioContainer
+      }
+    ],
+    onSubmit: async () => {
+      await onSave(selected);
+    }
+  });
+}
+
 export function mount(root) {
   let alive = true;
   let pluginsList = [];
@@ -146,6 +228,20 @@ export function mount(root) {
         class: `btn btn-sm ${isGlobOn ? 'btn-primary' : ''}`,
         onclick: async () => {
           const nextState = isGlobOn ? 'off' : 'on';
+          if (nextState === 'on' && p.id === 'secretguard') {
+            let act = 'block';
+            try {
+              if (p.default_settings) act = JSON.parse(p.default_settings).action || 'block';
+            } catch {}
+            promptSecretGuardMode(act, async (mode) => {
+              await api.put(`/plugins/${encodeURIComponent(p.id)}`, {
+                default_settings: JSON.stringify({ action: mode })
+              });
+              await saveBinding(p.id, 'global', '', 'on', JSON.stringify({ action: mode }));
+              reload();
+            });
+            return;
+          }
           if (nextState === 'on' && (p.category === 'input_compression' || p.category === 'output_style')) {
             const ackKey = `ng.plugins.ack.${p.id}`;
             if (!localStorage.getItem(ackKey)) {
@@ -274,6 +370,18 @@ export function mount(root) {
       h('option', { value: 'on', selected: globB.state === 'on' }, 'On (Enabled)')
     );
     globSelect.onchange = async () => {
+      if (globSelect.value === 'on' && p.id === 'secretguard') {
+        let act = 'block';
+        try {
+          if (globB.settings) act = JSON.parse(globB.settings).action || 'block';
+        } catch {}
+        promptSecretGuardMode(act, async (mode) => {
+          globB.settings = JSON.stringify({ action: mode });
+          await saveBinding(p.id, 'global', '', 'on', globB.settings);
+          reload();
+        });
+        return;
+      }
       await saveBinding(p.id, 'global', '', globSelect.value, globB.settings);
       reload();
     };
@@ -630,11 +738,70 @@ export function mount(root) {
         savePromptBtn
       );
     } else if (p.id === 'secretguard') {
-      const actionSelect = h('select', { class: 'input' },
-        h('option', { value: 'block', selected: (currentSettings.action || 'block') === 'block' }, 'Block Request (HTTP 403 Rejection)'),
-        h('option', { value: 'redact', selected: currentSettings.action === 'redact' }, 'Redact In-Flight ([REDACTED_SECRET:<type>])'),
-        h('option', { value: 'warn_only', selected: currentSettings.action === 'warn_only' }, 'Warn Only (Audit Log, Forward Unmodified)')
-      );
+      let currentAction = currentSettings.action || 'block';
+
+      const modes = [
+        {
+          id: 'block',
+          title: '🛡️ Block Request (Recommended)',
+          desc: 'Immediately rejects the request with HTTP 403 Forbidden before it reaches upstream LLM. Prevents any accidental leak. Ideal for sensitive company codebases.',
+          badge: 'Strict'
+        },
+        {
+          id: 'redact',
+          title: '✂️ Redact In-Flight',
+          desc: 'Replaces detected secrets with [REDACTED_SECRET:<type>] in real-time, allowing the LLM request to complete without leaking actual credentials.',
+          badge: 'Safe Pass'
+        },
+        {
+          id: 'warn_only',
+          title: '⚠️ Warn Only (Audit Mode)',
+          desc: 'Forwards the prompt unmodified to the model, but records a WARN security audit in System Logs. Useful for testing rule sensitivity without blocking agents.',
+          badge: 'Monitor'
+        }
+      ];
+
+      const cardsContainer = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', margin: '8px 0 12px' } });
+
+      function renderCards() {
+        cardsContainer.replaceChildren(
+          ...modes.map((m) => {
+            const isSel = currentAction === m.id;
+            return h('label', {
+              style: {
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '10px',
+                padding: '10px 12px',
+                borderRadius: '8px',
+                border: `1px solid ${isSel ? 'var(--accent, #6366f1)' : 'var(--border)'}`,
+                background: isSel ? 'var(--hover)' : 'var(--panel)',
+                cursor: 'pointer'
+              },
+              onclick: () => {
+                currentAction = m.id;
+                renderCards();
+              }
+            },
+              h('input', {
+                type: 'radio',
+                name: 'sg_drawer_mode',
+                value: m.id,
+                checked: isSel,
+                style: { marginTop: '3px' }
+              }),
+              h('div', { style: { flex: 1 } },
+                h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' } },
+                  h('b', { style: { fontSize: '13px' } }, m.title),
+                  h('span', { class: 'badge', style: { fontSize: '10px' } }, m.badge)
+                ),
+                h('p', { class: 'muted', style: { fontSize: '11.5px', margin: 0, lineHeight: 1.4 } }, m.desc)
+              )
+            );
+          })
+        );
+      }
+      renderCards();
 
       const saveSecretBtn = h('button', {
         class: 'btn btn-sm btn-primary',
@@ -643,9 +810,9 @@ export function mount(root) {
           saveSecretBtn.disabled = true;
           try {
             await api.put(`/plugins/${encodeURIComponent(p.id)}`, {
-              default_settings: JSON.stringify({ action: actionSelect.value })
+              default_settings: JSON.stringify({ action: currentAction })
             });
-            toast('SecretGuard settings saved');
+            toast('SecretGuard settings saved', 'ok');
             reload();
           } catch (e) {
             toast(e.message, 'error');
@@ -653,17 +820,14 @@ export function mount(root) {
             saveSecretBtn.disabled = false;
           }
         }
-      }, 'Save Settings');
+      }, 'Save SecretGuard Settings');
 
       settingsSection = h('div', { style: { marginBottom: '16px', padding: '14px', background: 'var(--hover)', borderRadius: '6px' } },
-        h('h4', { style: { margin: '0 0 8px', fontSize: '13px' } }, 'SecretGuard Security Settings'),
-        h('div', { class: 'field', style: { marginBottom: '10px' } },
-          h('span', null, 'Detection Action'),
-          actionSelect,
-          h('p', { class: 'muted', style: { fontSize: '11px', margin: '4px 0 0' } },
-            'Scans incoming prompts for private keys (RSA/EC), high-entropy API tokens (sk-, ghp-, AKIA), and sensitive environment variables.'
-          )
+        h('h4', { style: { margin: '0 0 6px', fontSize: '13px' } }, 'SecretGuard Security Settings'),
+        h('p', { class: 'muted', style: { fontSize: '11px', margin: '0 0 8px' } },
+          'Scans incoming prompts for private keys (RSA/EC), high-entropy API tokens (sk-, ghp-, AKIA), and sensitive environment variables.'
         ),
+        cardsContainer,
         saveSecretBtn
       );
     }

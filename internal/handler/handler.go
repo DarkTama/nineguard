@@ -14,6 +14,7 @@ import (
 	"nineguard/internal/auth"
 	"nineguard/internal/keys"
 	"nineguard/internal/models"
+	"nineguard/internal/plugins"
 	"nineguard/internal/providers"
 	"nineguard/internal/proxy"
 	"nineguard/internal/syslog"
@@ -29,8 +30,13 @@ type Handler struct {
 	syslog       *syslog.Manager
 	keys         *keys.Manager
 	providers    *providers.Manager
+	plugins      *plugins.Manager
 	proxy        *proxy.Proxy
 	routerTarget string
+}
+
+func (h *Handler) SetPlugins(plm *plugins.Manager) {
+	h.plugins = plm
 }
 
 func New(am *auth.Manager, mm *models.Manager, tm *traffic.Manager, sm *syslog.Manager, km *keys.Manager, pm *providers.Manager, pr *proxy.Proxy, target string) *Handler {
@@ -656,13 +662,14 @@ func (h *Handler) CreateModelGroup(w http.ResponseWriter, r *http.Request) {
 		Name        string   `json:"name"`
 		Description string   `json:"description"`
 		Models      []string `json:"models"`
+		Priority    int      `json:"priority"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid payload")
 		return
 	}
 
-	group, err := h.models.CreateGroup(body.Name, body.Description, body.Models)
+	group, err := h.models.CreateGroupWithPriority(body.Name, body.Description, body.Models, body.Priority)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
@@ -685,13 +692,14 @@ func (h *Handler) UpdateModelGroup(w http.ResponseWriter, r *http.Request) {
 		Name        string   `json:"name"`
 		Description string   `json:"description"`
 		Models      []string `json:"models"`
+		Priority    int      `json:"priority"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid payload")
 		return
 	}
 
-	group, err := h.models.UpdateGroup(id, body.Name, body.Description, body.Models)
+	group, err := h.models.UpdateGroupWithPriority(id, body.Name, body.Description, body.Models, body.Priority)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1259,19 +1267,21 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name      string `json:"name"`
-		Route     string `json:"route"`
-		APIKey    string `json:"api_key"`
-		Prefix    string `json:"prefix"`
-		IsDefault bool   `json:"is_default"`
-		IsActive  bool   `json:"is_active"`
+		Name                    string `json:"name"`
+		Route                   string `json:"route"`
+		APIKey                  string `json:"api_key"`
+		Prefix                  string `json:"prefix"`
+		IsDefault               bool   `json:"is_default"`
+		IsActive                bool   `json:"is_active"`
+		UpstreamTokenSaving     bool   `json:"upstream_token_saving"`
+		UpstreamTokenSavingNote string `json:"upstream_token_saving_note"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid payload")
 		return
 	}
 
-	p, err := h.providers.CreateProvider(body.Name, body.Route, body.APIKey, body.Prefix, body.IsDefault, body.IsActive)
+	p, err := h.providers.CreateProviderWithTokenSaving(body.Name, body.Route, body.APIKey, body.Prefix, body.IsDefault, body.IsActive, body.UpstreamTokenSaving, body.UpstreamTokenSavingNote)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1293,12 +1303,14 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	var body struct {
-		Name      string  `json:"name"`
-		Route     string  `json:"route"`
-		APIKey    *string `json:"api_key"`
-		Prefix    string  `json:"prefix"`
-		IsDefault bool    `json:"is_default"`
-		IsActive  bool    `json:"is_active"`
+		Name                    string  `json:"name"`
+		Route                   string  `json:"route"`
+		APIKey                  *string `json:"api_key"`
+		Prefix                  string  `json:"prefix"`
+		IsDefault               bool    `json:"is_default"`
+		IsActive                bool    `json:"is_active"`
+		UpstreamTokenSaving     bool    `json:"upstream_token_saving"`
+		UpstreamTokenSavingNote string  `json:"upstream_token_saving_note"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid payload")
@@ -1312,7 +1324,7 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 		apiKey = existing.APIKey
 	}
 
-	p, err := h.providers.UpdateProvider(id, body.Name, body.Route, apiKey, body.Prefix, body.IsDefault, body.IsActive)
+	p, err := h.providers.UpdateProviderWithTokenSaving(id, body.Name, body.Route, apiKey, body.Prefix, body.IsDefault, body.IsActive, body.UpstreamTokenSaving, body.UpstreamTokenSavingNote)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return

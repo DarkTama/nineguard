@@ -650,6 +650,7 @@ func (m *Manager) DeleteKey(id string) error {
 	if err != nil {
 		return err
 	}
+	_, _ = m.db.Exec("DELETE FROM plugin_bindings WHERE scope_type = 'key' AND scope_id = ?", id)
 
 	if rawKey != "" {
 		m.mu.Lock()

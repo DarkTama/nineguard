@@ -483,7 +483,8 @@ export function mount(root) {
         h('td', null,
           h('div', { class: 'strong', style: { display: 'flex', alignItems: 'center', gap: '6px' } },
             icon('sparkles'),
-            g.name
+            g.name,
+            h('span', { class: 'badge', style: { fontSize: '10px' }, title: 'Plugin conflict resolution priority' }, `Pri: ${g.priority || 0}`)
           ),
           g.description ? h('div', { class: 'sub', style: { marginTop: '2px' } }, g.description) : null
         ),
@@ -538,6 +539,13 @@ export function mount(root) {
       type: 'text',
       placeholder: 'e.g. Curated models for high-performance agent tasks',
       value: existingGroup ? existingGroup.description : ''
+    });
+
+    const priorityInput = h('input', {
+      class: 'input',
+      type: 'number',
+      value: existingGroup ? (existingGroup.priority || 0) : 0,
+      style: { width: '120px' }
     });
 
     const filterInput = h('input', {
@@ -700,6 +708,13 @@ export function mount(root) {
           )
         },
         {
+          label: 'Plugin Priority',
+          node: h('div', null,
+            priorityInput,
+            h('p', { class: 'muted', style: { fontSize: '11px', margin: '3px 0 0' } }, 'Higher priority wins when a model belongs to multiple groups with conflicting plugin bindings (default: 0).')
+          )
+        },
+        {
           label: 'Select Models in this Group',
           node: modelPickerWrap
         }
@@ -724,11 +739,12 @@ export function mount(root) {
         }
 
         try {
+          const priority = parseInt(priorityInput.value || '0', 10);
           if (isEdit) {
-            await api.put(`/model-groups/${existingGroup.id}`, { name, description, models: selected });
+            await api.put(`/model-groups/${existingGroup.id}`, { name, description, models: selected, priority });
             toast(`Model group "${name}" updated!`, 'ok');
           } else {
-            await api.post('/model-groups', { name, description, models: selected });
+            await api.post('/model-groups', { name, description, models: selected, priority });
             toast(`Model group "${name}" created!`, 'ok');
           }
           await load();

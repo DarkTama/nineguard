@@ -15,6 +15,7 @@ import (
 
 	"nineguard/internal/keys"
 	"nineguard/internal/models"
+	"nineguard/internal/plugins"
 	"nineguard/internal/providers"
 	"nineguard/internal/traffic"
 )
@@ -24,10 +25,11 @@ type Proxy struct {
 	traffic    *traffic.Manager
 	keys       *keys.Manager
 	providers  *providers.Manager
+	plugins    *plugins.Manager
 	httpClient *http.Client
 }
 
-func NewProxy(mm *models.Manager, tm *traffic.Manager, km *keys.Manager, pm *providers.Manager) (*Proxy, error) {
+func NewProxy(mm *models.Manager, tm *traffic.Manager, km *keys.Manager, pm *providers.Manager, plm *plugins.Manager) (*Proxy, error) {
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
@@ -46,6 +48,7 @@ func NewProxy(mm *models.Manager, tm *traffic.Manager, km *keys.Manager, pm *pro
 		traffic:    tm,
 		keys:       km,
 		providers:  pm,
+		plugins:    plm,
 		httpClient: client,
 	}, nil
 }
@@ -245,6 +248,84 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 4. Intercept Chat Completions for Plugin Pipeline Execution
+	isChat := (r.Method == http.MethodPost && (r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/chat/completions"))
+	var pluginsApplied, pluginsSkipped, pluginErrors string
+	var tokensSaved, tokensOverhead, pluginMs int
+	var upstreamAppliedHeader string
+
+	if isChat && p.plugins != nil {
+		isBypass := strings.EqualFold(r.Header.Get("X-NineGuard-Plugins"), "off")
+		incomingApplied := r.Header.Get("X-NineGuard-Plugins-Applied")
+
+		var groups []models.ModelGroup
+		if p.models != nil {
+			groups, _ = p.models.ListGroups()
+		}
+
+		pipeRes, appliedHdr, pipeErr := p.plugins.ExecutePipeline(
+			r.Context(),
+			groups,
+			keyInfo.ID,
+			keyName,
+			actualModel,
+			provider.ID,
+			isBypass,
+			incomingApplied,
+			forwardBody,
+		)
+		if pipeErr != nil {
+			slog.Error("plugin pipeline execution error", "error", pipeErr)
+		} else if pipeRes != nil {
+			pluginsApplied = strings.Join(pipeRes.PluginsApplied, ",")
+			pluginsSkipped = strings.Join(pipeRes.PluginsSkipped, ",")
+			pluginErrors = strings.Join(pipeRes.PluginErrors, ",")
+			tokensSaved = pipeRes.TokensSaved
+			tokensOverhead = pipeRes.TokensOverhead
+			pluginMs = int(pipeRes.DurationMs)
+			upstreamAppliedHeader = appliedHdr
+
+			if pipeRes.Rejected {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(pipeRes.RejectCode)
+				errType := "permission_error"
+				errCode := "plugin_rejected"
+				if pipeRes.RejectCode == http.StatusServiceUnavailable {
+					errType = "server_error"
+					errCode = "plugin_unavailable"
+				}
+				errJSON := fmt.Sprintf(`{"error":{"message":%q,"type":%q,"param":null,"code":%q}}`, pipeRes.RejectMessage, errType, errCode)
+				_, _ = w.Write([]byte(errJSON))
+
+				errMsg := pipeRes.RejectMessage
+				if p.traffic != nil {
+					_ = p.traffic.Record(&traffic.LogEntry{
+						APIKey:         maskedKey,
+						APIKeyName:     keyName,
+						APIKeyID:       keyInfo.ID,
+						ProviderID:     provider.ID,
+						Model:          modelName,
+						DurationMs:     int(time.Since(start).Milliseconds()),
+						StatusCode:     pipeRes.RejectCode,
+						ClientIP:       clientIP,
+						Stream:         req.Stream,
+						ErrorMessage:   &errMsg,
+						Level:          "ERROR",
+						PluginsApplied: pluginsApplied,
+						PluginsSkipped: pluginsSkipped,
+						PluginErrors:   pluginErrors,
+						PluginMs:       pluginMs,
+					})
+				}
+				return
+			}
+
+			if len(pipeRes.Body) > 0 {
+				forwardBody = pipeRes.Body
+			}
+		}
+	}
+
 	// Build target URL
 	targetBase := strings.TrimRight(provider.Route, "/")
 	forwardPath := r.URL.Path
@@ -266,6 +347,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for _, v := range vv {
 			outReq.Header.Add(k, v)
 		}
+	}
+	outReq.Header.Del("X-NineGuard-Plugins") // Never forward bypass header upstream
+	if upstreamAppliedHeader != "" {
+		outReq.Header.Set("X-NineGuard-Plugins-Applied", upstreamAppliedHeader)
+	} else {
+		outReq.Header.Del("X-NineGuard-Plugins-Applied")
 	}
 	if parsedU, err := url.Parse(targetBase); err == nil {
 		outReq.Host = parsedU.Host
@@ -404,6 +491,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ClientIP:         clientIP,
 			Stream:           isSSE || req.Stream,
 			ErrorMessage:     responseErrMsg,
+			PluginsApplied:   pluginsApplied,
+			PluginsSkipped:   pluginsSkipped,
+			TokensSaved:      tokensSaved,
+			TokensOverhead:   tokensOverhead,
+			PluginErrors:     pluginErrors,
+			PluginMs:         pluginMs,
 		})
 		if resp.StatusCode >= 400 {
 			slog.Warn("proxy request failed", "model", modelName, "status", resp.StatusCode, "duration_ms", durMs, "source", "proxy")

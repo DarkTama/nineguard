@@ -21,6 +21,7 @@ import (
 	"nineguard/internal/handler"
 	"nineguard/internal/keys"
 	"nineguard/internal/models"
+	"nineguard/internal/plugins"
 	"nineguard/internal/providers"
 	"nineguard/internal/proxy"
 	"nineguard/internal/syslog"
@@ -120,9 +121,10 @@ func main() {
 	providersMgr := providers.NewManager(database)
 	modelsMgr := models.NewManager(database)
 	trafficMgr := traffic.NewManager(database)
+	pluginsMgr := plugins.NewManager(database, nil)
 
 	// 3. Initialize Reverse Proxy
-	revProxy, err := proxy.NewProxy(modelsMgr, trafficMgr, keysMgr, providersMgr)
+	revProxy, err := proxy.NewProxy(modelsMgr, trafficMgr, keysMgr, providersMgr, pluginsMgr)
 	if err != nil {
 		slog.Error("failed to initialize reverse proxy", "error", err)
 		os.Exit(1)
@@ -130,6 +132,7 @@ func main() {
 
 	// 4. Handlers
 	h := handler.New(authMgr, modelsMgr, trafficMgr, syslogMgr, keysMgr, providersMgr, revProxy, routerTarget)
+	h.SetPlugins(pluginsMgr)
 
 	// Background Auto-Sync: automatically fetch models from active upstream providers
 	go func() {
@@ -264,6 +267,21 @@ func main() {
 	mux.HandleFunc("GET /api/v1/settings/upstream", h.GetUpstreamSettings)
 	mux.HandleFunc("POST /api/v1/settings/upstream", h.SetUpstreamSettings)
 	mux.HandleFunc("POST /api/v1/settings/upstream/test", h.TestUpstreamConnection)
+
+	// Plugins API
+	mux.HandleFunc("GET /api/v1/plugins", h.ListPlugins)
+	mux.HandleFunc("POST /api/v1/plugins", h.CreatePlugin)
+	mux.HandleFunc("PUT /api/v1/plugins/{id}", h.UpdatePlugin)
+	mux.HandleFunc("POST /api/v1/plugins/{id}/rotate-secret", h.RotatePluginSecret)
+	mux.HandleFunc("DELETE /api/v1/plugins/{id}", h.DeletePlugin)
+	mux.HandleFunc("POST /api/v1/plugins/{id}/test", h.TestPlugin)
+	mux.HandleFunc("PUT /api/v1/plugins/order", h.UpdatePipelineOrder)
+	mux.HandleFunc("GET /api/v1/plugins/{id}/bindings", h.ListPluginBindings)
+	mux.HandleFunc("PUT /api/v1/plugins/{id}/bindings", h.UpsertPluginBinding)
+	mux.HandleFunc("POST /api/v1/plugins/{id}/bindings", h.UpsertPluginBinding)
+	mux.HandleFunc("GET /api/v1/plugins/resolve", h.ResolvePlugins)
+	mux.HandleFunc("GET /api/v1/plugins/warnings", h.GetPluginWarnings)
+	mux.HandleFunc("POST /api/v1/plugins/{id}/reset-prompt", h.ResetPromptOverride)
 
 	// Static Assets
 	fileServer := web.StaticHandler()

@@ -60,7 +60,7 @@ func TestProxyRecordsAPIKeyID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := proxy.NewProxy(mm, tm, km, pm)
+	p, err := proxy.NewProxy(mm, tm, km, pm, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

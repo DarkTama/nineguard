@@ -229,3 +229,50 @@ func TestDateFilterParameterized(t *testing.T) {
 		t.Errorf("expected 1 request in usage report, got %d", report.TotalRequests)
 	}
 }
+
+func TestTrafficLog_PluginTelemetry(t *testing.T) {
+	mgr, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	entry := &LogEntry{
+		APIKey:         "sk-ng-test1234",
+		APIKeyName:     "TestKey",
+		Model:          "gpt-4o",
+		StatusCode:     200,
+		TokensSaved:    128,
+		TokensOverhead: 15,
+		PluginsApplied: "headroom,caveman",
+		PluginsSkipped: "ponytail:marker_present",
+		PluginErrors:   "",
+		PluginMs:       45,
+	}
+	if err := mgr.Record(entry); err != nil {
+		t.Fatalf("failed to record entry: %v", err)
+	}
+
+	stats, err := mgr.GetDashboardStats("all", "", "", nil)
+	if err != nil {
+		t.Fatalf("failed to get stats: %v", err)
+	}
+	if stats.TokensSaved < 128 {
+		t.Fatalf("expected at least 128 tokens saved in stats, got %d", stats.TokensSaved)
+	}
+
+	logs, _, err := mgr.QueryLogs(FilterParams{Period: "all", Limit: 10})
+	if err != nil || len(logs) == 0 {
+		t.Fatalf("failed to query logs: %v", err)
+	}
+	found := logs[0]
+	if found.TokensSaved != 128 || found.TokensOverhead != 15 || found.PluginsApplied != "headroom,caveman" || found.PluginMs != 45 {
+		t.Fatalf("unexpected plugin telemetry on query logs: %+v", found)
+	}
+
+	rep, err := mgr.GetUsageReports("all", "", "", nil)
+	if err != nil {
+		t.Fatalf("failed to get usage report: %v", err)
+	}
+	if rep.TokensSaved < 128 {
+		t.Fatalf("expected at least 128 tokens saved in usage report, got %d", rep.TokensSaved)
+	}
+}
+

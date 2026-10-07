@@ -304,7 +304,8 @@ export function mount(root) {
       h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', marginBottom: '5px' } },
         h('span', { class: 'tok-in', title: `Input Prompt: ${fmtNum(promptToks)}` }, `↓ ${fmtCompact(promptToks)} in (${promptPct.toFixed(0)}%)`),
         h('span', { class: 'muted' }, '·'),
-        h('span', { class: 'tok-out', title: `Output Response: ${fmtNum(compToks)}` }, `↑ ${fmtCompact(compToks)} out (${compPct.toFixed(0)}%)`)
+        h('span', { class: 'tok-out', title: `Output Response: ${fmtNum(compToks)}` }, `↑ ${fmtCompact(compToks)} out (${compPct.toFixed(0)}%)`),
+        reportData.tokens_saved ? h('span', { style: { color: 'var(--ok)', fontWeight: 'bold' } }, `· ${fmtCompact(reportData.tokens_saved)} saved`) : null
       ),
       totToks > 0 ? renderRatioBar(promptToks, compToks) : null
     );
@@ -757,11 +758,40 @@ export function mount(root) {
     return h('div', null, legendEl, headerEl, ...cards);
   }
 
+  function renderPluginsBreakdown() {
+    const list = reportData.plugins_breakdown || [];
+    if (!list.length) return null;
+
+    const rows = list.map((pb) => h('tr', null,
+      h('td', null, h('b', null, pb.plugin_id)),
+      h('td', { class: 'num' }, fmtNum(pb.requests || 0)),
+      h('td', { class: 'num', style: { color: 'var(--ok)', fontWeight: 'bold' } }, fmtNum(pb.tokens_saved || 0))
+    ));
+
+    return h('div', { class: 'card table-card mt', style: { marginTop: '16px' } },
+      h('div', { class: 'card-head' },
+        h('h3', { style: { margin: 0, fontSize: '14px' } }, 'Token Savers & Plugins Attribution'),
+        h('p', { class: 'card-sub' }, 'Input tokens saved and requests processed per plugin during this period')
+      ),
+      h('table', { class: 'table' },
+        h('thead', null,
+          h('tr', null,
+            h('th', null, 'Plugin ID'),
+            h('th', { class: 'num' }, 'Requests Processed'),
+            h('th', { class: 'num' }, 'Tokens Saved')
+          )
+        ),
+        h('tbody', null, ...rows)
+      )
+    );
+  }
+
   // ── Render Content based on active group ──
   function renderContent() {
     if (!reportData) return;
     const listEl = currentGroup === 'keys' ? renderKeysBreakdown() : renderModelsBreakdown();
-    contentArea.replaceChildren(listEl);
+    const pluginsEl = renderPluginsBreakdown();
+    contentArea.replaceChildren(listEl, pluginsEl || '');
   }
 
   // ── Main Load ──

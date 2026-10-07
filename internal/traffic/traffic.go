@@ -29,6 +29,12 @@ type LogEntry struct {
 	ErrorMessage     *string   `json:"error_message,omitempty"`
 	Level            string    `json:"level"`
 	Message          string    `json:"message"`
+	PluginsSkipped   string    `json:"plugins_skipped"`
+	PluginsApplied   string    `json:"plugins_applied"`
+	TokensSaved      int       `json:"tokens_saved"`
+	TokensOverhead   int       `json:"tokens_overhead"`
+	PluginErrors     string    `json:"plugin_errors"`
+	PluginMs         int       `json:"plugin_ms"`
 }
 
 type FilterParams struct {
@@ -140,6 +146,7 @@ type DashboardStats struct {
 	TotalTokens      int                  `json:"total_tokens"`
 	PromptTokens     int                  `json:"prompt_tokens"`
 	CompletionTokens int                  `json:"completion_tokens"`
+	TokensSaved      int                  `json:"tokens_saved"`
 	BlockedRequests  int                  `json:"blocked_requests"`
 	SuccessRequests  int                  `json:"success_requests"`
 	ErrorRequests    int                  `json:"error_requests"`
@@ -199,6 +206,7 @@ type KeyUsageBreakdown struct {
 	AvgDurationMs    int                 `json:"avg_duration_ms"`
 	TokenShare       float64             `json:"token_share"`
 	LastActiveAt     *string             `json:"last_active_at,omitempty"`
+	TokensSaved      int                 `json:"tokens_saved"`
 	ModelUsage       []ModelUsageSummary `json:"model_usage"`
 }
 
@@ -218,18 +226,26 @@ type ModelUsageBreakdown struct {
 	KeyConsumers     []KeyUsageSummary `json:"key_consumers"`
 }
 
+type PluginUsageBreakdown struct {
+	PluginID    string `json:"plugin_id"`
+	Requests    int    `json:"requests"`
+	TokensSaved int    `json:"tokens_saved"`
+}
+
 type UsageReport struct {
-	Period           string                `json:"period"`
-	StartDate        string                `json:"start_date,omitempty"`
-	EndDate          string                `json:"end_date,omitempty"`
-	TotalTokens      int                   `json:"total_tokens"`
-	PromptTokens     int                   `json:"prompt_tokens"`
-	CompletionTokens int                   `json:"completion_tokens"`
-	TotalRequests    int                   `json:"total_requests"`
-	TopConsumerKey   string                `json:"top_consumer_key"`
-	TopModel         string                `json:"top_model"`
-	KeysBreakdown    []KeyUsageBreakdown   `json:"keys_breakdown"`
-	ModelsBreakdown  []ModelUsageBreakdown `json:"models_breakdown"`
+	Period           string                 `json:"period"`
+	StartDate        string                 `json:"start_date,omitempty"`
+	EndDate          string                 `json:"end_date,omitempty"`
+	TotalTokens      int                    `json:"total_tokens"`
+	PromptTokens     int                    `json:"prompt_tokens"`
+	CompletionTokens int                    `json:"completion_tokens"`
+	TokensSaved      int                    `json:"tokens_saved"`
+	TotalRequests    int                    `json:"total_requests"`
+	TopConsumerKey   string                 `json:"top_consumer_key"`
+	TopModel         string                 `json:"top_model"`
+	KeysBreakdown    []KeyUsageBreakdown    `json:"keys_breakdown"`
+	ModelsBreakdown  []ModelUsageBreakdown  `json:"models_breakdown"`
+	PluginsBreakdown []PluginUsageBreakdown `json:"plugins_breakdown"`
 }
 
 func sanitizeDate(d string) string {
@@ -410,10 +426,12 @@ func (m *Manager) Record(entry *LogEntry) error {
 	_, err := m.db.Exec(`
 		INSERT INTO traffic_logs (
 			timestamp, api_key, api_key_name, api_key_id, provider_id, model, prompt_tokens, completion_tokens, total_tokens,
-			duration_ms, status_code, client_ip, stream, error_message, level
-		) VALUES (CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			duration_ms, status_code, client_ip, stream, error_message, level,
+			plugins_skipped, plugins_applied, tokens_saved, tokens_overhead, plugin_errors, plugin_ms
+		) VALUES (CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, maskedKey, entry.APIKeyName, keyID, entry.ProviderID, entry.Model, entry.PromptTokens, entry.CompletionTokens, entry.TotalTokens,
-		entry.DurationMs, entry.StatusCode, entry.ClientIP, streamInt, errMsg, entry.Level)
+		entry.DurationMs, entry.StatusCode, entry.ClientIP, streamInt, errMsg, entry.Level,
+		entry.PluginsSkipped, entry.PluginsApplied, entry.TokensSaved, entry.TokensOverhead, entry.PluginErrors, entry.PluginMs)
 
 	// Ensure model is recorded in models table
 	_, _ = m.db.Exec("INSERT OR IGNORE INTO models (id, name, enabled) VALUES (?, ?, 1)", entry.Model, entry.Model)
@@ -634,7 +652,9 @@ func (m *Manager) QueryLogs(p FilterParams) ([]LogEntry, int, error) {
 
 	query := fmt.Sprintf(`
 		SELECT id, timestamp, api_key, COALESCE(api_key_name, ''), COALESCE(api_key_id, ''), COALESCE(provider_id, ''), model, prompt_tokens, completion_tokens, total_tokens,
-		       duration_ms, status_code, client_ip, stream, error_message, COALESCE(level, '')
+		       duration_ms, status_code, client_ip, stream, error_message, COALESCE(level, ''),
+		       COALESCE(plugins_skipped, ''), COALESCE(plugins_applied, ''), COALESCE(tokens_saved, 0), COALESCE(tokens_overhead, 0),
+		       COALESCE(plugin_errors, ''), COALESCE(plugin_ms, 0)
 		FROM traffic_logs
 		%s
 		ORDER BY id DESC
@@ -658,6 +678,8 @@ func (m *Manager) QueryLogs(p FilterParams) ([]LogEntry, int, error) {
 			&e.ID, &e.Timestamp, &e.APIKey, &e.APIKeyName, &e.APIKeyID, &e.ProviderID, &e.Model,
 			&e.PromptTokens, &e.CompletionTokens, &e.TotalTokens,
 			&e.DurationMs, &e.StatusCode, &e.ClientIP, &streamInt, &errMsg, &lvlStr,
+			&e.PluginsSkipped, &e.PluginsApplied, &e.TokensSaved, &e.TokensOverhead,
+			&e.PluginErrors, &e.PluginMs,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -951,6 +973,7 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string, loc *time
 			COALESCE(SUM(total_tokens), 0),
 			COALESCE(SUM(prompt_tokens), 0),
 			COALESCE(SUM(completion_tokens), 0),
+			COALESCE(SUM(tokens_saved), 0),
 			COALESCE(SUM(CASE WHEN status_code = 403 THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN status_code >= 400 AND status_code != 403 THEN 1 ELSE 0 END), 0),
@@ -968,6 +991,7 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string, loc *time
 		&stats.TotalTokens,
 		&stats.PromptTokens,
 		&stats.CompletionTokens,
+		&stats.TokensSaved,
 		&stats.BlockedRequests,
 		&stats.SuccessRequests,
 		&stats.ErrorRequests,
@@ -1441,7 +1465,8 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 			COUNT(*),
 			COALESCE(SUM(total_tokens), 0),
 			COALESCE(SUM(prompt_tokens), 0),
-			COALESCE(SUM(completion_tokens), 0)
+			COALESCE(SUM(completion_tokens), 0),
+			COALESCE(SUM(tokens_saved), 0)
 		FROM traffic_logs
 		WHERE %s
 	`, dateFilter)
@@ -1451,6 +1476,7 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 		&report.TotalTokens,
 		&report.PromptTokens,
 		&report.CompletionTokens,
+		&report.TokensSaved,
 	)
 
 	// 2. Query Key-Model Cross Breakdown, grouped by key ID (unlinked rows by historical name).
@@ -1520,7 +1546,8 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 			COALESCE(SUM(CASE WHEN t.status_code >= 200 AND t.status_code < 400 THEN 1 ELSE 0 END), 0) AS ok_reqs,
 			COALESCE(SUM(CASE WHEN t.status_code >= 400 AND t.status_code != 403 THEN 1 ELSE 0 END), 0) AS err_reqs,
 			COALESCE(SUM(CASE WHEN t.status_code = 403 THEN 1 ELSE 0 END), 0) AS blk_reqs,
-			COALESCE(ROUND(AVG(t.duration_ms)), 0) AS avg_dur
+			COALESCE(ROUND(AVG(t.duration_ms)), 0) AS avg_dur,
+			COALESCE(SUM(t.tokens_saved), 0) AS tok_saved
 		FROM traffic_logs t%s
 		WHERE %s
 		GROUP BY g
@@ -1537,7 +1564,7 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 			if err := kRows.Scan(
 				&g, &kb.KeyName, &masked, &kb.TotalTokens, &kb.PromptTokens, &kb.CompletionTokens,
 				&kb.TotalRequests, &kb.SuccessRequests, &kb.ErrorRequests, &kb.BlockedRequests,
-				&kb.AvgDurationMs,
+				&kb.AvgDurationMs, &kb.TokensSaved,
 			); err == nil {
 				kb.KeyID, kb.Unlinked = splitKeyGroup(g)
 				kb.Key = masked.String
@@ -1610,6 +1637,39 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 	}
 	if len(report.ModelsBreakdown) > 0 {
 		report.TopModel = report.ModelsBreakdown[0].Model
+	}
+
+	// 6. Query Breakdown per Plugin
+	pluginQuery := fmt.Sprintf(`
+		SELECT COALESCE(plugins_applied, ''), COALESCE(SUM(tokens_saved), 0), COUNT(*)
+		FROM traffic_logs
+		WHERE %s AND plugins_applied != ''
+		GROUP BY plugins_applied
+	`, dateFilter)
+	pRows, err := m.db.Query(pluginQuery, dateFilterArgs...)
+	if err == nil {
+		defer pRows.Close()
+		pMap := make(map[string]*PluginUsageBreakdown)
+		for pRows.Next() {
+			var applied string
+			var saved, reqs int
+			if err := pRows.Scan(&applied, &saved, &reqs); err == nil {
+				for _, pID := range strings.Split(applied, ",") {
+					pID = strings.TrimSpace(pID)
+					if pID == "" {
+						continue
+					}
+					if _, exists := pMap[pID]; !exists {
+						pMap[pID] = &PluginUsageBreakdown{PluginID: pID}
+					}
+					pMap[pID].Requests += reqs
+					pMap[pID].TokensSaved += saved
+				}
+			}
+		}
+		for _, v := range pMap {
+			report.PluginsBreakdown = append(report.PluginsBreakdown, *v)
+		}
 	}
 
 	return report, nil

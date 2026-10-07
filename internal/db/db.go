@@ -91,6 +91,8 @@ func (d *DB) migrate() error {
 		model_access_mode TEXT DEFAULT 'all',
 		model_group_ids TEXT DEFAULT '[]',
 		allowed_models TEXT DEFAULT '',
+		quota_limit INTEGER DEFAULT 0,
+		quota_period TEXT DEFAULT 'none',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
@@ -215,6 +217,11 @@ func (d *DB) migrate() error {
 	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN tokens_overhead INTEGER DEFAULT 0")
 	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN plugin_errors TEXT DEFAULT ''")
 	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN plugin_ms INTEGER DEFAULT 0")
+
+	// Token quota & spike alerts (ADR 0005)
+	_, _ = d.Exec("ALTER TABLE api_keys ADD COLUMN quota_limit INTEGER DEFAULT 0")
+	_, _ = d.Exec("ALTER TABLE api_keys ADD COLUMN quota_period TEXT DEFAULT 'none'")
+	_, _ = d.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('heavy_token_threshold', '8000')")
 
 	if err := d.seedPlugins(); err != nil {
 		return fmt.Errorf("seed plugins: %w", err)

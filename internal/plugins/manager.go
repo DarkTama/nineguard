@@ -386,7 +386,8 @@ func (m *Manager) ListBindings(pluginID string) ([]Binding, error) {
 	return result, nil
 }
 
-// UpsertBinding saves or updates a binding.
+// UpsertBinding saves or updates a binding. When state is inherit for non-global scopes,
+// it removes the binding record to maintain sparse overrides.
 func (m *Manager) UpsertBinding(b Binding) error {
 	state := b.State
 	if state == "" {
@@ -395,6 +396,17 @@ func (m *Manager) UpsertBinding(b Binding) error {
 	settings := strings.TrimSpace(b.Settings)
 	if settings == "" {
 		settings = "{}"
+	}
+
+	if b.ScopeType != ScopeGlobal && state == StateInherit {
+		_, err := m.db.Exec(`
+			DELETE FROM plugin_bindings WHERE plugin_id = ? AND scope_type = ? AND scope_id = ?
+		`, b.PluginID, b.ScopeType, b.ScopeID)
+		if err != nil {
+			return fmt.Errorf("delete inherit binding error: %w", err)
+		}
+		_ = m.ReloadCache()
+		return nil
 	}
 
 	_, err := m.db.Exec(`
@@ -411,6 +423,20 @@ func (m *Manager) UpsertBinding(b Binding) error {
 
 	_ = m.ReloadCache()
 	return nil
+}
+
+// ListBindingsForScope returns all active non-inherit bindings for a specific scope (key or group).
+func (m *Manager) ListBindingsForScope(scopeType ScopeType, scopeID string) ([]Binding, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []Binding
+	for _, b := range m.bindings {
+		if b.ScopeType == scopeType && b.ScopeID == scopeID {
+			result = append(result, b)
+		}
+	}
+	return result, nil
 }
 
 // ResetPromptOverride clears prompt_override from the plugin settings.

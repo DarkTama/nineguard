@@ -405,6 +405,24 @@ func (h *Handler) ListPluginBindings(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]any{"bindings": bindings})
 }
 
+// ListScopeBindings returns all active bindings for a specific scope (key or group).
+func (h *Handler) ListScopeBindings(w http.ResponseWriter, r *http.Request) {
+	if h.plugins == nil {
+		jsonError(w, http.StatusBadRequest, "Plugins manager not available")
+		return
+	}
+	scopeType := plugins.ScopeType(r.URL.Query().Get("scope_type"))
+	scopeID := r.URL.Query().Get("scope_id")
+
+	bindings, err := h.plugins.ListBindingsForScope(scopeType, scopeID)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]any{"bindings": bindings})
+}
+
 // UpsertPluginBinding creates or updates a binding and returns any scope warnings.
 func (h *Handler) UpsertPluginBinding(w http.ResponseWriter, r *http.Request) {
 	if h.plugins == nil {

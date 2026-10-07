@@ -300,21 +300,26 @@ func (d *DB) seedPlugins() error {
 		id, name, desc, category string
 		order                    int
 		settings                 string
+		bypassable               int
+		failurePolicy            string
 	}{
-		{"headroom", "Headroom", "Compresses message history before forwarding to model", "input_compression", 10, `{"url":"http://127.0.0.1:8787","mode":"incremental","compress_user_messages":false}`},
-		{"ponytail", "Ponytail", "Instructs model to respond with compact formatting", "output_style", 20, `{"level":"full"}`},
-		{"caveman", "Caveman", "Instructs model to respond in terse caveman style", "output_style", 30, `{"variant":"caveman"}`},
+		{"secretguard", "SecretGuard", "Scans prompts for API keys, private keys, and environment secrets", "other", 5, `{"action":"block"}`, 0, "closed"},
+		{"headroom", "Headroom", "Compresses message history before forwarding to model", "input_compression", 10, `{"url":"http://127.0.0.1:8787","mode":"incremental","compress_user_messages":false}`, 1, "open"},
+		{"ponytail", "Ponytail", "Instructs model to respond with compact formatting", "output_style", 20, `{"level":"full"}`, 1, "open"},
+		{"caveman", "Caveman", "Instructs model to respond in terse caveman style", "output_style", 30, `{"variant":"caveman"}`, 1, "open"},
 	}
 	for _, b := range builtins {
 		_, err := d.Exec(`
 			INSERT INTO plugins (id, kind, name, description, category, bypassable, pipeline_order, failure_policy, default_settings, created_at, updated_at)
-			VALUES (?, 'builtin', ?, ?, ?, 1, ?, 'open', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+			VALUES (?, 'builtin', ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 			ON CONFLICT(id) DO UPDATE SET
 				name = excluded.name,
 				category = excluded.category,
+				bypassable = excluded.bypassable,
 				pipeline_order = excluded.pipeline_order,
+				failure_policy = excluded.failure_policy,
 				default_settings = excluded.default_settings
-		`, b.id, b.name, b.desc, b.category, b.order, b.settings)
+		`, b.id, b.name, b.desc, b.category, b.bypassable, b.order, b.failurePolicy, b.settings)
 		if err != nil {
 			return err
 		}

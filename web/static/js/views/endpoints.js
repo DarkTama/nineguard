@@ -491,6 +491,62 @@ export function mount(root) {
       h('option', { value: 'total', selected: existingKey && existingKey.quota_period === 'total' }, 'Lifetime (All-time)')
     );
 
+    const velocityBox = h('div', {
+      style: {
+        display: isEdit ? 'flex' : 'none',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: '6px',
+        padding: '6px 8px',
+        background: 'var(--panel)',
+        borderRadius: '6px',
+        fontSize: '11px'
+      }
+    }, h('span', { class: 'muted' }, 'Loading usage velocity...'));
+
+    if (isEdit) {
+      api.get(`/keys/${existingKey.id}/velocity`).then(vel => {
+        if (!vel) return;
+        const p24 = formatTokensCompact(vel.tokens_24h || 0);
+        const p7d = formatTokensCompact(vel.tokens_7d_avg || 0);
+        const p30 = formatTokensCompact(vel.tokens_30d || 0);
+
+        const pill24 = h('span', { class: 'badge', title: `${vel.tokens_24h || 0} tokens in past 24h` }, `24h: ${p24}`);
+        const pill7d = h('span', { class: 'badge', title: `${vel.tokens_7d_avg || 0} tokens/day average over past 7d` }, `7d avg: ${p7d}/day`);
+        const pill30 = h('span', { class: 'badge', title: `${vel.tokens_30d || 0} tokens in past 30d` }, `30d: ${p30}`);
+
+        const preset15 = (vel.tokens_7d_avg > 0) ? h('button', {
+          class: 'btn btn-sm',
+          type: 'button',
+          style: { fontSize: '10.5px', padding: '1px 6px', height: '22px' },
+          title: `Set limit to 1.5x daily average (${Math.round(vel.tokens_7d_avg * 1.5)} tokens)`,
+          onclick: () => {
+            quotaLimitInput.value = String(Math.round(vel.tokens_7d_avg * 1.5));
+            quotaPeriodSelect.value = 'daily';
+          }
+        }, 'Set 1.5x Daily') : null;
+
+        const preset20 = (vel.tokens_7d_avg > 0) ? h('button', {
+          class: 'btn btn-sm',
+          type: 'button',
+          style: { fontSize: '10.5px', padding: '1px 6px', height: '22px' },
+          title: `Set limit to 2x daily average (${vel.tokens_7d_avg * 2} tokens)`,
+          onclick: () => {
+            quotaLimitInput.value = String(vel.tokens_7d_avg * 2);
+            quotaPeriodSelect.value = 'daily';
+          }
+        }, 'Set 2x Daily') : null;
+
+        velocityBox.replaceChildren(
+          h('b', { style: { color: 'var(--text-2)' } }, 'Historical Velocity:'),
+          pill24, pill7d, pill30,
+          preset15, preset20
+        );
+      }).catch(() => {
+        velocityBox.style.display = 'none';
+      });
+    }
+
     let mode = initialMode;
 
     // ── Segmented Mode Buttons ──
@@ -918,6 +974,7 @@ export function mount(root) {
                 h('small', { class: 'muted', style: { fontSize: '11px' } }, 'Anchors to UTC calendar boundaries.')
               )
             ),
+            velocityBox,
             h('p', { class: 'muted', style: { fontSize: '11px', margin: 0, lineHeight: 1.4 } },
               '🛡️ Soft Post-Facto Gating: Requests are blocked with HTTP 429 once consumed tokens reach quota. Admitted requests run to completion.'
             )

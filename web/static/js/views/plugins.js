@@ -561,7 +561,16 @@ export function mount(root) {
         rows: 3,
         placeholder: 'Leave blank to use bundled default prompt text',
         value: currentSettings.prompt_override || '',
-        style: { fontFamily: 'monospace', fontSize: '11.5px', resize: 'vertical' }
+        style: {
+          fontFamily: 'monospace',
+          fontSize: '11.5px',
+          padding: '8px 10px',
+          lineHeight: '1.5',
+          height: 'auto',
+          minHeight: '72px',
+          boxSizing: 'border-box',
+          resize: 'vertical'
+        }
       });
 
       const savePromptBtn = h('button', {

@@ -178,6 +178,14 @@ func (d *DB) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_plugins_order ON plugins(pipeline_order);
 	CREATE INDEX IF NOT EXISTS idx_plugin_bindings_plugin ON plugin_bindings(plugin_id);
 	CREATE INDEX IF NOT EXISTS idx_plugin_bindings_scope ON plugin_bindings(scope_type, scope_id);
+
+	CREATE TABLE IF NOT EXISTS traffic_payloads (
+		traffic_id INTEGER PRIMARY KEY,
+		request_body BLOB,
+		response_body BLOB,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY(traffic_id) REFERENCES traffic_logs(id) ON DELETE CASCADE
+	);
 	`
 	if _, err := d.Exec(schema); err != nil {
 		return err
@@ -223,6 +231,18 @@ func (d *DB) migrate() error {
 	// Multimodal image logging (Feature 1)
 	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN has_images INTEGER DEFAULT 0")
 	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN image_count INTEGER DEFAULT 0")
+
+	// Payload Inspector & Replay (Feature 6)
+	_, _ = d.Exec(`
+		CREATE TABLE IF NOT EXISTS traffic_payloads (
+			traffic_id INTEGER PRIMARY KEY,
+			request_body BLOB,
+			response_body BLOB,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY(traffic_id) REFERENCES traffic_logs(id) ON DELETE CASCADE
+		)
+	`)
+	_, _ = d.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('record_payloads', 'disabled')")
 
 	// Token quota & spike alerts (ADR 0005)
 	_, _ = d.Exec("ALTER TABLE api_keys ADD COLUMN quota_limit INTEGER DEFAULT 0")

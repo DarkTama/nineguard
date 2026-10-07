@@ -438,7 +438,7 @@ func (m *Manager) Record(entry *LogEntry) error {
 		hasImagesInt = 1
 	}
 
-	_, err := m.db.Exec(`
+	res, err := m.db.Exec(`
 		INSERT INTO traffic_logs (
 			timestamp, api_key, api_key_name, api_key_id, provider_id, model, prompt_tokens, completion_tokens, total_tokens,
 			duration_ms, status_code, client_ip, stream, error_message, level,
@@ -449,6 +449,12 @@ func (m *Manager) Record(entry *LogEntry) error {
 		entry.DurationMs, entry.StatusCode, entry.ClientIP, streamInt, errMsg, entry.Level,
 		entry.PluginsSkipped, entry.PluginsApplied, entry.TokensSaved, entry.TokensOverhead, entry.PluginErrors, entry.PluginMs,
 		hasImagesInt, entry.ImageCount)
+
+	if err == nil {
+		if id, idErr := res.LastInsertId(); idErr == nil {
+			entry.ID = id
+		}
+	}
 
 	// Ensure model is recorded in models table
 	_, _ = m.db.Exec("INSERT OR IGNORE INTO models (id, name, enabled) VALUES (?, ?, 1)", entry.Model, entry.Model)

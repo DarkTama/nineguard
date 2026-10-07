@@ -463,10 +463,10 @@ curl -b cookies.txt -X PUT http://localhost:8080/api/v1/model-groups/ID_GRUP \
 
 Menemukan kendala atau punya ide untuk menyempurnakan NineGuard? Kami menyambut laporan bug, ide fitur, serta masukan!
 
-* **[Report a Bug](https://github.com/aribrilliantsyah/nineguard/issues/new?template=bug_report.yml)**: Gunakan form ini jika menemukan bug, error, atau anomali gateway.
-* **[Request a Feature](https://github.com/aribrilliantsyah/nineguard/issues/new?template=feature_request.yml)**: Usulkan ide baru, optimasi routing, atau peningkatan UI/UX.
-* **[Submit Feedback](https://github.com/aribrilliantsyah/nineguard/issues/new?template=feedback.yml)**: Berikan saran, kesan, atau kritik seputar pengalaman penggunaan NineGuard.
-* **[GitHub Discussions](https://github.com/aribrilliantsyah/nineguard/discussions)**: Diskusi umum, tanya-jawab konfigurasi, dan interaksi komunitas.
+* **[Report a Bug](https://github.com/DarkTama/nineguard/issues/new?template=bug_report.yml)**: Gunakan form ini jika menemukan bug, error, atau anomali gateway.
+* **[Request a Feature](https://github.com/DarkTama/nineguard/issues/new?template=feature_request.yml)**: Usulkan ide baru, optimasi routing, atau peningkatan UI/UX.
+* **[Submit Feedback](https://github.com/DarkTama/nineguard/issues/new?template=feedback.yml)**: Berikan saran, kesan, atau kritik seputar pengalaman penggunaan NineGuard.
+* **[GitHub Discussions](https://github.com/DarkTama/nineguard/discussions)**: Diskusi umum, tanya-jawab konfigurasi, dan interaksi komunitas.
 
 > **Privacy Notice**: Saat melaporkan masalah atau melampirkan log server / screenshot, **jangan pernah mencantumkan master API key provider, NineGuard API key, password, atau credential sensitif**.
 

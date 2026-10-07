@@ -25,6 +25,8 @@ type KeyInfo struct {
 	ModelAccessMode string    `json:"model_access_mode"` // "all", "group", "custom"
 	ModelGroupIDs   []string  `json:"model_group_ids"`
 	AllowedModels   []string  `json:"allowed_models"`
+	QuotaLimit      int64     `json:"quota_limit"`
+	QuotaPeriod     string    `json:"quota_period"`
 	TotalRequests   int       `json:"total_requests"`
 	TotalTokens     int       `json:"total_tokens"`
 	LastUsedAt      *string   `json:"last_used_at,omitempty"`
@@ -387,7 +389,9 @@ func (m *Manager) loadLocalCache() {
 		SELECT id, key, prefix, name, is_active, 
 		       COALESCE(model_access_mode, 'all'), 
 		       COALESCE(model_group_ids, '[]'), 
-		       COALESCE(allowed_models, '') 
+		       COALESCE(allowed_models, ''),
+		       COALESCE(quota_limit, 0),
+		       COALESCE(quota_period, 'none') 
 		FROM api_keys
 	`)
 	if err != nil {
@@ -402,7 +406,7 @@ func (m *Manager) loadLocalCache() {
 		var ki KeyInfo
 		var isAct int
 		var mode, rawGroupIDs, rawModels string
-		if err := rows.Scan(&ki.ID, &ki.RawKey, &ki.Prefix, &ki.Name, &isAct, &mode, &rawGroupIDs, &rawModels); err == nil {
+		if err := rows.Scan(&ki.ID, &ki.RawKey, &ki.Prefix, &ki.Name, &isAct, &mode, &rawGroupIDs, &rawModels, &ki.QuotaLimit, &ki.QuotaPeriod); err == nil {
 			ki.IsActive = (isAct == 1)
 			ki.Key = MaskKey(ki.RawKey)
 			ki.ModelAccessMode = mode
@@ -430,22 +434,50 @@ func (m *Manager) ensureDefaultKey() {
 	}
 }
 
+type CreateKeyOptions struct {
+	ModelAccessMode string
+	ModelGroupIDs   []string
+	AllowedModels   []string
+	QuotaLimit      int64
+	QuotaPeriod     string
+}
+
 // CreateKey issues a new NineGuard API key with customizable model access mode, groups, and allowed models
 func (m *Manager) CreateKey(name, modelAccessMode string, modelGroupIDs, allowedModels []string) (*KeyInfo, error) {
+	return m.CreateKeyWithOptions(name, CreateKeyOptions{
+		ModelAccessMode: modelAccessMode,
+		ModelGroupIDs:   modelGroupIDs,
+		AllowedModels:   allowedModels,
+		QuotaLimit:      0,
+		QuotaPeriod:     "none",
+	})
+}
+
+// CreateKeyWithOptions issues a new NineGuard API key with customizable options including quotas
+func (m *Manager) CreateKeyWithOptions(name string, opts CreateKeyOptions) (*KeyInfo, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = "Agent Key"
 	}
 
-	modelAccessMode = strings.ToLower(strings.TrimSpace(modelAccessMode))
+	modelAccessMode := strings.ToLower(strings.TrimSpace(opts.ModelAccessMode))
 	if modelAccessMode == "" {
-		if len(modelGroupIDs) > 0 {
+		if len(opts.ModelGroupIDs) > 0 {
 			modelAccessMode = "group"
-		} else if len(allowedModels) > 0 {
+		} else if len(opts.AllowedModels) > 0 {
 			modelAccessMode = "custom"
 		} else {
 			modelAccessMode = "all"
 		}
+	}
+
+	quotaPeriod := strings.ToLower(strings.TrimSpace(opts.QuotaPeriod))
+	if quotaPeriod == "" {
+		quotaPeriod = "none"
+	}
+	quotaLimit := opts.QuotaLimit
+	if quotaLimit < 0 {
+		quotaLimit = 0
 	}
 
 	rawKey, prefix, err := generateSecureToken("sk-ng-")
@@ -457,17 +489,17 @@ func (m *Manager) CreateKey(name, modelAccessMode string, modelGroupIDs, allowed
 	_, _ = rand.Read(idBytes)
 	id := hex.EncodeToString(idBytes)
 
-	serializedGroups := SerializeAllowedModels(modelGroupIDs)
+	serializedGroups := SerializeAllowedModels(opts.ModelGroupIDs)
 	cleanGroups := ParseAllowedModels(serializedGroups)
 
-	serializedModels := SerializeAllowedModels(allowedModels)
+	serializedModels := SerializeAllowedModels(opts.AllowedModels)
 	cleanModels := ParseAllowedModels(serializedModels)
 
 	now := time.Now()
 	_, err = m.db.Exec(`
-		INSERT INTO api_keys (id, key, prefix, name, is_active, model_access_mode, model_group_ids, allowed_models, created_at, updated_at)
-		VALUES (?, ?, ?, ?, 1, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, id, rawKey, prefix, name, modelAccessMode, serializedGroups, serializedModels)
+		INSERT INTO api_keys (id, key, prefix, name, is_active, model_access_mode, model_group_ids, allowed_models, quota_limit, quota_period, created_at, updated_at)
+		VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, id, rawKey, prefix, name, modelAccessMode, serializedGroups, serializedModels, quotaLimit, quotaPeriod)
 	if err != nil {
 		return nil, fmt.Errorf("failed to save new key: %w", err)
 	}
@@ -482,6 +514,8 @@ func (m *Manager) CreateKey(name, modelAccessMode string, modelGroupIDs, allowed
 		ModelAccessMode: modelAccessMode,
 		ModelGroupIDs:   cleanGroups,
 		AllowedModels:   cleanModels,
+		QuotaLimit:      quotaLimit,
+		QuotaPeriod:     quotaPeriod,
 		TotalRequests:   0,
 		TotalTokens:     0,
 		CreatedAt:       now,
@@ -534,6 +568,30 @@ func (m *Manager) UpdateKey(id, name, modelAccessMode string, modelGroupIDs, all
 	return m.GetKey(id)
 }
 
+// UpdateKeyQuota updates quota limit and period for a key
+func (m *Manager) UpdateKeyQuota(id string, quotaLimit int64, quotaPeriod string) (*KeyInfo, error) {
+	if quotaLimit < 0 {
+		quotaLimit = 0
+	}
+	quotaPeriod = strings.ToLower(strings.TrimSpace(quotaPeriod))
+	if quotaPeriod == "" {
+		quotaPeriod = "none"
+	}
+	res, err := m.db.Exec(`
+		UPDATE api_keys
+		SET quota_limit = ?, quota_period = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, quotaLimit, quotaPeriod, id)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("api key not found")
+	}
+	m.loadLocalCache()
+	return m.GetKey(id)
+}
+
 // GetKey retrieves a key by ID
 func (m *Manager) GetKey(id string) (*KeyInfo, error) {
 	var ki KeyInfo
@@ -545,9 +603,11 @@ func (m *Manager) GetKey(id string) (*KeyInfo, error) {
 		       COALESCE(model_access_mode, 'all'), 
 		       COALESCE(model_group_ids, '[]'), 
 		       COALESCE(allowed_models, ''), 
+		       COALESCE(quota_limit, 0),
+		       COALESCE(quota_period, 'none'),
 		       created_at, updated_at
 		FROM api_keys WHERE id = ?
-	`, id).Scan(&ki.ID, &rawKey, &ki.Prefix, &ki.Name, &isActiveInt, &mode, &rawGroupIDs, &rawModels, &ki.CreatedAt, &ki.UpdatedAt)
+	`, id).Scan(&ki.ID, &rawKey, &ki.Prefix, &ki.Name, &isActiveInt, &mode, &rawGroupIDs, &rawModels, &ki.QuotaLimit, &ki.QuotaPeriod, &ki.CreatedAt, &ki.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -580,6 +640,8 @@ const keyStatsColumns = `
 	COALESCE(k.model_access_mode, 'all'),
 	COALESCE(k.model_group_ids, '[]'),
 	COALESCE(k.allowed_models, ''),
+	COALESCE(k.quota_limit, 0),
+	COALESCE(k.quota_period, 'none'),
 	k.created_at, k.updated_at,
 	COALESCE(s.total_requests, 0),
 	COALESCE(s.total_tokens, 0),
@@ -596,6 +658,7 @@ func (m *Manager) scanKeyRows(rows *sql.Rows) ([]KeyInfo, error) {
 		if err := rows.Scan(
 			&ki.ID, &rawKey, &ki.Prefix, &ki.Name, &isActiveInt,
 			&mode, &rawGroupIDs, &rawModels,
+			&ki.QuotaLimit, &ki.QuotaPeriod,
 			&ki.CreatedAt, &ki.UpdatedAt,
 			&ki.TotalRequests, &ki.TotalTokens, &lastUsed,
 		); err != nil {

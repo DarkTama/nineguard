@@ -3,6 +3,7 @@ package traffic
 import (
 	"database/sql"
 	"fmt"
+	"strconv"
 	"time"
 
 	"nineguard/internal/db"
@@ -35,6 +36,29 @@ func CalcQuotaWindow(period string, now time.Time) (start time.Time, resetAt tim
 		resetAt = now
 	}
 	return start, resetAt
+}
+
+// GetQuotaUsage queries cumulative tokens consumed by apiKeyID within its active quota window.
+func (m *Manager) GetQuotaUsage(apiKeyID string, period string, now time.Time) (int64, time.Time, error) {
+	if m == nil || m.db == nil {
+		return 0, time.Time{}, nil
+	}
+	return GetQuotaUsage(m.db, apiKeyID, period, now)
+}
+
+// GetHeavyTokenThreshold reads the configured heavy token threshold from settings (default 8000).
+func (m *Manager) GetHeavyTokenThreshold() int {
+	if m == nil || m.db == nil {
+		return 8000
+	}
+	var val string
+	err := m.db.QueryRow("SELECT value FROM settings WHERE key = 'heavy_token_threshold' LIMIT 1").Scan(&val)
+	if err == nil {
+		if n, err := strconv.Atoi(val); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 8000
 }
 
 // GetQuotaUsage queries cumulative tokens consumed by apiKeyID within its active quota window.

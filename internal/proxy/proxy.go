@@ -147,6 +147,52 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 2.5 Enforce Token Quotas per API Key (ADR 0005)
+	if p.traffic != nil && keyInfo != nil && keyInfo.QuotaLimit > 0 && keyInfo.QuotaPeriod != "" && keyInfo.QuotaPeriod != "none" {
+		consumed, resetAt, err := p.traffic.GetQuotaUsage(keyInfo.ID, keyInfo.QuotaPeriod, time.Now())
+		if err == nil && consumed >= keyInfo.QuotaLimit {
+			slog.Warn("quota exceeded for api key", "key", keyInfo.Name, "consumed", consumed, "limit", keyInfo.QuotaLimit, "period", keyInfo.QuotaPeriod)
+			retryAfterSecs := int(time.Until(resetAt).Seconds())
+			if retryAfterSecs < 1 {
+				retryAfterSecs = 1
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", strconv.Itoa(retryAfterSecs))
+			w.WriteHeader(http.StatusTooManyRequests)
+
+			durationUntil := time.Until(resetAt)
+			hours := int(durationUntil.Hours())
+			mins := int(durationUntil.Minutes()) % 60
+			resetDesc := fmt.Sprintf("%dh %dm", hours, mins)
+			if hours <= 0 {
+				resetDesc = fmt.Sprintf("%dm", mins)
+			}
+
+			errJSON := fmt.Sprintf(`{
+	"error": {
+		"message": "API key token quota exceeded (%s / %s tokens %s). Resets in %s (at %s).",
+		"type": "insufficient_quota",
+		"code": "quota_exceeded"
+	}
+}`, formatTokenCount(consumed), formatTokenCount(keyInfo.QuotaLimit), keyInfo.QuotaPeriod, resetDesc, resetAt.UTC().Format(time.RFC3339))
+			_, _ = w.Write([]byte(errJSON))
+
+			errMsg := fmt.Sprintf("quota exceeded (%d/%d tokens %s)", consumed, keyInfo.QuotaLimit, keyInfo.QuotaPeriod)
+			_ = p.traffic.Record(&traffic.LogEntry{
+				APIKey:       maskedKey,
+				APIKeyName:   keyName,
+				APIKeyID:     keyInfo.ID,
+				Model:        "unknown",
+				DurationMs:   int(time.Since(start).Milliseconds()),
+				StatusCode:   http.StatusTooManyRequests,
+				ClientIP:     clientIP,
+				ErrorMessage: &errMsg,
+				Level:        "WARN",
+			})
+			return
+		}
+	}
+
 	// 3. Handle Other Requests (e.g. POST /v1/chat/completions)
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -515,5 +561,26 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				slog.Info("proxy request completed", "model", modelName, "status", resp.StatusCode, "duration_ms", durMs, "tokens", totalTokens, "source", "proxy")
 			}
 		}
+
+		heavyThreshold := 8000
+		if p.traffic != nil {
+			heavyThreshold = p.traffic.GetHeavyTokenThreshold()
+		}
+		if totalTokens >= heavyThreshold {
+			slog.Warn("token_spike: heavy token usage detected", "source", "traffic", "key_id", keyInfo.ID, "key_name", keyInfo.Name, "tokens", totalTokens, "threshold", heavyThreshold)
+		}
 	}()
+}
+
+func formatTokenCount(n int64) string {
+	in := strconv.FormatInt(n, 10)
+	var out []byte
+	l := len(in)
+	for i := 0; i < l; i++ {
+		if i > 0 && (l-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, in[i])
+	}
+	return string(out)
 }

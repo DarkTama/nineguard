@@ -442,6 +442,24 @@ export function mount(root) {
       h('span', { class: 'c-model', title: `${e.model || '-'}${e.error_message ? `\nError: ${e.error_message}` : ''}` },
         modPrefix ? h('span', { class: 'source-ns' }, modPrefix) : null,
         h('span', { class: 'strong' }, highlight(modShort, terms)),
+        e.plugins_applied ? h('span', {
+          class: 'badge',
+          style: {
+            fontSize: '9.5px',
+            padding: '1px 5px',
+            marginLeft: '6px',
+            background: 'rgba(249, 115, 22, 0.15)',
+            color: 'var(--accent)',
+            border: '1px solid rgba(249, 115, 22, 0.35)',
+            fontWeight: '600'
+          },
+          title: `Plugins applied: ${e.plugins_applied}`
+        }, '🧩 ' + e.plugins_applied) : null,
+        e.tokens_saved > 0 ? h('span', {
+          class: 'badge ok',
+          style: { fontSize: '9.5px', padding: '1px 5px', marginLeft: '4px' },
+          title: `Tokens saved: ${e.tokens_saved}`
+        }, `-${fmtCompact(e.tokens_saved)} tok`) : null,
         e.error_message ? h('span', { class: 'traffic-err-msg' }, '(', highlight(e.error_message, terms), ')') : null
       ),
       // 5. Tokens

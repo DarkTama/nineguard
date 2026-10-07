@@ -231,8 +231,68 @@ func (h *Handler) TestPlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if id == "headroom" {
+		url := "http://127.0.0.1:8787"
+		token := ""
+		var sMap map[string]any
+		_ = json.Unmarshal([]byte(pRaw.DefaultSettings), &sMap)
+		if u, ok := sMap["url"].(string); ok && strings.TrimSpace(u) != "" {
+			url = strings.TrimRight(strings.TrimSpace(u), "/")
+		}
+		if t, ok := sMap["token"].(string); ok && strings.TrimSpace(t) != "" {
+			token = strings.TrimSpace(t)
+		}
+
+		dummyCompress := map[string]any{
+			"messages": []map[string]any{
+				{"role": "user", "content": "ping"},
+			},
+			"model": "ping",
+			"config": map[string]any{
+				"frozen_message_count":   0,
+				"compress_user_messages": false,
+			},
+		}
+		b, _ := json.Marshal(dummyCompress)
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url+"/v1/compress", bytes.NewReader(b))
+		if err != nil {
+			jsonResponse(w, http.StatusBadGateway, map[string]any{"status": "error", "error": err.Error(), "latency_ms": 0})
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+
+		start := time.Now()
+		resp, err := http.DefaultClient.Do(req)
+		latencyMs := time.Since(start).Milliseconds()
+		if err != nil {
+			jsonResponse(w, http.StatusBadGateway, map[string]any{
+				"status":     "error",
+				"error":      fmt.Sprintf("Cannot reach Headroom at %s: %v", url, err),
+				"latency_ms": latencyMs,
+			})
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			jsonResponse(w, http.StatusBadGateway, map[string]any{
+				"status":     "error",
+				"error":      fmt.Sprintf("Headroom at %s returned HTTP %d", url, resp.StatusCode),
+				"latency_ms": latencyMs,
+			})
+			return
+		}
+		jsonResponse(w, http.StatusOK, map[string]any{"status": "ok", "latency_ms": latencyMs})
+		return
+	}
+
 	if pRaw.Kind == plugins.KindBuiltin {
-		jsonResponse(w, http.StatusOK, map[string]any{"status": "ok", "latency_ms": 0})
+		jsonResponse(w, http.StatusOK, map[string]any{"status": "ok", "latency_ms": 0, "in_process": true})
 		return
 	}
 

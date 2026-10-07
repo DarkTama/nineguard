@@ -474,9 +474,21 @@ Menemukan kendala atau punya ide untuk menyempurnakan NineGuard? Kami menyambut 
 
 ## Author & Kontributor
 
-* **Author:** Ari Ardiansyah
-* **GitHub:** [@aribrilliantsyah](https://github.com/aribrilliantsyah)
-* **Email:** [ariadiansyah.study@gmail.com](mailto:ariadiansyah.study@gmail.com)
+### Author
+* **Ari Ardiansyah**
+  * GitHub: [@aribrilliantsyah](https://github.com/aribrilliantsyah)
+  * Email: [ariadiansyah.study@gmail.com](mailto:ariadiansyah.study@gmail.com)
+
+### Kontributor
+* **Ekatama Ilham Prayoga**
+  * GitHub: [@DarkTama](https://github.com/DarkTama)
+  * Email: [ekatamailhamprayoga@gmail.com](mailto:ekatamailhamprayoga@gmail.com)
+
+<br/>
+
+<a href="https://github.com/DarkTama/nineguard/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=DarkTama/nineguard" alt="Contributors" />
+</a>
 
 ---
 

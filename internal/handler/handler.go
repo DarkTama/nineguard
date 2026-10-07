@@ -1134,6 +1134,15 @@ func (h *Handler) ListKeys(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, pageRes)
 }
 
+func isValidQuotaPeriod(p string) bool {
+	switch p {
+	case "none", "daily", "weekly", "monthly", "total":
+		return true
+	default:
+		return false
+	}
+}
+
 func (h *Handler) CreateKey(w http.ResponseWriter, r *http.Request) {
 	if h.keys == nil {
 		jsonError(w, http.StatusBadRequest, "Keys manager not available")
@@ -1144,10 +1153,31 @@ func (h *Handler) CreateKey(w http.ResponseWriter, r *http.Request) {
 		ModelAccessMode string   `json:"model_access_mode"`
 		ModelGroupIDs   []string `json:"model_group_ids"`
 		AllowedModels   []string `json:"allowed_models"`
+		QuotaLimit      int64    `json:"quota_limit"`
+		QuotaPeriod     string   `json:"quota_period"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
-	keyInfo, err := h.keys.CreateKey(body.Name, body.ModelAccessMode, body.ModelGroupIDs, body.AllowedModels)
+	if body.QuotaLimit < 0 {
+		jsonError(w, http.StatusBadRequest, "Quota limit cannot be negative")
+		return
+	}
+	body.QuotaPeriod = strings.ToLower(strings.TrimSpace(body.QuotaPeriod))
+	if body.QuotaPeriod == "" {
+		body.QuotaPeriod = "none"
+	}
+	if !isValidQuotaPeriod(body.QuotaPeriod) {
+		jsonError(w, http.StatusBadRequest, "Invalid quota period: must be none, daily, weekly, monthly, or total")
+		return
+	}
+
+	keyInfo, err := h.keys.CreateKeyWithOptions(body.Name, keys.CreateKeyOptions{
+		ModelAccessMode: body.ModelAccessMode,
+		ModelGroupIDs:   body.ModelGroupIDs,
+		AllowedModels:   body.AllowedModels,
+		QuotaLimit:      body.QuotaLimit,
+		QuotaPeriod:     body.QuotaPeriod,
+	})
 	if err != nil {
 		slog.Error("failed to create key", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to create API key")
@@ -1174,16 +1204,49 @@ func (h *Handler) UpdateKey(w http.ResponseWriter, r *http.Request) {
 		ModelAccessMode string   `json:"model_access_mode"`
 		ModelGroupIDs   []string `json:"model_group_ids"`
 		AllowedModels   []string `json:"allowed_models"`
+		QuotaLimit      *int64   `json:"quota_limit"`
+		QuotaPeriod     *string  `json:"quota_period"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid payload")
 		return
 	}
 
+	if body.QuotaLimit != nil && *body.QuotaLimit < 0 {
+		jsonError(w, http.StatusBadRequest, "Quota limit cannot be negative")
+		return
+	}
+	if body.QuotaPeriod != nil {
+		p := strings.ToLower(strings.TrimSpace(*body.QuotaPeriod))
+		if p == "" {
+			p = "none"
+		}
+		if !isValidQuotaPeriod(p) {
+			jsonError(w, http.StatusBadRequest, "Invalid quota period: must be none, daily, weekly, monthly, or total")
+			return
+		}
+		*body.QuotaPeriod = p
+	}
+
 	keyInfo, err := h.keys.UpdateKey(id, body.Name, body.ModelAccessMode, body.ModelGroupIDs, body.AllowedModels)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if body.QuotaLimit != nil || body.QuotaPeriod != nil {
+		qLimit := keyInfo.QuotaLimit
+		if body.QuotaLimit != nil {
+			qLimit = *body.QuotaLimit
+		}
+		qPeriod := keyInfo.QuotaPeriod
+		if body.QuotaPeriod != nil {
+			qPeriod = *body.QuotaPeriod
+		}
+		keyInfo, err = h.keys.UpdateKeyQuota(id, qLimit, qPeriod)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	var actorID int64
 	var username string
@@ -1568,3 +1631,41 @@ func (h *Handler) TestUpstreamConnection(w http.ResponseWriter, r *http.Request)
 		"target":       target,
 	})
 }
+
+// ── Traffic & Spike Settings (ADR 0005) ──
+
+func (h *Handler) GetTrafficSettings(w http.ResponseWriter, r *http.Request) {
+	threshold := 8000
+	if h.traffic != nil {
+		threshold = h.traffic.GetHeavyTokenThreshold()
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"heavy_token_threshold": threshold,
+	})
+}
+
+func (h *Handler) SetTrafficSettings(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		HeavyTokenThreshold int `json:"heavy_token_threshold"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid payload")
+		return
+	}
+	if body.HeavyTokenThreshold <= 0 {
+		jsonError(w, http.StatusBadRequest, "Threshold must be greater than zero")
+		return
+	}
+	if h.traffic != nil {
+		if err := h.traffic.SetHeavyTokenThreshold(body.HeavyTokenThreshold); err != nil {
+			slog.Error("failed to set heavy token threshold", "error", err)
+			jsonError(w, http.StatusInternalServerError, "Failed to save traffic settings")
+			return
+		}
+	}
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"status":                "ok",
+		"heavy_token_threshold": body.HeavyTokenThreshold,
+	})
+}
+

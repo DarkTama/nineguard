@@ -275,6 +275,8 @@ func main() {
 	mux.HandleFunc("GET /api/v1/settings/upstream", h.GetUpstreamSettings)
 	mux.HandleFunc("POST /api/v1/settings/upstream", h.SetUpstreamSettings)
 	mux.HandleFunc("POST /api/v1/settings/upstream/test", h.TestUpstreamConnection)
+	mux.HandleFunc("GET /api/v1/settings/traffic", h.GetTrafficSettings)
+	mux.HandleFunc("POST /api/v1/settings/traffic", h.SetTrafficSettings)
 
 	// Plugins API
 	mux.HandleFunc("GET /api/v1/plugins", h.ListPlugins)

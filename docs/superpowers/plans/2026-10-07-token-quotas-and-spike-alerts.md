@@ -1,6 +1,6 @@
 # Token Quotas & Spike Alerts — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Enforce daily, weekly, monthly, and lifetime token quotas per client API key via soft post-facto gating with UTC windows and standard HTTP 429 responses, plus flag anomalous heavy requests (spikes) in traffic logs and system telemetry without blocking requests.
 
@@ -77,7 +77,7 @@
 - Modify: `internal/db/db.go`
 - Create: `internal/db/quota_migration_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
   Create `internal/db/quota_migration_test.go`:
   ```go
   package db_test
@@ -110,10 +110,10 @@
   	}
   }
   ```
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
   Run: `go test ./internal/db/ -run TestQuotaColumnsAndSettingsSeeded -v`
   Expected: FAIL (columns missing, setting missing).
-- [ ] **Step 3: Implement database migrations**
+- [x] **Step 3: Implement database migrations**
   In `internal/db/db.go`:
   - In `CREATE TABLE IF NOT EXISTS api_keys`, add `quota_limit INTEGER DEFAULT 0` and `quota_period TEXT DEFAULT 'none'`.
   - In migration section for existing databases:
@@ -122,10 +122,10 @@
     _, _ = d.Exec("ALTER TABLE api_keys ADD COLUMN quota_period TEXT DEFAULT 'none'")
     _, _ = d.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('heavy_token_threshold', '8000')")
     ```
-- [ ] **Step 4: Run test to verify pass**
+- [x] **Step 4: Run test to verify pass**
   Run: `go test ./internal/db/ -v`
   Expected: PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   ```bash
   git add internal/db/db.go internal/db/quota_migration_test.go
   git commit -m "feat(db): add quota columns to api_keys and seed heavy_token_threshold"
@@ -140,7 +140,7 @@
 - Modify: `internal/keys/page.go`
 - Create: `internal/keys/quota_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
   Create `internal/keys/quota_test.go`:
   ```go
   package keys_test
@@ -196,10 +196,10 @@
   	}
   }
   ```
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
   Run: `go test ./internal/keys/ -run TestKeyQuotaCRUD -v`
   Expected: FAIL (compilation errors on missing fields/methods).
-- [ ] **Step 3: Update `KeyInfo`, `CreateKeyOptions`, and SQL queries**
+- [x] **Step 3: Update `KeyInfo`, `CreateKeyOptions`, and SQL queries**
   In `internal/keys/keys.go`:
   - Add `QuotaLimit int64` (`json:"quota_limit"`) and `QuotaPeriod string` (`json:"quota_period"`) to `KeyInfo`.
   - Add `QuotaLimit int64` and `QuotaPeriod string` to `CreateKeyOptions`.
@@ -207,10 +207,10 @@
   - Add `UpdateKeyQuota(id string, limit int64, period string) error`.
   In `internal/keys/page.go`:
   - Update `ListKeysPage` SELECT query and column scans to include `quota_limit` and `quota_period`.
-- [ ] **Step 4: Run test to verify pass**
+- [x] **Step 4: Run test to verify pass**
   Run: `go test ./internal/keys/ -v`
   Expected: PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   ```bash
   git add internal/keys/keys.go internal/keys/page.go internal/keys/quota_test.go
   git commit -m "feat(keys): add quota limit and period fields to KeyInfo and CRUD"
@@ -224,7 +224,7 @@
 - Create: `internal/traffic/quota.go`
 - Create: `internal/traffic/quota_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
   Create `internal/traffic/quota_test.go`:
   ```go
   package traffic_test
@@ -297,10 +297,10 @@
   	}
   }
   ```
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
   Run: `go test ./internal/traffic/ -run 'TestCalcWindowBoundsUTC|TestGetQuotaUsageQuery' -v`
   Expected: FAIL (symbols undefined).
-- [ ] **Step 3: Implement `internal/traffic/quota.go`**
+- [x] **Step 3: Implement `internal/traffic/quota.go`**
   ```go
   package traffic
 
@@ -355,10 +355,10 @@
   	return consumed, resetAt, nil
   }
   ```
-- [ ] **Step 4: Run test to verify pass**
+- [x] **Step 4: Run test to verify pass**
   Run: `go test ./internal/traffic/ -run 'TestCalcWindowBoundsUTC|TestGetQuotaUsageQuery' -v`
   Expected: PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   ```bash
   git add internal/traffic/quota.go internal/traffic/quota_test.go
   git commit -m "feat(traffic): add quota window calculation and usage query"
@@ -372,7 +372,7 @@
 - Modify: `internal/proxy/proxy.go`
 - Create: `internal/proxy/quota_proxy_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
   Create `internal/proxy/quota_proxy_test.go`:
   ```go
   package proxy_test
@@ -428,10 +428,10 @@
   	}
   }
   ```
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
   Run: `go test ./internal/proxy/ -run TestProxyQuotaExceededReturns429 -v`
   Expected: FAIL.
-- [ ] **Step 3: Implement pre-flight quota check and post-flight heavy token check**
+- [x] **Step 3: Implement pre-flight quota check and post-flight heavy token check**
   In `internal/proxy/proxy.go`:
   - Before forwarding, inspect `keyInfo.QuotaLimit > 0` and `keyInfo.QuotaPeriod != "none"`.
   - Call `traffic.GetQuotaUsage(d, keyInfo.ID, keyInfo.QuotaPeriod, time.Now())`.
@@ -441,10 +441,10 @@
     - Format response JSON per ADR-0005 with human duration and return HTTP 429.
   - On request completion, check `total_tokens >= heavyThreshold` (read from `settings` or cached).
   - If exceeded, emit `slog.Warn("token_spike", "source", "traffic", "key_id", keyInfo.ID, "tokens", totalTokens)`.
-- [ ] **Step 4: Run test to verify pass**
+- [x] **Step 4: Run test to verify pass**
   Run: `go test ./internal/proxy/ -v`
   Expected: PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   ```bash
   git add internal/proxy/proxy.go internal/proxy/quota_proxy_test.go
   git commit -m "feat(proxy): enforce token quotas with 429 Retry-After and emit spike alerts"
@@ -458,21 +458,21 @@
 - Modify: `internal/handler/handler.go`
 - Create: `internal/handler/quota_handler_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
   Create `internal/handler/quota_handler_test.go` testing that `POST /api/v1/keys` rejects invalid `quota_period` (e.g. "yearly") and negative `quota_limit`.
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
   Run: `go test ./internal/handler/ -run TestQuotaValidation -v`
   Expected: FAIL.
-- [ ] **Step 3: Implement payload validation**
+- [x] **Step 3: Implement payload validation**
   In `internal/handler/handler.go`:
   - Validate `quota_limit >= 0`.
   - Validate `quota_period` in `["none", "daily", "weekly", "monthly", "total"]`.
   - Pass fields to `keyMgr.CreateKeyWithOptions` and `keyMgr.UpdateKeyQuota`.
   - Ensure `GET /api/v1/settings` and `POST /api/v1/settings` allow updating `heavy_token_threshold`.
-- [ ] **Step 4: Run test to verify pass**
+- [x] **Step 4: Run test to verify pass**
   Run: `go test ./internal/handler/ -v`
   Expected: PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   ```bash
   git add internal/handler/handler.go internal/handler/quota_handler_test.go
   git commit -m "feat(handler): validate quota fields on key endpoints and expose spike setting"
@@ -486,7 +486,7 @@
 - Create: `web/static/js/quotahelpers.js`
 - Create: `web/jstest/quotahelpers.test.mjs`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
   Create `web/jstest/quotahelpers.test.mjs`:
   ```javascript
   import test from 'node:test';
@@ -504,15 +504,15 @@
     assert.equal(formatQuotaUsage(0, 0, 'none'), 'Unlimited');
   });
   ```
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
   Run: `node --test web/jstest/quotahelpers.test.mjs`
   Expected: FAIL.
-- [ ] **Step 3: Implement `web/static/js/quotahelpers.js`**
+- [x] **Step 3: Implement `web/static/js/quotahelpers.js`**
   Implement `quotaPercent`, `formatQuotaUsage`, and `quotaResetCountdown` (converts UTC reset into viewer local timezone string and relative hours/minutes).
-- [ ] **Step 4: Run test to verify pass**
+- [x] **Step 4: Run test to verify pass**
   Run: `node --test web/jstest/quotahelpers.test.mjs`
   Expected: PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   ```bash
   git add web/static/js/quotahelpers.js web/jstest/quotahelpers.test.mjs
   git commit -m "feat(ui): add pure quota formatting helpers with unit tests"
@@ -525,15 +525,15 @@
 **Files:**
 - Modify: `web/static/js/views/endpoints.js`
 
-- [ ] **Step 1: Update Key Modal**
+- [x] **Step 1: Update Key Modal**
   Add inputs for:
   - `Quota Limit` (number input, placeholder "0 = unlimited").
   - `Quota Period` (select: `Unlimited (none)`, `Daily (UTC)`, `Weekly (UTC Mon)`, `Monthly (UTC 1st)`, `Lifetime (total)`).
-- [ ] **Step 2: Update Keys Table Row**
+- [x] **Step 2: Update Keys Table Row**
   Display quota progress bar and exhaustion pill when `quota_limit > 0`.
-- [ ] **Step 3: Smoke test in browser**
+- [x] **Step 3: Smoke test in browser**
   Verify creating a key with daily quota, editing quota, and rendering bar.
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
   ```bash
   git add web/static/js/views/endpoints.js
   git commit -m "feat(ui): integrate quota fields in key modal and endpoints table"
@@ -547,11 +547,11 @@
 - Modify: `web/static/js/views/traffic.js`
 - Modify: `web/static/js/views/settings.js`
 
-- [ ] **Step 1: Traffic Explorer Badges**
+- [x] **Step 1: Traffic Explorer Badges**
   When request `total_tokens >= heavyThreshold`, show ⚠️ `Heavy (<N>k)` badge in row.
-- [ ] **Step 2: Settings UI**
+- [x] **Step 2: Settings UI**
   Add `Heavy Token Threshold` input under Settings.
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
   ```bash
   git add web/static/js/views/traffic.js web/static/js/views/settings.js
   git commit -m "feat(ui): add heavy token warning badge in traffic explorer and settings input"
@@ -561,12 +561,12 @@
 
 ### Task 9: Full Regression Test & Verification
 
-- [ ] **Step 1: Run all Go unit & integration tests**
+- [x] **Step 1: Run all Go unit & integration tests**
   Run: `CGO_ENABLED=0 go test -tags server ./...`
   Expected: All packages pass.
-- [ ] **Step 2: Run all JavaScript tests**
+- [x] **Step 2: Run all JavaScript tests**
   Run: `node --test web/jstest/*.test.mjs`
   Expected: All suites pass.
-- [ ] **Step 3: Build server binary**
+- [x] **Step 3: Build server binary**
   Run: `go build -o nineguard.exe ./cmd/nineguard`
   Expected: Success.

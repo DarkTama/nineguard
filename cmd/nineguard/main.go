@@ -43,6 +43,7 @@ Options:
   -t, --tray              Run in system tray mode (desktop) or daemon mode (server)
   -l, --logs              Start server and stream live running logs
   -d, --daemon            Run in headless/daemon mode (no interactive TUI)
+  -v, --version           Print version and build commit
   -h, --help              Show this help message
 
 Environment Variables:
@@ -75,6 +76,13 @@ func main() {
 			flagLogs = true
 		case "-d", "--daemon", "--headless":
 			flagDaemon = true
+		case "-v", "--version":
+			if version.Commit != "" && version.Commit != "dev" && version.Commit != "none" {
+				fmt.Printf("NineGuard %s (%s)\n", version.Version, version.Commit)
+			} else {
+				fmt.Printf("NineGuard %s\n", version.Version)
+			}
+			return
 		case "-h", "--help":
 			printHelp()
 			return

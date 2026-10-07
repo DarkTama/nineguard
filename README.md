@@ -188,13 +188,33 @@ GOOS=windows GOARCH=amd64 go build -ldflags="-H=windowsgui" -o nineguard.exe cmd
 
 ### Cara 3: Menggunakan Docker
 
+#### Opsi A: Menggunakan Image Resmi (GHCR)
 ```bash
-# 1. Build image Docker
-docker build -t nineguard:latest .
+# Tarik image terbaru atau versi spesifik
+docker pull ghcr.io/darktama/nineguard:latest
+
+# Jalankan container
+docker run -d \
+  --name nineguard \
+  --restart unless-stopped \
+  -p 127.0.0.1:8080:8080 \
+  -v nineguard-data:/data \
+  ghcr.io/darktama/nineguard:latest
+
+# Cek versi yang terpasang
+docker exec nineguard /app/nineguard --version
+```
+
+#### Opsi B: Build Sendiri dengan Versioning
+```bash
+# 1. Build image Docker dengan git tag & commit otomatis
+make build-docker
+# atau via script: ./scripts/build.sh docker
 
 # 2. Jalankan container (bind ke localhost saja)
 docker run -d \
   --name nineguard \
+  --restart unless-stopped \
   -p 127.0.0.1:8080:8080 \
   -v nineguard-data:/data \
   nineguard:latest

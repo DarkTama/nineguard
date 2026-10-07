@@ -6,8 +6,12 @@
 
 services:
   nineguard:
-    build: .
-    image: nineguard:latest
+    build:
+      context: .
+      args:
+        VERSION: ${NINEGUARD_VERSION:-v1.0.0}
+        COMMIT: ${NINEGUARD_COMMIT:-dev}
+    image: ${NINEGUARD_IMAGE:-nineguard:latest}
     container_name: nineguard
     restart: unless-stopped
     ports:

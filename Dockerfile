@@ -1,15 +1,29 @@
 # Build stage
 FROM golang:1.27-alpine AS builder
 
+ARG VERSION=v1.0.0
+ARG COMMIT=dev
+
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -tags server -ldflags="-s -w" -o nineguard cmd/nineguard/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -tags server \
+    -ldflags="-s -w -X 'nineguard/internal/version.Version=${VERSION}' -X 'nineguard/internal/version.Commit=${COMMIT}'" \
+    -o nineguard cmd/nineguard/main.go
 
 # Run stage
 FROM alpine:3.20
+
+ARG VERSION=v1.0.0
+ARG COMMIT=dev
+
+LABEL org.opencontainers.image.title="NineGuard" \
+      org.opencontainers.image.description="Universal OpenAI-Compatible Gateway, Model Firewall & Multi-Provider Router" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.source="https://github.com/DarkTama/nineguard"
 
 RUN apk --no-cache add ca-certificates tzdata && \
     addgroup -g 10001 -S appgroup && \

@@ -358,28 +358,158 @@ export function mount(root) {
       h('tbody', null, ...rows)
     );
 
-    // Prompt reset for Caveman / Ponytail
-    let promptSection = null;
-    if (p.id === 'caveman' || p.id === 'ponytail') {
-      promptSection = h('div', { style: { marginBottom: '16px', padding: '12px', background: 'var(--hover)', borderRadius: '6px' } },
-        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' } },
-          h('b', null, 'Prompt Customization'),
-          h('button', {
-            class: 'btn btn-sm',
-            onclick: async () => {
-              try {
-                await api.post(`/plugins/${encodeURIComponent(p.id)}/reset-prompt`);
-                toast('Prompt override reset to default');
-                reload();
-              } catch (e) {
-                toast(e.message, 'error');
-              }
-            }
-          }, 'Reset to Default')
+    // Settings Section (typed fields for built-ins, prompt override editor)
+    let settingsSection = null;
+    let currentSettings = {};
+    try {
+      currentSettings = JSON.parse(p.default_settings || '{}');
+    } catch { currentSettings = {}; }
+
+    if (p.id === 'headroom') {
+      const urlInput = h('input', {
+        class: 'input',
+        type: 'text',
+        value: currentSettings.url || 'http://127.0.0.1:8787',
+        placeholder: 'e.g. http://127.0.0.1:8787'
+      });
+      const modeSelect = h('select', { class: 'input' },
+        h('option', { value: 'incremental', selected: (currentSettings.mode || 'incremental') === 'incremental' }, 'Incremental (compress newest turns only, preserves prefix cache)'),
+        h('option', { value: 'full', selected: currentSettings.mode === 'full' }, 'Full (compress entire message history every turn)')
+      );
+      const compressUserCheck = h('input', {
+        type: 'checkbox',
+        checked: Boolean(currentSettings.compress_user_messages)
+      });
+      const tokenInput = h('input', {
+        class: 'input',
+        type: 'password',
+        value: currentSettings.token || '',
+        placeholder: 'Optional HEADROOM_PROXY_TOKEN'
+      });
+
+      const saveSettingsBtn = h('button', {
+        class: 'btn btn-sm btn-primary',
+        type: 'button',
+        onclick: async () => {
+          saveSettingsBtn.disabled = true;
+          try {
+            const newSettings = {
+              url: urlInput.value.trim() || 'http://127.0.0.1:8787',
+              mode: modeSelect.value,
+              compress_user_messages: Boolean(compressUserCheck.checked),
+              token: tokenInput.value.trim()
+            };
+            await api.put(`/plugins/${encodeURIComponent(p.id)}`, {
+              default_settings: JSON.stringify(newSettings)
+            });
+            toast('Headroom settings saved');
+            reload();
+          } catch (e) {
+            toast(e.message, 'error');
+          } finally {
+            saveSettingsBtn.disabled = false;
+          }
+        }
+      }, 'Save Headroom Settings');
+
+      settingsSection = h('div', { style: { marginBottom: '16px', padding: '14px', background: 'var(--hover)', borderRadius: '6px' } },
+        h('h4', { style: { margin: '0 0 10px', fontSize: '13px' } }, 'Headroom Connector Settings'),
+        h('div', { class: 'field', style: { marginBottom: '8px' } },
+          h('span', null, 'Headroom Endpoint URL'),
+          urlInput,
+          h('p', { class: 'muted', style: { fontSize: '11px', margin: '2px 0 0' } }, 'Default port is 8787. When Headroom runs in Docker, ensure HEADROOM_COMPRESS_ALLOW_REMOTE=1 is set.')
         ),
-        h('p', { class: 'muted', style: { fontSize: '11px', margin: 0 } },
-          'Custom prompt text can be defined in Settings overrides or reset to bundled default prompt text.'
-        )
+        h('div', { class: 'field', style: { marginBottom: '8px' } },
+          h('span', null, 'Compression Mode'),
+          modeSelect
+        ),
+        h('div', { class: 'field', style: { marginBottom: '8px' } },
+          h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12px' } },
+            compressUserCheck,
+            h('span', null, 'Compress user messages in addition to assistant/tool messages')
+          )
+        ),
+        h('div', { class: 'field', style: { marginBottom: '10px' } },
+          h('span', null, 'Proxy Token (Optional)'),
+          tokenInput
+        ),
+        saveSettingsBtn
+      );
+    } else if (p.id === 'caveman' || p.id === 'ponytail') {
+      const isCave = p.id === 'caveman';
+      const variantSelect = isCave ? h('select', { class: 'input' },
+        h('option', { value: 'caveman', selected: (currentSettings.variant || 'caveman') === 'caveman' }, 'caveman (terse, drops filler, ~4.0 KB prompt)'),
+        h('option', { value: 'ultracave', selected: currentSettings.variant === 'ultracave' }, 'ultracave (maximum brevity, ~2.3 KB prompt)'),
+        h('option', { value: 'megacave', selected: currentSettings.variant === 'megacave' }, 'megacave (classical Chinese 文言文, ~2.6 KB prompt)')
+      ) : h('select', { class: 'input' },
+        h('option', { value: 'full', selected: (currentSettings.level || 'full') === 'full' }, 'full (balanced concise formatting)'),
+        h('option', { value: 'lite', selected: currentSettings.level === 'lite' }, 'lite (mild compression, keeps explanations)'),
+        h('option', { value: 'ultra', selected: currentSettings.level === 'ultra' }, 'ultra (maximum density, no pleasantries)')
+      );
+
+      const promptOverrideInput = h('textarea', {
+        class: 'input',
+        rows: 3,
+        placeholder: 'Leave blank to use bundled default prompt text',
+        value: currentSettings.prompt_override || '',
+        style: { fontFamily: 'monospace', fontSize: '11.5px', resize: 'vertical' }
+      });
+
+      const savePromptBtn = h('button', {
+        class: 'btn btn-sm btn-primary',
+        type: 'button',
+        onclick: async () => {
+          savePromptBtn.disabled = true;
+          try {
+            const newSettings = isCave ? {
+              variant: variantSelect.value,
+              prompt_override: promptOverrideInput.value.trim()
+            } : {
+              level: variantSelect.value,
+              prompt_override: promptOverrideInput.value.trim()
+            };
+            await api.put(`/plugins/${encodeURIComponent(p.id)}`, {
+              default_settings: JSON.stringify(newSettings)
+            });
+            toast('Prompt settings saved');
+            reload();
+          } catch (e) {
+            toast(e.message, 'error');
+          } finally {
+            savePromptBtn.disabled = false;
+          }
+        }
+      }, 'Save Settings');
+
+      const resetBtn = h('button', {
+        class: 'btn btn-sm',
+        type: 'button',
+        onclick: async () => {
+          try {
+            await api.post(`/plugins/${encodeURIComponent(p.id)}/reset-prompt`);
+            promptOverrideInput.value = '';
+            toast('Prompt override reset to default');
+            reload();
+          } catch (e) {
+            toast(e.message, 'error');
+          }
+        }
+      }, 'Reset Prompt to Default');
+
+      settingsSection = h('div', { style: { marginBottom: '16px', padding: '14px', background: 'var(--hover)', borderRadius: '6px' } },
+        h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' } },
+          h('h4', { style: { margin: 0, fontSize: '13px' } }, isCave ? 'Caveman Settings & Prompt' : 'Ponytail Settings & Prompt'),
+          resetBtn
+        ),
+        h('div', { class: 'field', style: { marginBottom: '8px' } },
+          h('span', null, isCave ? 'Prompt Variant' : 'Compression Level'),
+          variantSelect
+        ),
+        h('div', { class: 'field', style: { marginBottom: '10px' } },
+          h('span', null, 'Custom Prompt Override (Optional)'),
+          promptOverrideInput
+        ),
+        savePromptBtn
       );
     }
 
@@ -387,7 +517,7 @@ export function mount(root) {
       title: `Configure ${p.name}`,
       wide: true,
       body: h('div', null,
-        promptSection,
+        settingsSection,
         h('h4', { style: { margin: '0 0 8px' } }, 'Scope Precedence & Bindings'),
         h('p', { class: 'muted', style: { fontSize: '11px', margin: '0 0 12px' } },
           'Precedence: Key overrides Group overrides All keys, all models. Inherit defers to the broader scope.'

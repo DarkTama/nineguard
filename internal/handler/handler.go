@@ -1663,36 +1663,68 @@ func (h *Handler) TestUpstreamConnection(w http.ResponseWriter, r *http.Request)
 
 func (h *Handler) GetTrafficSettings(w http.ResponseWriter, r *http.Request) {
 	threshold := 8000
+	recMode := "disabled"
 	if h.traffic != nil {
 		threshold = h.traffic.GetHeavyTokenThreshold()
+		recMode = h.traffic.GetRecordPayloadsSetting()
 	}
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"heavy_token_threshold": threshold,
+		"record_payloads":       recMode,
 	})
 }
 
 func (h *Handler) SetTrafficSettings(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		HeavyTokenThreshold int `json:"heavy_token_threshold"`
+		HeavyTokenThreshold int    `json:"heavy_token_threshold"`
+		RecordPayloads      string `json:"record_payloads"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid payload")
 		return
 	}
-	if body.HeavyTokenThreshold <= 0 {
-		jsonError(w, http.StatusBadRequest, "Threshold must be greater than zero")
-		return
-	}
-	if h.traffic != nil {
+	if body.HeavyTokenThreshold > 0 && h.traffic != nil {
 		if err := h.traffic.SetHeavyTokenThreshold(body.HeavyTokenThreshold); err != nil {
 			slog.Error("failed to set heavy token threshold", "error", err)
 			jsonError(w, http.StatusInternalServerError, "Failed to save traffic settings")
 			return
 		}
 	}
+	if body.RecordPayloads != "" && h.traffic != nil {
+		mode := strings.ToLower(strings.TrimSpace(body.RecordPayloads))
+		if mode != "disabled" && mode != "errors_only" && mode != "all" {
+			jsonError(w, http.StatusBadRequest, "Invalid record_payloads: must be disabled, errors_only, or all")
+			return
+		}
+		if err := h.traffic.SetRecordPayloadsSetting(mode); err != nil {
+			slog.Error("failed to set record payloads setting", "error", err)
+			jsonError(w, http.StatusInternalServerError, "Failed to save traffic settings")
+			return
+		}
+	}
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"status":                "ok",
-		"heavy_token_threshold": body.HeavyTokenThreshold,
+		"heavy_token_threshold": h.traffic.GetHeavyTokenThreshold(),
+		"record_payloads":       h.traffic.GetRecordPayloadsSetting(),
 	})
+}
+
+func (h *Handler) GetTrafficPayload(w http.ResponseWriter, r *http.Request) {
+	if h.traffic == nil {
+		jsonError(w, http.StatusBadRequest, "Traffic manager not available")
+		return
+	}
+	idStr := r.PathValue("id")
+	trafficID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid traffic ID")
+		return
+	}
+	payload, err := h.traffic.GetPayload(trafficID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "Payload not found or not recorded")
+		return
+	}
+	jsonResponse(w, http.StatusOK, payload)
 }
 

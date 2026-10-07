@@ -359,16 +359,24 @@ func (e *LogEntry) ComputeLevelAndMessage() {
 		if e.Stream {
 			modeStr = "sse"
 		}
+		pluginTxt := ""
+		if e.PluginsApplied != "" {
+			if e.TokensSaved > 0 {
+				pluginTxt = fmt.Sprintf(" [plugins: %s, saved: %s tok]", e.PluginsApplied, fmtNumStr(e.TokensSaved))
+			} else {
+				pluginTxt = fmt.Sprintf(" [plugins: %s]", e.PluginsApplied)
+			}
+		}
 		if e.StatusCode >= 400 {
 			errTxt := ""
 			if e.ErrorMessage != nil && *e.ErrorMessage != "" {
 				errTxt = " - " + *e.ErrorMessage
 			}
-			e.Message = fmt.Sprintf("POST /v1/chat/completions model=%s %d%s (%dms, ip=%s)",
-				e.Model, e.StatusCode, errTxt, e.DurationMs, e.ClientIP)
+			e.Message = fmt.Sprintf("POST /v1/chat/completions model=%s %d%s%s (%dms, ip=%s)",
+				e.Model, e.StatusCode, errTxt, pluginTxt, e.DurationMs, e.ClientIP)
 		} else {
-			e.Message = fmt.Sprintf("POST /v1/chat/completions model=%s 200 OK (%dms, %s tok [p:%s, c:%s], %s, ip=%s)",
-				e.Model, e.DurationMs, fmtNumStr(e.TotalTokens), fmtNumStr(e.PromptTokens), fmtNumStr(e.CompletionTokens), modeStr, e.ClientIP)
+			e.Message = fmt.Sprintf("POST /v1/chat/completions model=%s 200 OK%s (%dms, %s tok [p:%s, c:%s], %s, ip=%s)",
+				e.Model, pluginTxt, e.DurationMs, fmtNumStr(e.TotalTokens), fmtNumStr(e.PromptTokens), fmtNumStr(e.CompletionTokens), modeStr, e.ClientIP)
 		}
 	}
 }

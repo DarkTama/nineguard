@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,7 +37,7 @@ func NewProxy(mm *models.Manager, tm *traffic.Manager, km *keys.Manager, pm *pro
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
 		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Minute,
 		IdleConnTimeout:       90 * time.Second,
 	}
 	client := &http.Client{
@@ -371,7 +372,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
 			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 30 * time.Second,
+			ResponseHeaderTimeout: 5 * time.Minute,
 			IdleConnTimeout:       90 * time.Second,
 		}
 		client = &http.Client{
@@ -410,6 +411,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Add(k, v)
 		}
 	}
+	if pluginsApplied != "" {
+		w.Header().Set("X-NineGuard-Plugins-Applied", pluginsApplied)
+	}
+	if tokensSaved > 0 {
+		w.Header().Set("X-NineGuard-Tokens-Saved", strconv.Itoa(tokensSaved))
+	}
+	w.Header().Add("Access-Control-Expose-Headers", "X-NineGuard-Plugins-Applied, X-NineGuard-Tokens-Saved")
 	w.WriteHeader(resp.StatusCode)
 
 	isSSE := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
@@ -499,9 +507,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			PluginMs:         pluginMs,
 		})
 		if resp.StatusCode >= 400 {
-			slog.Warn("proxy request failed", "model", modelName, "status", resp.StatusCode, "duration_ms", durMs, "source", "proxy")
+			slog.Warn("proxy request failed", "model", modelName, "status", resp.StatusCode, "duration_ms", durMs, "source", "proxy", "plugins", pluginsApplied)
 		} else {
-			slog.Info("proxy request completed", "model", modelName, "status", resp.StatusCode, "duration_ms", durMs, "tokens", totalTokens, "source", "proxy")
+			if pluginsApplied != "" {
+				slog.Info("proxy request completed", "model", modelName, "status", resp.StatusCode, "duration_ms", durMs, "tokens", totalTokens, "plugins", pluginsApplied, "tokens_saved", tokensSaved, "source", "proxy")
+			} else {
+				slog.Info("proxy request completed", "model", modelName, "status", resp.StatusCode, "duration_ms", durMs, "tokens", totalTokens, "source", "proxy")
+			}
 		}
 	}()
 }

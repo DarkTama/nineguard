@@ -9,9 +9,10 @@ export function mount(root) {
   let pluginsList = [];
   let groupsList = [];
   let keysList = [];
+  let modelsList = [];
   let warningsList = [];
 
-  const container = h('div', { class: 'page-body' });
+  const container = h('div', { class: 'page' });
 
   // ── Header ──
   const isAdmin = () => !store.authEnabled || store.role === 'admin';
@@ -126,7 +127,13 @@ export function mount(root) {
           latencyLabel.textContent = 'Testing...';
           try {
             const res = await api.post(`/plugins/${encodeURIComponent(p.id)}/test`);
-            latencyLabel.textContent = `${res.latency_ms || 0}ms (${res.status || 'ok'})`;
+            if (res.in_process) {
+              latencyLabel.textContent = 'In-process (active)';
+            } else if (res.status === 'error') {
+              latencyLabel.textContent = `Error: ${res.error || 'Failed'} (${res.latency_ms || 0}ms)`;
+            } else {
+              latencyLabel.textContent = `${res.latency_ms || 0}ms (${res.status || 'ok'})`;
+            }
           } catch (e) {
             latencyLabel.textContent = `Error: ${e.message}`;
           } finally {
@@ -462,37 +469,157 @@ export function mount(root) {
     });
   }
 
-  // ── Resolve Preview Tool ──
-  const resolveCard = h('div', { class: 'card', style: { padding: '16px' } });
+  // ── Live Plugin & Endpoint Probe ──
+  const probeCard = h('div', { class: 'card', style: { padding: '16px' } });
 
-  function renderResolvePreview() {
-    const keySelect = h('select', { class: 'input' },
-      h('option', { value: '' }, '-- Select Key --'),
-      ...keysList.map((k) => h('option', { value: k.id }, k.name))
+  function renderProbe() {
+    const activeKeys = keysList.filter((k) => k.is_active !== false);
+    const keySelect = h('select', { class: 'input', style: { minWidth: '220px' } },
+      ...activeKeys.map((k) => h('option', { value: k.raw_key || k.key, 'data-id': k.id }, `${k.name} (${k.key})`))
     );
-    const modelInput = h('input', { class: 'input', placeholder: 'e.g. gpt-4o or 9router/claude-3-5-sonnet' });
 
-    const previewOut = h('div', { style: { marginTop: '12px' } });
+    const activeModels = modelsList.filter((m) => m.enabled !== false);
+    const datalistId = 'plugin-probe-models';
+    const datalist = h('datalist', { id: datalistId },
+      ...activeModels.map((m) => h('option', { value: m.id }))
+    );
 
-    const runBtn = h('button', {
+    const defaultModel = activeModels[0] ? activeModels[0].id : '9router/anthropic/claude-3.5-sonnet';
+    const modelInput = h('input', {
+      class: 'input',
+      list: datalistId,
+      placeholder: 'Select or type model...',
+      value: defaultModel,
+      style: { minWidth: '260px' }
+    });
+
+    const promptInput = h('input', {
+      class: 'input',
+      type: 'text',
+      placeholder: 'Test prompt...',
+      value: 'Hi NineGuard! Give me a 1-sentence response.',
+      style: { flex: '1', minWidth: '260px' }
+    });
+
+    const resultBox = h('div', {
+      style: { display: 'none', marginTop: '14px', padding: '12px', background: 'var(--hover)', borderRadius: '6px' }
+    });
+
+    // 1. Live Ping Button
+    const pingBtn = h('button', {
       class: 'btn btn-primary',
+      type: 'button',
       onclick: async () => {
-        const keyID = keySelect.value;
         const model = modelInput.value.trim();
+        const key = keySelect.value;
+        const prompt = promptInput.value.trim();
+
+        if (!model) return toast('No model specified', 'warn');
+        if (!key) return toast('No API key selected', 'warn');
+
+        pingBtn.disabled = true;
+        pingBtn.textContent = 'Sending...';
+        resultBox.style.display = 'block';
+        resultBox.replaceChildren(h('span', { class: 'muted' }, 'Relaying through NineGuard proxy /v1/chat/completions...'));
+
+        const startTime = performance.now();
+        try {
+          const resp = await fetch('/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${key}`,
+            },
+            body: JSON.stringify({
+              model,
+              messages: [{ role: 'user', content: prompt || 'ping' }],
+              stream: false,
+            })
+          });
+
+          const duration = Math.round(performance.now() - startTime);
+          const pluginsApplied = resp.headers.get('X-NineGuard-Plugins-Applied') || '';
+          const tokensSaved = resp.headers.get('X-NineGuard-Tokens-Saved') || '';
+          const data = await resp.json().catch(() => null);
+
+          if (resp.ok) {
+            const content = data?.choices?.[0]?.message?.content || '(Empty content)';
+            const totalTok = data?.usage?.total_tokens || 0;
+
+            const pluginBadges = [];
+            if (pluginsApplied) {
+              pluginBadges.push(h('span', {
+                class: 'badge',
+                style: { background: 'rgba(249, 115, 22, 0.15)', color: 'var(--accent)', border: '1px solid rgba(249, 115, 22, 0.4)' }
+              }, '🧩 ' + pluginsApplied));
+            }
+            if (tokensSaved && parseInt(tokensSaved, 10) > 0) {
+              pluginBadges.push(h('span', { class: 'badge ok' }, `-${tokensSaved} tokens saved`));
+            }
+
+            resultBox.replaceChildren(
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' } },
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+                  h('span', { class: 'badge ok' }, `HTTP ${resp.status} OK`),
+                  ...pluginBadges
+                ),
+                h('span', { class: 'muted', style: { fontSize: '12px' } }, `Latency: ${duration}ms · Tokens: ${totalTok}`)
+              ),
+              h('div', { style: { fontSize: '13px', whiteSpace: 'pre-wrap', lineHeight: '1.5', fontFamily: 'monospace', padding: '8px', background: 'var(--panel)', borderRadius: '4px' } }, content)
+            );
+            toast('Live request succeeded!', 'ok');
+          } else {
+            const errText = data?.error?.message || `HTTP ${resp.status} ${resp.statusText}`;
+            resultBox.replaceChildren(
+              h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' } },
+                h('span', { class: 'badge err' }, `HTTP ${resp.status} Failed`),
+                h('span', { class: 'muted', style: { fontSize: '12px' } }, `Latency: ${duration}ms`)
+              ),
+              h('div', { style: { color: 'var(--danger)', fontSize: '13px' } }, errText)
+            );
+            toast(`Request failed: ${errText}`, 'error');
+          }
+        } catch (err) {
+          const duration = Math.round(performance.now() - startTime);
+          resultBox.replaceChildren(
+            h('div', { style: { color: 'var(--danger)', fontSize: '13px' } }, `Network error: ${err.message} (${duration}ms)`)
+          );
+          toast(`Network error: ${err.message}`, 'error');
+        } finally {
+          pingBtn.disabled = false;
+          pingBtn.replaceChildren(icon('sparkles'), 'Test Live Ping');
+        }
+      }
+    }, icon('sparkles'), 'Test Live Ping');
+
+    // 2. Scope Preview Button
+    const previewBtn = h('button', {
+      class: 'btn btn-secondary',
+      type: 'button',
+      onclick: async () => {
+        const selectedOpt = keySelect.selectedOptions?.[0];
+        const keyID = selectedOpt?.getAttribute('data-id') || '';
+        const model = modelInput.value.trim();
+
+        previewBtn.disabled = true;
         try {
           const q = new URLSearchParams();
           if (keyID) q.set('key_id', keyID);
           if (model) q.set('model', model);
           const res = await api.get(`/plugins/resolve?${q.toString()}`);
 
-          previewOut.replaceChildren(
+          resultBox.style.display = 'block';
+          resultBox.replaceChildren(
+            h('div', { style: { marginBottom: '8px', fontWeight: 'bold', fontSize: '12.5px' } },
+              `Scope Precedence for ${model || '(any model)'}:`
+            ),
             h('table', { class: 'table', style: { width: '100%', fontSize: '12px' } },
               h('thead', null,
                 h('tr', null,
                   h('th', null, 'Plugin'),
-                  h('th', null, 'Runs?'),
+                  h('th', null, 'Effective State'),
                   h('th', null, 'Decided By'),
-                  h('th', null, 'Also Matched (Overridden)')
+                  h('th', null, 'Overridden Candidates')
                 )
               ),
               h('tbody', null,
@@ -510,36 +637,50 @@ export function mount(root) {
             )
           );
         } catch (e) {
-          previewOut.replaceChildren(h('p', { class: 'text-danger' }, e.message));
+          resultBox.style.display = 'block';
+          resultBox.replaceChildren(h('p', { class: 'text-danger' }, e.message));
+        } finally {
+          previewBtn.disabled = false;
         }
       }
-    }, 'Check Preview');
+    }, icon('table'), 'Check Scope Preview');
 
-    resolveCard.replaceChildren(
-      h('h3', { style: { margin: '0 0 6px', fontSize: '14px' } }, 'Resolve Preview (Dry Run)'),
-      h('p', { class: 'muted', style: { fontSize: '11.5px', margin: '0 0 12px' } },
-        'Pick an API key and model to inspect exactly which plugins will run and which scope won.'
+    probeCard.replaceChildren(
+      h('div', { class: 'card-head' },
+        h('div', null,
+          h('h2', null, 'Live Plugin & Endpoint Probe'),
+          h('p', { class: 'card-sub' }, 'Test the full pipeline (Agent → NineGuard Plugins → Upstream) and inspect transformed response style in real time.')
+        )
       ),
-      h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
-        keySelect, modelInput, runBtn
-      ),
-      previewOut
+      h('div', { style: { padding: '16px' } },
+        h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' } },
+          keySelect,
+          modelInput,
+          datalist,
+          promptInput,
+          pingBtn,
+          previewBtn
+        ),
+        resultBox
+      )
     );
   }
 
   // ── Reload data ──
   async function reload() {
     try {
-      const [pRes, gRes, kRes, wRes] = await Promise.all([
+      const [pRes, gRes, kRes, wRes, mRes] = await Promise.all([
         api.get('/plugins'),
         api.get('/model-groups'),
         api.get('/keys'),
         api.get('/plugins/warnings'),
+        api.get('/models').catch(() => []),
       ]);
       pluginsList = pRes.plugins || [];
       groupsList = gRes.groups || [];
       keysList = kRes.keys || [];
       warningsList = wRes.warnings || [];
+      modelsList = Array.isArray(mRes) ? mRes : (mRes?.models || []);
 
       if (!alive) return;
       render();
@@ -552,14 +693,14 @@ export function mount(root) {
     const banner = renderUpgradeBanner();
     const warnings = renderWarningsBanner();
     renderList();
-    renderResolvePreview();
+    renderProbe();
 
     container.replaceChildren(
       header,
       banner || '',
       warnings || '',
       listEl,
-      resolveCard
+      probeCard
     );
   }
 

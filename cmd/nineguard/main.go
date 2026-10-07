@@ -262,6 +262,7 @@ func main() {
 	mux.HandleFunc("POST /api/v1/keys/{id}", h.UpdateKey)
 	mux.HandleFunc("POST /api/v1/keys/{id}/toggle", h.ToggleKey)
 	mux.HandleFunc("DELETE /api/v1/keys/{id}", h.DeleteKey)
+	mux.HandleFunc("GET /api/v1/keys/{id}/velocity", h.GetKeyVelocity)
 
 	mux.HandleFunc("GET /api/v1/providers", h.ListProviders)
 	mux.HandleFunc("POST /api/v1/providers", h.CreateProvider)

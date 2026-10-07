@@ -1315,6 +1315,26 @@ func (h *Handler) DeleteKey(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (h *Handler) GetKeyVelocity(w http.ResponseWriter, r *http.Request) {
+	if h.traffic == nil {
+		jsonError(w, http.StatusBadRequest, "Traffic manager not available")
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		jsonError(w, http.StatusBadRequest, "Key ID required")
+		return
+	}
+
+	stats, err := h.traffic.GetVelocityStats(id, time.Now())
+	if err != nil {
+		slog.Error("failed to get key velocity stats", "id", id, "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to retrieve velocity stats")
+		return
+	}
+	jsonResponse(w, http.StatusOK, stats)
+}
+
 // ── Providers Handlers ──
 
 func (h *Handler) ListProviders(w http.ResponseWriter, r *http.Request) {

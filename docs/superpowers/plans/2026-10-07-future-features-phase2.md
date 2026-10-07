@@ -1,6 +1,6 @@
 # Phased Implementation Plan: Multimodal Logging, Velocity Baselines, Secret Guardrail & Payload Inspector
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Implement the remaining four post-plugin roadmap capabilities from `docs/FUTURE_PLANNED_FEATURES.md`:
 1. **Multimodal Logging & Image Detection (§1):** Detect image inputs in chat completion requests, record `has_images` and `image_count` in `traffic_logs`, and surface `🖼️ N img` badges and filters in Traffic Explorer.
@@ -49,17 +49,17 @@
 - Modify: `internal/db/db.go`
 - Create: `internal/db/multimodal_migration_test.go`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
   Verify `has_images` and `image_count` columns exist on `traffic_logs`.
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
   `go test ./internal/db/ -run TestMultimodalColumns -v`
-- [ ] **Step 3: Implement migration**
+- [x] **Step 3: Implement migration**
   In `internal/db/db.go`:
   - Add `has_images INTEGER DEFAULT 0` and `image_count INTEGER DEFAULT 0` to `CREATE TABLE IF NOT EXISTS traffic_logs`.
   - Add `ALTER TABLE traffic_logs ADD COLUMN has_images INTEGER DEFAULT 0;`
   - Add `ALTER TABLE traffic_logs ADD COLUMN image_count INTEGER DEFAULT 0;`
-- [ ] **Step 4: Run test to verify pass**
-- [ ] **Step 5: Commit**
+- [x] **Step 4: Run test to verify pass**
+- [x] **Step 5: Commit**
   `git commit -m "feat(db): add has_images and image_count columns to traffic_logs"`
 
 ### Task 2: Multimodal Body Inspection in Proxy & Traffic Logging
@@ -69,18 +69,18 @@
 - Modify: `internal/traffic/traffic.go`
 - Create: `internal/traffic/multimodal_test.go`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
   Test request with `messages[].content` containing `[{"type":"text"},{"type":"image_url"}]`. Verify `has_images=true` and `image_count=1`.
-- [ ] **Step 2: Run test to verify failure**
-- [ ] **Step 3: Implement image inspection**
+- [x] **Step 2: Run test to verify failure**
+- [x] **Step 3: Implement image inspection**
   In `internal/proxy/proxy.go`:
   - When parsing `chatRequest`, inspect `messages[].content` for items where `type == "image_url"` or `type == "input_image"` or object has `image_url`.
   - Pass `HasImages: count > 0` and `ImageCount: count` into `traffic.LogEntry`.
   In `internal/traffic/traffic.go`:
   - Add `HasImages bool` and `ImageCount int` to `LogEntry`.
   - Update `Record`, `QueryLogs`, `FilterParams` (`HasImages *bool`).
-- [ ] **Step 4: Run test to verify pass**
-- [ ] **Step 5: Commit**
+- [x] **Step 4: Run test to verify pass**
+- [x] **Step 5: Commit**
   `git commit -m "feat(traffic): record multimodal image detection in traffic logs"`
 
 ### Task 3: Multimodal Badge & Filter in Traffic Explorer UI
@@ -88,11 +88,11 @@
 **Files:**
 - Modify: `web/static/js/views/traffic.js`
 
-- [ ] **Step 1: Add row badge**
+- [x] **Step 1: Add row badge**
   In `traffic.js` row renderer, if `e.has_images` is true, render badge `🖼️ ${e.image_count > 1 ? e.image_count + ' imgs' : 'img'}` in `.c-model`.
-- [ ] **Step 2: Add filter chip**
+- [x] **Step 2: Add filter chip**
   Add filter chip `🖼️ Images` to toggle `has_images=1`.
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
   `git commit -m "feat(ui): add multimodal image badge and filter in traffic explorer"`
 
 ---
@@ -105,10 +105,10 @@
 - Modify: `internal/traffic/traffic.go`
 - Create: `internal/traffic/velocity_test.go`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
   Test `GetVelocityStats(apiKeyID string)` with mock traffic inserted across past 24 hours, past 7 days, and past 30 days. Verify `Tokens24h`, `Tokens7dAvg`, `Tokens30dTotal`.
-- [ ] **Step 2: Run test to verify failure**
-- [ ] **Step 3: Implement `GetVelocityStats`**
+- [x] **Step 2: Run test to verify failure**
+- [x] **Step 3: Implement `GetVelocityStats`**
   In `internal/traffic/traffic.go`:
   ```go
   type VelocityStats struct {
@@ -121,8 +121,8 @@
   - `tokens_24h`: `timestamp >= datetime('now', '-24 hours')`
   - `tokens_7d`: `timestamp >= datetime('now', '-7 days')` / 7
   - `tokens_30d`: `timestamp >= datetime('now', '-30 days')`
-- [ ] **Step 4: Run test to verify pass**
-- [ ] **Step 5: Commit**
+- [x] **Step 4: Run test to verify pass**
+- [x] **Step 5: Commit**
   `git commit -m "feat(traffic): calculate token burn velocity stats per api key"`
 
 ### Task 5: Velocity API Endpoint & Key Modal UI
@@ -132,17 +132,17 @@
 - Modify: `web/static/js/views/endpoints.js`
 - Create: `internal/handler/velocity_handler_test.go`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
   Test `GET /api/v1/keys/{id}/velocity` returns JSON matching `VelocityStats`.
-- [ ] **Step 2: Implement handler**
+- [x] **Step 2: Implement handler**
   Add `h.GetKeyVelocity` and route `GET /api/v1/keys/{id}/velocity`.
-- [ ] **Step 3: Update Key modal in `endpoints.js`**
+- [x] **Step 3: Update Key modal in `endpoints.js`**
   When editing an existing key, fetch `/keys/{id}/velocity`. Render pills below Quota Limit:
   - `Past 24h: 38k tokens`
   - `7d avg: 45k tokens/day`
   - `30d: 1.2M tokens`
   - Clickable presets: `[1.5x Daily Avg]` (sets quota limit to 1.5 * 7d avg), `[2x Daily Avg]`.
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
   `git commit -m "feat(ui): add token burn velocity pills and quota presets in key modal"`
 
 ---
@@ -156,7 +156,7 @@
 - Create: `internal/plugins/builtin/secretguard_test.go`
 - Modify: `internal/db/db.go` (seed plugin record)
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
   Test `ApplySecretGuard`:
   - Matches OpenAI API key `sk-...`
   - Matches GitHub PAT `ghp_...`
@@ -165,16 +165,16 @@
   - Mode `block`: returns `*plugins.Rejection` (HTTP 400).
   - Mode `redact`: returns modified body with `[REDACTED_SECRET:<type>]`.
   - Mode `warn_only`: passes unmodified with security warning flag.
-- [ ] **Step 2: Run test to verify failure**
-- [ ] **Step 3: Implement `secretguard` plugin**
+- [x] **Step 2: Run test to verify failure**
+- [x] **Step 3: Implement `secretguard` plugin**
   - Implement `ApplySecretGuard(body []byte, settings map[string]any) ([]byte, *plugins.Rejection, error)`.
   - Seed plugin in `internal/db/db.go`:
     ```sql
     INSERT OR IGNORE INTO plugins (id, name, description, category, kind, failure_policy, default_settings)
     VALUES ('secretguard', 'Secret Guardrail', 'Scans incoming prompts for credentials, API tokens, and private keys.', 'security', 'builtin', 'fail_closed', '{"action":"block"}');
     ```
-- [ ] **Step 4: Run test to verify pass**
-- [ ] **Step 5: Commit**
+- [x] **Step 4: Run test to verify pass**
+- [x] **Step 5: Commit**
   `git commit -m "feat(plugins): implement built-in secretguard security plugin"`
 
 ### Task 7: Integrate `secretguard` in Plugin Pipeline & Telemetry
@@ -184,11 +184,11 @@
 - Modify: `internal/plugins/builtin/common.go`
 - Create: `internal/plugins/secretguard_pipeline_test.go`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
   Verify `secretguard` executes in `PipelineExecutor.Execute`, rejects on leak when action is `block`, and redacts in-flight when action is `redact`.
-- [ ] **Step 2: Implement execution dispatch**
+- [x] **Step 2: Implement execution dispatch**
   Register `secretguard` in builtin plugin dispatcher.
-- [ ] **Step 3: Run tests and commit**
+- [x] **Step 3: Run tests and commit**
   `git commit -m "feat(plugins): wire secretguard into plugin execution pipeline"`
 
 ---
@@ -202,11 +202,11 @@
 - Modify: `internal/traffic/traffic.go`
 - Create: `internal/traffic/payloads_test.go`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
   Test `SavePayload(trafficID, reqBody, respBody)` with 512KB size clamping.
   Test `GetPayload(trafficID)`.
   Test `PurgeOldPayloads(olderThan time.Duration)`.
-- [ ] **Step 2: Implement schema and storage**
+- [x] **Step 2: Implement schema and storage**
   In `internal/db/db.go`:
   ```sql
   CREATE TABLE IF NOT EXISTS traffic_payloads (
@@ -222,8 +222,8 @@
   - `SavePayload(trafficID int64, reqBody, respBody []byte) error`
   - `GetPayload(trafficID int64) (*PayloadEntry, error)`
   - `PurgePayloads(maxAge time.Duration) (int64, error)`
-- [ ] **Step 3: Run test to verify pass**
-- [ ] **Step 4: Commit**
+- [x] **Step 3: Run test to verify pass**
+- [x] **Step 4: Commit**
   `git commit -m "feat(traffic): add traffic_payloads storage and retention purge"`
 
 ### Task 9: Proxy Body Capture & Background Retention Purge
@@ -233,18 +233,18 @@
 - Modify: `cmd/nineguard/main.go`
 - Create: `internal/proxy/payload_capture_test.go`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
   Test proxy with `record_payloads = "all"`: verify row created in `traffic_payloads`.
   Test proxy with `record_payloads = "errors_only"`: verify row created only on 4xx/5xx status.
-- [ ] **Step 2: Implement capture in proxy**
+- [x] **Step 2: Implement capture in proxy**
   In `internal/proxy/proxy.go`:
   - Read `record_payloads` setting (`disabled`, `errors_only`, `all`).
   - Clamp bodies to 512KB.
   - Asynchronously save payload on request finish.
   In `cmd/nineguard/main.go`:
   - Launch background ticker (every 12h) calling `trafficMgr.PurgePayloads(7 * 24 * time.Hour)`.
-- [ ] **Step 3: Run test to verify pass**
-- [ ] **Step 4: Commit**
+- [x] **Step 3: Run test to verify pass**
+- [x] **Step 4: Commit**
   `git commit -m "feat(proxy): capture request/response bodies and start TTL retention worker"`
 
 ### Task 10: Payload API & Traffic Explorer Inspector UI
@@ -254,17 +254,17 @@
 - Modify: `web/static/js/views/traffic.js`
 - Create: `internal/handler/payload_handler_test.go`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
   Test `GET /api/v1/traffic/{id}/payload` returns 200 with request/response JSON when payload exists, or 404 when absent.
-- [ ] **Step 2: Implement handler**
+- [x] **Step 2: Implement handler**
   Add `h.GetTrafficPayload` and route `GET /api/v1/traffic/{id}/payload`.
-- [ ] **Step 3: Implement Traffic Explorer UI**
+- [x] **Step 3: Implement Traffic Explorer UI**
   In `web/static/js/views/traffic.js` detail view:
   - Add tabs: **Overview**, **Prompt / Messages**, **Response Body**.
   - Syntax-highlight formatted JSON.
   - Add button: **Copy as cURL** (reconstructs curl command with endpoint, headers, and payload).
   - Add button: **Replay Request** (modal to re-send prompt to original or alternate model).
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
   `git commit -m "feat(ui): add payload inspector tabs, cURL copy, and replay modal in traffic explorer"`
 
 ---
@@ -273,11 +273,11 @@
 
 ### Task 11: End-to-End Build & Test Suite
 
-- [ ] **Step 1: Run full Go test suite**
+- [x] **Step 1: Run full Go test suite**
   `CGO_ENABLED=0 go test -tags server ./...`
-- [ ] **Step 2: Run all JavaScript tests**
+- [x] **Step 2: Run all JavaScript tests**
   `node --test web/jstest/*.test.mjs`
-- [ ] **Step 3: Compile multi-target binaries**
+- [x] **Step 3: Compile multi-target binaries**
   `go build -o nineguard.exe ./cmd/nineguard`
-- [ ] **Step 4: Commit documentation & update plan**
+- [x] **Step 4: Commit documentation & update plan**
   `git commit -m "docs(plans): complete future features phase 2 implementation plan"`

@@ -629,6 +629,43 @@ export function mount(root) {
         ),
         savePromptBtn
       );
+    } else if (p.id === 'secretguard') {
+      const actionSelect = h('select', { class: 'input' },
+        h('option', { value: 'block', selected: (currentSettings.action || 'block') === 'block' }, 'Block Request (HTTP 403 Rejection)'),
+        h('option', { value: 'redact', selected: currentSettings.action === 'redact' }, 'Redact In-Flight ([REDACTED_SECRET:<type>])'),
+        h('option', { value: 'warn_only', selected: currentSettings.action === 'warn_only' }, 'Warn Only (Audit Log, Forward Unmodified)')
+      );
+
+      const saveSecretBtn = h('button', {
+        class: 'btn btn-sm btn-primary',
+        type: 'button',
+        onclick: async () => {
+          saveSecretBtn.disabled = true;
+          try {
+            await api.put(`/plugins/${encodeURIComponent(p.id)}`, {
+              default_settings: JSON.stringify({ action: actionSelect.value })
+            });
+            toast('SecretGuard settings saved');
+            reload();
+          } catch (e) {
+            toast(e.message, 'error');
+          } finally {
+            saveSecretBtn.disabled = false;
+          }
+        }
+      }, 'Save Settings');
+
+      settingsSection = h('div', { style: { marginBottom: '16px', padding: '14px', background: 'var(--hover)', borderRadius: '6px' } },
+        h('h4', { style: { margin: '0 0 8px', fontSize: '13px' } }, 'SecretGuard Security Settings'),
+        h('div', { class: 'field', style: { marginBottom: '10px' } },
+          h('span', null, 'Detection Action'),
+          actionSelect,
+          h('p', { class: 'muted', style: { fontSize: '11px', margin: '4px 0 0' } },
+            'Scans incoming prompts for private keys (RSA/EC), high-entropy API tokens (sk-, ghp-, AKIA), and sensitive environment variables.'
+          )
+        ),
+        saveSecretBtn
+      );
     }
 
     formDialog({

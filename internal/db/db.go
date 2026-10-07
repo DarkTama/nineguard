@@ -79,7 +79,9 @@ func (d *DB) migrate() error {
 		client_ip TEXT,
 		stream INTEGER DEFAULT 0,
 		error_message TEXT,
-		level TEXT DEFAULT ''
+		level TEXT DEFAULT '',
+		has_images INTEGER DEFAULT 0,
+		image_count INTEGER DEFAULT 0
 	);
 
 	CREATE TABLE IF NOT EXISTS api_keys (
@@ -217,6 +219,10 @@ func (d *DB) migrate() error {
 	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN tokens_overhead INTEGER DEFAULT 0")
 	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN plugin_errors TEXT DEFAULT ''")
 	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN plugin_ms INTEGER DEFAULT 0")
+
+	// Multimodal image logging (Feature 1)
+	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN has_images INTEGER DEFAULT 0")
+	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN image_count INTEGER DEFAULT 0")
 
 	// Token quota & spike alerts (ADR 0005)
 	_, _ = d.Exec("ALTER TABLE api_keys ADD COLUMN quota_limit INTEGER DEFAULT 0")

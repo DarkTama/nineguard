@@ -806,6 +806,13 @@ func (m *Manager) GetVolume(p FilterParams, buckets int) (*VolumeResult, error) 
 		conditions = append(conditions, "api_key_id = ?")
 		args = append(args, p.APIKeyID)
 	}
+	if p.HasImages != nil {
+		if *p.HasImages {
+			conditions = append(conditions, "has_images = 1")
+		} else {
+			conditions = append(conditions, "has_images = 0")
+		}
+	}
 	if p.ClientIP != "" {
 		conditions = append(conditions, "(client_ip = ? OR client_ip LIKE ?)")
 		args = append(args, p.ClientIP, "%"+p.ClientIP+"%")

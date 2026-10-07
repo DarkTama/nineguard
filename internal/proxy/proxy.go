@@ -73,7 +73,7 @@ func detectImages(messages []chatMessage) (bool, int) {
 			for _, part := range parts {
 				if obj, ok := part.(map[string]interface{}); ok {
 					pType, _ := obj["type"].(string)
-					if pType == "image_url" || pType == "input_image" || obj["image_url"] != nil {
+					if pType == "image" || pType == "image_url" || pType == "input_image" || obj["image_url"] != nil {
 						count++
 					}
 				}

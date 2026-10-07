@@ -22,7 +22,7 @@ const TRAFFIC_SERIES = [
   { label: '2xx', levels: ['2xx'], color: 'var(--ok)' },
 ];
 
-const keyOf = (x) => JSON.stringify([x.key, x.model, x.provider, x.ip, x.status, x.q, x.range, x.date, x.from, x.to]);
+const keyOf = (x) => JSON.stringify([x.key, x.model, x.provider, x.ip, x.status, x.q, x.range, x.date, x.from, x.to, x.has_images]);
 
 export function mount(root) {
   let p = {};
@@ -285,7 +285,8 @@ export function mount(root) {
 
     const set = statusSet();
     chips.forEach((c, i) => c.classList.toggle('active', set.has(TRAFFIC_STATUSES[i].id)));
-    clearBtn.hidden = !(p.key || p.key_id || p.model || p.provider || p.ip || p.status || p.q);
+    imgChip.classList.toggle('active', !!p.has_images);
+    clearBtn.hidden = !(p.key || p.key_id || p.model || p.provider || p.ip || p.status || p.q || p.has_images);
 
     liveBtn.classList.toggle('active', !!p.live);
     liveBtn.title = p.live ? 'Stop following new requests' : 'Follow new requests in real time';
@@ -539,8 +540,8 @@ export function mount(root) {
             fontWeight: '600',
             whiteSpace: 'nowrap'
           },
-          title: `Multimodal request: contains ${e.image_count || 1} attached image(s)`
-        }, `🖼️ ${e.image_count > 1 ? e.image_count + ' imgs' : 'img'}`) : null,
+          title: `Multimodal: prompt history contains ${e.image_count || 1} image(s) in conversation context`
+        }, `🖼️ ${e.image_count > 1 ? e.image_count + ' imgs' : '1 img'}`) : null,
         e.plugins_applied ? h('span', {
           class: 'badge',
           style: {
@@ -619,7 +620,7 @@ export function mount(root) {
       ['Guard Status', statusText],
       ['Client Key', e.api_key_name ? `${e.api_key_name} (${e.api_key})` : (e.api_key || '-')],
       ['Target Model', e.model || '-'],
-      ['Images Attached', e.has_images ? `${e.image_count || 1} image(s)` : 'None (text only)'],
+      ['Images in Prompt Context', e.has_images ? `${e.image_count || 1} image(s) in conversation history` : 'None (text only)'],
       ['Provider', e.provider_id || '(default upstream)'],
       ['Tokens', `${fmtNum(e.total_tokens)} (prompt: ${fmtNum(e.prompt_tokens)}, completion: ${fmtNum(e.completion_tokens)})`],
       ['Tokens Saved', e.tokens_saved ? `${fmtNum(e.tokens_saved)} tokens` : '0'],

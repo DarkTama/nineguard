@@ -30,9 +30,10 @@ func NewPipelineExecutor(client *http.Client) *PipelineExecutor {
 func ComputeAppliedHeader(incoming string, executedBuiltins []string) string {
 	set := make(map[string]bool)
 	validBuiltins := map[string]bool{
-		"headroom": true,
-		"caveman":  true,
-		"ponytail": true,
+		"secretguard": true,
+		"headroom":    true,
+		"caveman":     true,
+		"ponytail":    true,
 	}
 
 	for _, id := range strings.Split(incoming, ",") {
@@ -181,6 +182,22 @@ func (pe *PipelineExecutor) Execute(
 		)
 
 		switch p.ID {
+		case "secretguard":
+			msgs, ok := toMapSlice(currentBody["messages"])
+			if !ok {
+				err = fmt.Errorf("invalid messages format")
+			} else {
+				var newMsgs []map[string]any
+				newMsgs, skipped, rejected, rejectMsg, err = builtin.ApplySecretGuard(msgs, item.MergedSettings)
+				if err == nil && !skipped && !rejected {
+					cloned := make(map[string]any, len(currentBody))
+					for k, v := range currentBody {
+						cloned[k] = v
+					}
+					cloned["messages"] = toAnySlice(newMsgs)
+					modifiedBody = cloned
+				}
+			}
 		case "headroom":
 			modifiedBody, tokensSaved, skipped, skipReason, err = builtin.ApplyHeadroom(pCtx, pe.httpClient, currentBody, item.MergedSettings)
 		case "caveman":

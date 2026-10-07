@@ -495,8 +495,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var promptTokens, completionTokens, totalTokens int
 	var responseErrMsg *string
+	var capturedRespBody []byte
 
 	if isSSE {
+		capturedRespBody = []byte("[Streaming SSE Event Stream]")
 		flusher, isFlusher := w.(http.Flusher)
 		reader := bufio.NewReader(resp.Body)
 		chunkCount := 0
@@ -540,6 +542,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		respBody, err := io.ReadAll(resp.Body)
 		if err == nil {
+			capturedRespBody = respBody
 			_, _ = w.Write(respBody)
 
 			var chatResp chatResponse
@@ -556,7 +559,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		durMs := int(time.Since(start).Milliseconds())
-		_ = p.traffic.Record(&traffic.LogEntry{
+		logEntry := &traffic.LogEntry{
 			APIKey:           maskedKey,
 			APIKeyName:       keyName,
 			APIKeyID:         keyInfo.ID,
@@ -578,7 +581,17 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			PluginMs:         pluginMs,
 			HasImages:        hasImages,
 			ImageCount:       imageCount,
-		})
+		}
+		_ = p.traffic.Record(logEntry)
+
+		if p.traffic != nil {
+			recMode := p.traffic.GetRecordPayloadsSetting()
+			shouldRecord := (recMode == "all") || (recMode == "errors_only" && resp.StatusCode >= 400)
+			if shouldRecord && logEntry.ID > 0 {
+				_ = p.traffic.SavePayload(logEntry.ID, bodyBytes, capturedRespBody)
+			}
+		}
+
 		if resp.StatusCode >= 400 {
 			slog.Warn("proxy request failed", "model", modelName, "status", resp.StatusCode, "duration_ms", durMs, "source", "proxy", "plugins", pluginsApplied)
 		} else {

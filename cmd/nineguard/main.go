@@ -359,6 +359,17 @@ func main() {
 		slog.Info("NineGuard started", "port", cfg.Port, "auth", cfg.AuthEnabled)
 	}
 
+	// Background worker: auto-purge payloads older than 7 days every 12 hours
+	go func() {
+		ticker := time.NewTicker(12 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			if deleted, err := trafficMgr.PurgeOldPayloads(7 * 24 * time.Hour); err == nil && deleted > 0 {
+				slog.Info("purged expired traffic payloads", "deleted", deleted)
+			}
+		}
+	}()
+
 	// 5. Handle Execution Modes
 
 	// Mode A: Direct Tray

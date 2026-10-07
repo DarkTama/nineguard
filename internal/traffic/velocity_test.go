@@ -66,4 +66,18 @@ func TestGetVelocityStats(t *testing.T) {
 	if stats.Tokens30d != 85000 {
 		t.Errorf("expected Tokens30d = 85000, got %d", stats.Tokens30d)
 	}
+
+	// Test a brand new key (created and used only today)
+	newKeyID := "key-new-today"
+	_, _ = d.Exec(`INSERT INTO traffic_logs (api_key_id, model, status_code, total_tokens, timestamp)
+		VALUES (?, 'gpt-4o', 200, 102400, datetime('now', '-2 hours'))`, newKeyID)
+
+	newStats, err := mgr.GetVelocityStats(newKeyID, now)
+	if err != nil {
+		t.Fatalf("GetVelocityStats new key: %v", err)
+	}
+	// For a key active for 1 day, 7d avg should be divided by 1 day (102,400), not deflated by 7
+	if newStats.Tokens7dAvg != 102400 {
+		t.Errorf("expected 1-day old key 7d avg to be 102400, got %d", newStats.Tokens7dAvg)
+	}
 }

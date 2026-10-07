@@ -363,10 +363,58 @@ export function mount(root) {
     keysBody.replaceChildren(h('div', { class: 'table-wrap' }, table), renderPager());
   }
 
-  function openKeyModal(existingKey = null) {
+  async function openKeyModal(existingKey = null) {
     const isEdit = Boolean(existingKey);
     const existingModels = (existingKey && Array.isArray(existingKey.allowed_models)) ? existingKey.allowed_models : [];
     const existingGroupIDs = new Set((existingKey && Array.isArray(existingKey.model_group_ids)) ? existingKey.model_group_ids : []);
+
+    let pluginsList = [];
+    let keyBindings = new Map();
+    try {
+      const [pRes, bRes] = await Promise.all([
+        api.get('/plugins').catch(() => ({ plugins: [] })),
+        existingKey ? api.get('/plugins/bindings', { scope_type: 'key', scope_id: existingKey.id }).catch(() => ({ bindings: [] })) : Promise.resolve({ bindings: [] })
+      ]);
+      pluginsList = pRes.plugins || [];
+      (bRes.bindings || []).forEach(b => keyBindings.set(b.plugin_id, b.state));
+    } catch { /* ignore */ }
+
+    const pluginSelectMap = new Map();
+    const pluginRows = pluginsList.map(p => {
+      const curState = keyBindings.get(p.id) || 'inherit';
+      const sel = h('select', { class: 'input', style: { width: '140px', fontSize: '12px' } },
+        h('option', { value: 'inherit', selected: curState === 'inherit' }, 'Inherit (Default)'),
+        h('option', { value: 'on', selected: curState === 'on' }, 'On (Enabled)'),
+        h('option', { value: 'off', selected: curState === 'off' }, 'Off (Disabled)')
+      );
+      pluginSelectMap.set(p.id, sel);
+
+      const catBadge = h('span', { class: 'badge', style: { fontSize: '10px' } },
+        p.category === 'input_compression' ? 'Compress' : (p.category === 'output_style' ? 'Style' : 'Plugin')
+      );
+
+      return h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: 'var(--panel)', borderRadius: '6px' } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+          h('b', { style: { fontSize: '12px' } }, p.name),
+          catBadge
+        ),
+        sel
+      );
+    });
+
+    const pluginsWrap = h('div', {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+        padding: '10px',
+        borderRadius: '8px',
+        border: '1px solid var(--border)',
+        background: 'var(--hover)'
+      }
+    },
+      pluginRows.length ? pluginRows : h('span', { class: 'muted', style: { fontSize: '12px' } }, 'No plugins registered')
+    );
 
     let initialMode = 'all';
     if (existingKey) {
@@ -785,6 +833,15 @@ export function mount(root) {
               'Configure which models this API key can call. Unauthorized model calls are blocked with HTTP 403 Forbidden.'
             )
           )
+        },
+        {
+          label: 'Plugin Overrides (Optional)',
+          node: h('div', null,
+            pluginsWrap,
+            h('p', { class: 'muted', style: { fontSize: '11px', margin: '4px 0 0' } },
+              'Override plugins specifically for this API key. Keys override Model Groups and All keys, all models.'
+            )
+          )
         }
       ],
       onSubmit: async () => {
@@ -825,15 +882,33 @@ export function mount(root) {
         };
 
         try {
+          let targetKeyID = '';
           if (isEdit) {
             await api.put(`/keys/${existingKey.id}`, payload);
+            targetKeyID = existingKey.id;
             toast(`Key "${name}" updated!`, 'ok');
             await load();
           } else {
             const newKey = await api.post('/keys', payload);
+            targetKeyID = newKey.id;
             toast(`Key "${name}" created!`, 'ok');
             await load();
             showGeneratedKeyModal(newKey);
+          }
+
+          if (targetKeyID) {
+            for (const [pluginID, sel] of pluginSelectMap.entries()) {
+              const nextState = sel.value;
+              const prevState = keyBindings.get(pluginID) || 'inherit';
+              if (nextState !== prevState) {
+                await api.put(`/plugins/${encodeURIComponent(pluginID)}/bindings`, {
+                  scope_type: 'key',
+                  scope_id: targetKeyID,
+                  state: nextState,
+                  settings: '{}'
+                }).catch(() => {});
+              }
+            }
           }
         } catch (e) {
           throw new Error(e.message || 'Operation failed');

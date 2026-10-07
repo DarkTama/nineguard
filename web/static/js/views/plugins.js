@@ -266,96 +266,205 @@ export function mount(root) {
       bindingMap.set(`${b.scope_type}:${b.scope_id}`, b);
     }
 
-    // Bindings table elements
-    const rows = [];
-
-    // 1. Global Row
+    // 1. Global Rule Panel
     const globKey = 'global:';
     const globB = bindingMap.get(globKey) || { state: 'off', settings: '{}' };
-    const globSelect = h('select', { class: 'input' },
-      h('option', { value: 'off', selected: globB.state === 'off' }, 'Off'),
-      h('option', { value: 'on', selected: globB.state === 'on' }, 'On')
+    const globSelect = h('select', { class: 'input', style: { width: '130px', fontWeight: 'bold' } },
+      h('option', { value: 'off', selected: globB.state === 'off' }, 'Off (Disabled)'),
+      h('option', { value: 'on', selected: globB.state === 'on' }, 'On (Enabled)')
     );
-    rows.push(h('tr', null,
-      h('td', null,
-        h('b', null, scopeLabel('global')),
-        h('div', { class: 'muted', style: { fontSize: '11px' } }, scopeSubLabel('global'))
+    globSelect.onchange = async () => {
+      await saveBinding(p.id, 'global', '', globSelect.value, globB.settings);
+      reload();
+    };
+
+    const globalPanel = h('div', {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '12px 14px',
+        borderRadius: '6px',
+        border: '1px solid var(--border)',
+        background: 'var(--panel)',
+        marginBottom: '16px'
+      }
+    },
+      h('div', null,
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+          h('b', { style: { fontSize: '13px' } }, scopeLabel('global')),
+          h('span', { class: 'badge', style: { fontSize: '10px' } }, 'Base Rule')
+        ),
+        h('div', { class: 'muted', style: { fontSize: '11px', marginTop: '2px' } }, scopeSubLabel('global'))
       ),
-      h('td', null, globSelect),
-      h('td', null,
-        h('button', {
-          class: 'btn btn-sm btn-primary',
+      globSelect
+    );
+
+    // 2. Active Scope Overrides Table
+    const overridesContainer = h('div');
+
+    function renderOverrides() {
+      const activeList = [];
+      for (const [key, b] of bindingMap.entries()) {
+        if (b.scope_type === 'global') continue;
+        if (b.state === 'on' || b.state === 'off') {
+          activeList.push(b);
+        }
+      }
+
+      if (!activeList.length) {
+        overridesContainer.replaceChildren(
+          h('div', { class: 'muted', style: { padding: '16px', textAlign: 'center', border: '1px dashed var(--border)', borderRadius: '6px', fontSize: '12px' } },
+            'No scope overrides configured. All model groups and API keys currently inherit the base rule above.'
+          )
+        );
+        return;
+      }
+
+      const rows = activeList.map((b) => {
+        let name = b.scope_id;
+        let subText = '';
+        if (b.scope_type === 'group') {
+          const grp = groupsList.find((g) => g.id === b.scope_id);
+          name = grp ? grp.name : b.scope_id;
+          subText = grp ? `${grp.models_count || 0} models · any key` : '';
+        } else if (b.scope_type === 'key') {
+          const k = keysList.find((key) => key.id === b.scope_id);
+          name = k ? k.name : b.scope_id;
+          subText = 'Any model this key uses';
+        }
+
+        const stateSelect = h('select', { class: 'input', style: { width: '90px' } },
+          h('option', { value: 'on', selected: b.state === 'on' }, 'On'),
+          h('option', { value: 'off', selected: b.state === 'off' }, 'Off')
+        );
+        stateSelect.onchange = async () => {
+          b.state = stateSelect.value;
+          await saveBinding(p.id, b.scope_type, b.scope_id, stateSelect.value, b.settings || '{}');
+          reload();
+        };
+
+        const removeBtn = h('button', {
+          class: 'btn btn-sm btn-danger',
+          type: 'button',
+          title: 'Reset to Inherit',
           onclick: async () => {
-            await saveBinding(p.id, 'global', '', globSelect.value, globB.settings);
+            bindingMap.delete(`${b.scope_type}:${b.scope_id}`);
+            await saveBinding(p.id, b.scope_type, b.scope_id, 'inherit', '{}');
+            renderOverrides();
+            updatePickerOptions();
             reload();
           }
-        }, 'Save')
-      )
-    ));
+        }, icon('trash'), 'Remove');
 
-    // 2. Groups Rows
-    for (const g of groupsList) {
-      const gKey = `group:${g.id}`;
-      const gb = bindingMap.get(gKey) || { state: 'inherit', settings: '{}' };
-      const gSelect = h('select', { class: 'input' },
-        h('option', { value: 'inherit', selected: gb.state === 'inherit' }, formatInheritText('group')),
-        h('option', { value: 'off', selected: gb.state === 'off' }, 'Off'),
-        h('option', { value: 'on', selected: gb.state === 'on' }, 'On')
-      );
-      rows.push(h('tr', null,
-        h('td', null,
-          h('b', null, scopeLabel('group', g.name)),
-          h('div', { class: 'muted', style: { fontSize: '11px' } }, scopeSubLabel('group', { modelsCount: g.models_count, keysCount: g.keys_count }))
-        ),
-        h('td', null, gSelect),
-        h('td', null,
-          h('button', {
-            class: 'btn btn-sm',
-            onclick: async () => {
-              await saveBinding(p.id, 'group', g.id, gSelect.value, gb.settings);
-              reload();
-            }
-          }, 'Save')
+        return h('tr', null,
+          h('td', null,
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+              h('span', { class: 'badge', style: { textTransform: 'capitalize', fontSize: '10px' } }, b.scope_type),
+              h('b', null, scopeLabel(b.scope_type, name))
+            ),
+            subText ? h('div', { class: 'muted', style: { fontSize: '10.5px', marginTop: '2px' } }, subText) : null
+          ),
+          h('td', null, stateSelect),
+          h('td', { style: { textAlign: 'right' } }, removeBtn)
+        );
+      });
+
+      overridesContainer.replaceChildren(
+        h('table', { class: 'table', style: { width: '100%', fontSize: '12px' } },
+          h('thead', null,
+            h('tr', null,
+              h('th', null, 'Target Scope'),
+              h('th', { style: { width: '110px' } }, 'Override Rule'),
+              h('th', { style: { width: '90px', textAlign: 'right' } }, 'Action')
+            )
+          ),
+          h('tbody', null, ...rows)
         )
-      ));
+      );
     }
 
-    // 3. Keys Rows
-    for (const k of keysList) {
-      const kKey = `key:${k.id}`;
-      const kb = bindingMap.get(kKey) || { state: 'inherit', settings: '{}' };
-      const kSelect = h('select', { class: 'input' },
-        h('option', { value: 'inherit', selected: kb.state === 'inherit' }, formatInheritText('key')),
-        h('option', { value: 'off', selected: kb.state === 'off' }, 'Off'),
-        h('option', { value: 'on', selected: kb.state === 'on' }, 'On')
-      );
-      rows.push(h('tr', null,
-        h('td', null,
-          h('b', null, scopeLabel('key', k.name)),
-          h('div', { class: 'muted', style: { fontSize: '11px' } }, scopeSubLabel('key'))
-        ),
-        h('td', null, kSelect),
-        h('td', null,
-          h('button', {
-            class: 'btn btn-sm',
-            onclick: async () => {
-              await saveBinding(p.id, 'key', k.id, kSelect.value, kb.settings);
-              reload();
-            }
-          }, 'Save')
-        )
-      ));
+    // 3. Add Override Picker
+    const scopePicker = h('select', { class: 'input', style: { flex: '1', minWidth: '220px' } });
+    const rulePicker = h('select', { class: 'input', style: { width: '90px' } },
+      h('option', { value: 'on' }, 'On'),
+      h('option', { value: 'off' }, 'Off')
+    );
+
+    function updatePickerOptions() {
+      const opts = [h('option', { value: '' }, '-- Select Group or Key to Override --')];
+
+      const groupOpts = groupsList
+        .filter((g) => {
+          const existing = bindingMap.get(`group:${g.id}`);
+          return !existing || (existing.state !== 'on' && existing.state !== 'off');
+        })
+        .map((g) => h('option', { value: `group:${g.id}` }, `Group: ${g.name} (${g.models_count || 0} models)`));
+
+      if (groupOpts.length > 0) {
+        opts.push(h('optgroup', { label: 'Model Groups' }, ...groupOpts));
+      }
+
+      const keyOpts = keysList
+        .filter((k) => {
+          const existing = bindingMap.get(`key:${k.id}`);
+          return !existing || (existing.state !== 'on' && existing.state !== 'off');
+        })
+        .map((k) => h('option', { value: `key:${k.id}` }, `Key: ${k.name} (${k.key})`));
+
+      if (keyOpts.length > 0) {
+        opts.push(h('optgroup', { label: 'API Keys' }, ...keyOpts));
+      }
+
+      scopePicker.replaceChildren(...opts);
     }
 
-    const bindingsTable = h('table', { class: 'table', style: { width: '100%', fontSize: '12px' } },
-      h('thead', null,
-        h('tr', null,
-          h('th', null, 'Scope'),
-          h('th', { style: { width: '180px' } }, 'Effective Rule'),
-          h('th', { style: { width: '80px' } }, 'Action')
-        )
-      ),
-      h('tbody', null, ...rows)
+    updatePickerOptions();
+    renderOverrides();
+
+    const addOverrideBtn = h('button', {
+      class: 'btn btn-primary btn-sm',
+      type: 'button',
+      onclick: async () => {
+        const val = scopePicker.value;
+        if (!val) return toast('Please select a Model Group or API Key', 'warn');
+        const [scopeType, scopeID] = val.split(':');
+        const state = rulePicker.value;
+
+        addOverrideBtn.disabled = true;
+        try {
+          bindingMap.set(`${scopeType}:${scopeID}`, {
+            plugin_id: p.id,
+            scope_type: scopeType,
+            scope_id: scopeID,
+            state: state,
+            settings: '{}'
+          });
+          await saveBinding(p.id, scopeType, scopeID, state, '{}');
+          renderOverrides();
+          updatePickerOptions();
+          reload();
+        } finally {
+          addOverrideBtn.disabled = false;
+        }
+      }
+    }, icon('plus'), 'Add Override');
+
+    const addOverrideRow = h('div', {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        flexWrap: 'wrap',
+        padding: '10px 12px',
+        background: 'var(--hover)',
+        borderRadius: '6px',
+        marginTop: '12px'
+      }
+    },
+      scopePicker,
+      rulePicker,
+      addOverrideBtn
     );
 
     // Settings Section (typed fields for built-ins, prompt override editor)
@@ -518,11 +627,14 @@ export function mount(root) {
       wide: true,
       body: h('div', null,
         settingsSection,
-        h('h4', { style: { margin: '0 0 8px' } }, 'Scope Precedence & Bindings'),
-        h('p', { class: 'muted', style: { fontSize: '11px', margin: '0 0 12px' } },
-          'Precedence: Key overrides Group overrides All keys, all models. Inherit defers to the broader scope.'
+        h('h4', { style: { margin: '0 0 4px', fontSize: '13px' } }, 'Base Rule (Default for All Requests)'),
+        globalPanel,
+        h('h4', { style: { margin: '16px 0 4px', fontSize: '13px' } }, 'Scope Overrides (Exceptions)'),
+        h('p', { class: 'muted', style: { fontSize: '11px', margin: '0 0 10px' } },
+          'Explicit overrides for specific Model Groups or API Keys. Precedence: Key beats Group beats All keys, all models.'
         ),
-        bindingsTable
+        overridesContainer,
+        addOverrideRow
       ),
       submitText: 'Done',
       cancel: false,

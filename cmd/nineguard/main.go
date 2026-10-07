@@ -276,6 +276,7 @@ func main() {
 	mux.HandleFunc("DELETE /api/v1/plugins/{id}", h.DeletePlugin)
 	mux.HandleFunc("POST /api/v1/plugins/{id}/test", h.TestPlugin)
 	mux.HandleFunc("PUT /api/v1/plugins/order", h.UpdatePipelineOrder)
+	mux.HandleFunc("GET /api/v1/plugins/bindings", h.ListScopeBindings)
 	mux.HandleFunc("GET /api/v1/plugins/{id}/bindings", h.ListPluginBindings)
 	mux.HandleFunc("PUT /api/v1/plugins/{id}/bindings", h.UpsertPluginBinding)
 	mux.HandleFunc("POST /api/v1/plugins/{id}/bindings", h.UpsertPluginBinding)

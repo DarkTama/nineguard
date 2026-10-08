@@ -9,7 +9,7 @@ services:
     build:
       context: .
       args:
-        VERSION: ${NINEGUARD_VERSION:-v1.0.0}
+        VERSION: ${NINEGUARD_VERSION:-v1.1.0}
         COMMIT: ${NINEGUARD_COMMIT:-dev}
     image: ${NINEGUARD_IMAGE:-nineguard:latest}
     container_name: nineguard

@@ -1,7 +1,7 @@
 # Build stage
 FROM golang:1.27-alpine AS builder
 
-ARG VERSION=v1.0.0
+ARG VERSION=v1.1.0
 ARG COMMIT=dev
 
 WORKDIR /app
@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -tags server \
 # Run stage
 FROM alpine:3.20
 
-ARG VERSION=v1.0.0
+ARG VERSION=v1.1.0
 ARG COMMIT=dev
 
 LABEL org.opencontainers.image.title="NineGuard" \

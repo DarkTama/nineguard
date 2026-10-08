@@ -56,7 +56,7 @@ jobs:
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=$(git describe --tags --always 2>/dev/null || echo "v1.0.0-dev")" >> "$GITHUB_OUTPUT"
+            echo "version=$(git describe --tags --always 2>/dev/null || echo "v1.1.0-dev")" >> "$GITHUB_OUTPUT"
           fi
           echo "commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 

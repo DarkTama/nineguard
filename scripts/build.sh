@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-GIT_VERSION="${VERSION:-$(git describe --tags --always 2>/dev/null || echo "v1.0.0")}"
+GIT_VERSION="${VERSION:-$(git describe --tags --always 2>/dev/null || echo "v1.1.0")}"
 GIT_COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "dev")}"
 LDFLAGS="-s -w -X 'nineguard/internal/version.Version=${GIT_VERSION}' -X 'nineguard/internal/version.Commit=${GIT_COMMIT}'"
 

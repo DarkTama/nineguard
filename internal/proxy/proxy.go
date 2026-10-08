@@ -192,13 +192,27 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				resetDesc = fmt.Sprintf("%dm", mins)
 			}
 
+			wibLoc, err := time.LoadLocation("Asia/Jakarta")
+			if err != nil {
+				wibLoc = time.FixedZone("WIB", 7*3600)
+			}
+			wibTime := resetAt.In(wibLoc).Format("15:04 WIB")
+			utcTime := resetAt.UTC().Format("15:04 UTC")
+			var atDisplay string
+			if keyInfo.QuotaPeriod == "weekly" || keyInfo.QuotaPeriod == "monthly" {
+				wibDate := resetAt.In(wibLoc).Format("02 Jan")
+				atDisplay = fmt.Sprintf("%s on %s / %s", wibTime, wibDate, utcTime)
+			} else {
+				atDisplay = fmt.Sprintf("%s / %s", wibTime, utcTime)
+			}
+
 			errJSON := fmt.Sprintf(`{
 	"error": {
 		"message": "API key token quota exceeded (%s / %s tokens %s). Resets in %s (at %s).",
 		"type": "insufficient_quota",
 		"code": "quota_exceeded"
 	}
-}`, formatTokenCount(consumed), formatTokenCount(keyInfo.QuotaLimit), keyInfo.QuotaPeriod, resetDesc, resetAt.UTC().Format(time.RFC3339))
+}`, formatTokenCount(consumed), formatTokenCount(keyInfo.QuotaLimit), keyInfo.QuotaPeriod, resetDesc, atDisplay)
 			_, _ = w.Write([]byte(errJSON))
 
 			errMsg := fmt.Sprintf("quota exceeded (%d/%d tokens %s)", consumed, keyInfo.QuotaLimit, keyInfo.QuotaPeriod)

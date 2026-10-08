@@ -80,6 +80,13 @@ NineGuard bertindak sebagai gateway tunggal antara AI Coding Agents dan Upstream
 | **Per-Key Model Access Control** | Atur hak akses model per API key (akses global `*`, Model Groups dinamis, atau custom whitelist). |
 | **Model Groups** | Kelompokkan model ke grup reusable (e.g. GPT Ecosystem, Claude) dengan sinkronisasi dinamis ke API key. |
 | **Model Firewall** | Aktifkan/nonaktifkan model secara instan dengan HTTP 403 Forbidden. |
+| **Token Quotas & Rate Limiting** | Batasi anggaran token per API key (harian, mingguan, bulanan, lifetime) dengan soft post-facto gating, respons standar HTTP 429, header `Retry-After`, dan notifikasi waktu reset (WIB & UTC). |
+| **Token Burn Velocity & Presets** | Pantau laju konsumsi historis (24 jam, rata-rata 7 hari, 30 hari) per key untuk membantu penentuan batas kuota dengan tombol preset instan (1.5x / 2x daily avg). |
+| **Plugin Pipeline & Token Savers** | Hemat token dan modifikasi request otomatis via built-in plugins (Headroom, Ponytail, Caveman) atau layanan HTTP eksternal dengan urutan pipeline global dan hierarki override (Global $\rightarrow$ Model Group $\rightarrow$ API Key). |
+| **Secret Leak Guardrail (SecretGuard)** | Cegah kebocoran API token (`sk-`, `ghp-`, `AKIA`), private key, dan environment credential ke LLM upstream dengan inspeksi regex (pilihan mode Block HTTP 403, Redact in-flight, atau Audit mode). |
+| **Traffic Spike Alerts** | Tandai request raksasa yang melewati ambang batas (`heavy_token_threshold`) dengan badge peringatan ⚠️ di Traffic Explorer dan log audit tanpa memutus request. |
+| **Multimodal Image Logging** | Deteksi dan lacak request yang menyertakan input gambar/vision dalam riwayat percakapan beserta badge `🖼️ N img` dan filter eksplorasi. |
+| **Payload Inspector & Request Replay** | Inspeksi payload body request dan response (limit 512KB, auto-purge 7 hari), salin perintah cURL 1-klik, dan replay request langsung dari dashboard. |
 | **Auto & Manual Model Fetch** | Ambil daftar model otomatis dari semua provider aktif dan tampilkan secara terpusat. |
 | **Interactive Trend Line Chart** | Visualisasi throughput request, volume token, dan latensi respons dengan grafik interaktif. |
 | **Usage Reports & Breakdown** | Audit "siapa saja pemakai tokennya" dengan filter periode preset (Today, 7D, 30D, Month, Last Month) dan Custom Date Range. |
@@ -435,11 +442,12 @@ curl -b cookies.txt -X PUT http://localhost:8080/api/v1/model-groups/ID_GRUP \
 * `POST /api/v1/providers/{id}/default` — Menjadikan provider sebagai fallback default.
 * `DELETE /api/v1/providers/{id}` — Menghapus provider (otomatis menghapus model terkait di NineGuard).
 * `POST /api/v1/providers/test` — Menguji koneksi probe ke provider upstream.
-* `GET /api/v1/keys` — Daftar NineGuard API key yang aktif beserta allowed models.
-* `POST /api/v1/keys` — Menerbitkan NineGuard API key baru dengan konfigurasi allowed models.
-* `PUT /api/v1/keys/{id}` — Mengubah nama dan daftar model yang diizinkan untuk key tertentu.
+* `GET /api/v1/keys` — Daftar NineGuard API key yang aktif beserta allowed models dan kuota.
+* `POST /api/v1/keys` — Menerbitkan NineGuard API key baru dengan konfigurasi allowed models dan batas kuota.
+* `PUT /api/v1/keys/{id}` — Mengubah nama, daftar model yang diizinkan, dan kuota untuk key tertentu.
 * `POST /api/v1/keys/{id}/toggle` — Mengaktifkan / menonaktifkan key.
 * `DELETE /api/v1/keys/{id}` — Mencabut / menghapus key.
+* `GET /api/v1/keys/{id}/velocity` — Mengambil metrik laju konsumsi token historis per key (24 jam, rata-rata 7 hari, 30 hari).
 * `GET /api/v1/models` — Daftar model terdaftar dan status firewall.
 * `POST /api/v1/models/toggle` — Mengubah status aktif/blokir model.
 * `POST /api/v1/models/sync` — Mengambil model terbaru dari semua provider aktif.
@@ -449,11 +457,24 @@ curl -b cookies.txt -X PUT http://localhost:8080/api/v1/model-groups/ID_GRUP \
 * `GET /api/v1/model-groups/{id}` — Detail anggota model dalam suatu group.
 * `PUT /api/v1/model-groups/{id}` — Memperbarui nama, deskripsi, dan anggota model group.
 * `DELETE /api/v1/model-groups/{id}` — Menghapus model group.
-* `GET /api/v1/traffic` — Log traffic riwayat per request (mendukung filter key, model, IP, status).
+* `GET /api/v1/traffic` — Log traffic riwayat per request (mendukung filter key, model, IP, status, has_images).
 * `GET /api/v1/traffic/volume` — Data time-series histogram volume request & token.
 * `GET /api/v1/traffic/stats` — Metrik statistik ringkas & volume series untuk Dashboard.
 * `GET /api/v1/traffic/report` — Laporan breakdown penggunaan token per key & model dengan custom date range.
 * `GET /api/v1/traffic/export` — Ekspor log traffic ke CSV/JSON.
+* `GET /api/v1/traffic/{id}/payload` — Mengambil body payload request & response untuk inspeksi dan replay cURL.
+* `GET /api/v1/settings/traffic` — Mengambil pengaturan threshold lonjakan token dan status perekaman payload.
+* `POST /api/v1/settings/traffic` — Memperbarui threshold lonjakan token (`heavy_token_threshold`) dan mode perekaman payload.
+* `GET /api/v1/plugins` — Daftar seluruh plugin terdaftar (built-in & HTTP) beserta urutan pipeline.
+* `POST /api/v1/plugins` — Mendaftarkan plugin HTTP baru.
+* `PUT /api/v1/plugins/{id}` — Memperbarui konfigurasi default plugin.
+* `DELETE /api/v1/plugins/{id}` — Menghapus plugin HTTP.
+* `POST /api/v1/plugins/{id}/test` — Menguji koneksi probe ke endpoint plugin HTTP.
+* `PUT /api/v1/plugins/order` — Mengatur ulang urutan eksekusi pipeline plugin.
+* `GET /api/v1/plugins/bindings` — Mengambil seluruh binding plugin pada scope tertentu (global, group, key).
+* `PUT /api/v1/plugins/{id}/bindings` — Menyimpan atau menghapus override binding plugin (on, off, inherit).
+* `GET /api/v1/plugins/resolve` — Pratinjau plugin efektif dan hierarki penentu untuk kombinasi key dan model.
+* `GET /api/v1/plugins/warnings` — Mengambil peringatan tumpang-tindih plugin token saving.
 * `GET /api/v1/logs` — Log sistem internal & security audit log.
 * `GET /api/v1/logs/volume` — Volume histogram log sistem per severity.
 * `GET /api/v1/logs/sources` — Daftar sumber log sistem yang aktif.
@@ -476,6 +497,8 @@ curl -b cookies.txt -X PUT http://localhost:8080/api/v1/model-groups/ID_GRUP \
 * [Arsitektur & Alur Request](docs/ARCHITECTURE.md)
 * [Panduan Multi-Provider & Prefix Routing](docs/PROVIDERS.md)
 * [Panduan Menghubungkan Agent & IDE](docs/AGENTS_SETUP.md)
+* [Glossary & Istilah Domain](GLOSSARY.md)
+* [Architecture Decision Records (ADR)](docs/adr/)
 
 ---
 

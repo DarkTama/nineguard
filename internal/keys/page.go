@@ -165,10 +165,11 @@ func (m *Manager) ListKeysPage(opts ListOptions) (*KeyPage, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	list, err := m.scanKeyRows(rows)
+	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}
+	m.enrichQuotaUsage(list)
 	return &KeyPage{Keys: list, Total: total, Page: opts.Page, Limit: opts.Limit}, nil
 }

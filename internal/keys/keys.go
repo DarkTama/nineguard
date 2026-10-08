@@ -13,6 +13,7 @@ import (
 
 	"nineguard/internal/db"
 	"nineguard/internal/timeutil"
+	"nineguard/internal/traffic"
 )
 
 type KeyInfo struct {
@@ -27,6 +28,7 @@ type KeyInfo struct {
 	AllowedModels   []string  `json:"allowed_models"`
 	QuotaLimit      int64     `json:"quota_limit"`
 	QuotaPeriod     string    `json:"quota_period"`
+	QuotaUsage      int64     `json:"quota_usage"`
 	TotalRequests   int       `json:"total_requests"`
 	TotalTokens     int       `json:"total_tokens"`
 	LastUsedAt      *string   `json:"last_used_at,omitempty"`
@@ -618,6 +620,10 @@ func (m *Manager) GetKey(id string) (*KeyInfo, error) {
 	ki.ModelGroupIDs = ParseAllowedModels(rawGroupIDs)
 	ki.AllowedModels = ParseAllowedModels(rawModels)
 	ki.manager = m
+	if ki.QuotaLimit > 0 && ki.QuotaPeriod != "" && ki.QuotaPeriod != "none" {
+		usage, _, _ := traffic.GetQuotaUsage(m.db, ki.ID, ki.QuotaPeriod, time.Now())
+		ki.QuotaUsage = usage
+	}
 	return &ki, nil
 }
 
@@ -677,6 +683,16 @@ func (m *Manager) scanKeyRows(rows *sql.Rows) ([]KeyInfo, error) {
 	return list, rows.Err()
 }
 
+func (m *Manager) enrichQuotaUsage(list []KeyInfo) {
+	now := time.Now().UTC()
+	for i := range list {
+		if list[i].QuotaLimit > 0 && list[i].QuotaPeriod != "" && list[i].QuotaPeriod != "none" {
+			usage, _, _ := traffic.GetQuotaUsage(m.db, list[i].ID, list[i].QuotaPeriod, now)
+			list[i].QuotaUsage = usage
+		}
+	}
+}
+
 // ListKeys returns all NineGuard API keys with all-time request and token
 // stats, newest first. Used by the legacy (unpaged) GET /api/v1/keys.
 func (m *Manager) ListKeys() ([]KeyInfo, error) {
@@ -684,8 +700,13 @@ func (m *Manager) ListKeys() ([]KeyInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return m.scanKeyRows(rows)
+	list, err := m.scanKeyRows(rows)
+	_ = rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	m.enrichQuotaUsage(list)
+	return list, nil
 }
 
 // ToggleKey activates or deactivates an API key

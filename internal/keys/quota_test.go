@@ -80,4 +80,37 @@ func TestKeyQuotaCRUD(t *testing.T) {
 	if !foundInPage {
 		t.Errorf("key not found in ListKeysPage")
 	}
+
+	// Insert traffic: 15k today, 25k two days ago
+	_, err = d.Exec(`INSERT INTO traffic_logs (api_key_id, model, status_code, total_tokens, timestamp)
+		VALUES (?, 'gpt-4o', 200, 15000, datetime('now'))`, info.ID)
+	if err != nil {
+		t.Fatalf("insert traffic today: %v", err)
+	}
+	_, err = d.Exec(`INSERT INTO traffic_logs (api_key_id, model, status_code, total_tokens, timestamp)
+		VALUES (?, 'gpt-4o', 200, 25000, datetime('now', '-2 days'))`, info.ID)
+	if err != nil {
+		t.Fatalf("insert traffic yesterday: %v", err)
+	}
+
+	// Switch to daily quota: QuotaUsage should be 15000, TotalTokens should be 40000
+	_, err = mgr.UpdateKeyQuota(info.ID, 50000, "daily")
+	if err != nil {
+		t.Fatalf("UpdateKeyQuota daily: %v", err)
+	}
+
+	listWithTraffic, err := mgr.ListKeys()
+	if err != nil {
+		t.Fatalf("ListKeys with traffic: %v", err)
+	}
+	for _, k := range listWithTraffic {
+		if k.ID == info.ID {
+			if k.TotalTokens != 40000 {
+				t.Errorf("expected lifetime TotalTokens=40000, got %d", k.TotalTokens)
+			}
+			if k.QuotaUsage != 15000 {
+				t.Errorf("expected daily QuotaUsage=15000, got %d", k.QuotaUsage)
+			}
+		}
+	}
 }

@@ -248,9 +248,10 @@ export function mount(root) {
     if (!k.quota_limit || k.quota_limit <= 0 || !k.quota_period || k.quota_period === 'none') {
       return h('td', { class: 'muted', style: { fontSize: '12px' } }, 'Unlimited');
     }
-    const pct = quotaPercent(k.total_tokens || 0, k.quota_limit);
-    const exhausted = isQuotaExhausted(k.total_tokens || 0, k.quota_limit, k.quota_period);
-    const label = `${formatTokensCompact(k.total_tokens || 0)} / ${formatTokensCompact(k.quota_limit)} ${k.quota_period}`;
+    const currentUsage = (typeof k.quota_usage === 'number') ? k.quota_usage : (k.total_tokens || 0);
+    const pct = quotaPercent(currentUsage, k.quota_limit);
+    const exhausted = isQuotaExhausted(currentUsage, k.quota_limit, k.quota_period);
+    const label = `${formatTokensCompact(currentUsage)} / ${formatTokensCompact(k.quota_limit)} ${k.quota_period}`;
 
     const bar = h('div', {
       style: {
@@ -272,7 +273,9 @@ export function mount(root) {
       })
     );
 
-    return h('td', { style: { verticalAlign: 'middle' } },
+    const tooltip = `${fmtNum(currentUsage)} / ${fmtNum(k.quota_limit)} tokens used in active ${k.quota_period} window (Daily resets at 07:00 WIB / 00:00 UTC) • All-time: ${fmtNum(k.total_tokens || 0)}`;
+
+    return h('td', { style: { verticalAlign: 'middle' }, title: tooltip },
       h('div', null,
         h('div', { style: { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' } },
           h('span', { class: exhausted ? 'badge err' : '' }, label),

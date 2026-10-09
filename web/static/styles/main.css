@@ -1812,3 +1812,10 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .more-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (min-width: 861px) { .more-layer { display: none; } }
 @media (prefers-reduced-motion: reduce) { .more-sheet { animation: none; } }
+
+/* ── Phones: stack page headers so titles and controls keep their width ── */
+@media (max-width: 860px) {
+  .page-head { flex-direction: column; align-items: stretch; gap: 10px; }
+  .page-head .page-actions { margin-left: 0; }
+}
+.more-sheet section + section { margin-top: 12px; }

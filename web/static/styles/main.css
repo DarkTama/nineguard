@@ -1819,3 +1819,17 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   .page-head .page-actions { margin-left: 0; }
 }
 .more-sheet section + section { margin-top: 12px; }
+
+/* ── Phones: let toolbars and segmented controls wrap or scroll instead of widening the page ── */
+@media (max-width: 860px) {
+  .chips { flex-wrap: wrap; max-width: 100%; }
+  .range { flex-wrap: wrap; max-width: 100%; }
+  .filter-group, .filter-group .segmented { max-width: 100%; }
+  .segmented { overflow-x: auto; scrollbar-width: none; }
+  .segmented::-webkit-scrollbar { display: none; }
+}
+@media (max-width: 860px) {
+  .log-table { overflow-x: auto; }
+  .log-table:not(.traffic-table) .log-head, .log-table:not(.traffic-table) .row { min-width: 420px; }
+  .toolbar .sep { display: none; }
+}

@@ -298,7 +298,7 @@ export function mount(root) {
 
       return h('div', { class: 'card', style: { padding: '14px' } },
         h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' } },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
             h('span', { class: 'badge', style: { fontWeight: 'bold' } }, `#${p.pipeline_order}`),
             h('h3', { style: { margin: 0, fontSize: '15px' } }, p.name),
             h('span', { class: 'badge' }, p.kind),
@@ -306,7 +306,7 @@ export function mount(root) {
             policyBadge,
             bypassBadge
           ),
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
             moveUpBtn, moveDownBtn,
             toggleGlobBtn,
             testBtn, latencyLabel,

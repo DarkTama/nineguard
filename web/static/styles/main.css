@@ -1833,3 +1833,17 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   .log-table:not(.traffic-table) .log-head, .log-table:not(.traffic-table) .row { min-width: 420px; }
   .toolbar .sep { display: none; }
 }
+
+/* ── Phones: usage report rows become identity line, 2x2 metrics, action ── */
+@media (max-width: 860px) {
+  .breakdown-header { gap: 10px; padding: 12px 14px; }
+  .breakdown-header > .col-entity { flex: 1 1 100%; flex-wrap: wrap; min-width: 0; }
+  .breakdown-header > .breakdown-metrics {
+    flex: 1 1 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; align-items: start;
+  }
+  .breakdown-metrics .metric-col-tokens, .breakdown-metrics .metric-col-requests,
+  .breakdown-metrics .metric-col-latency, .breakdown-metrics .metric-col-share { width: auto; min-width: 0; }
+  .breakdown-metrics .metric-col-tokens > div, .breakdown-metrics .metric-col-requests > div { justify-content: flex-start !important; }
+  .breakdown-metrics .metric-col-tokens, .breakdown-metrics .metric-col-requests, .breakdown-metrics .metric-col-latency { text-align: left !important; }
+  .breakdown-header > :last-child:not(.breakdown-metrics):not(.col-entity) { flex: 1 1 100%; width: auto !important; justify-content: flex-start !important; }
+}

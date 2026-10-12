@@ -37,6 +37,8 @@ type LogEntry struct {
 	PluginMs         int       `json:"plugin_ms"`
 	HasImages        bool      `json:"has_images"`
 	ImageCount       int       `json:"image_count"`
+	// ModelID is the canonical Model ID the request resolved to (ADR 0008); empty before provider resolution.
+	ModelID string `json:"model_id,omitempty"`
 	// ModelRemoved is true when the model of this row is a Removed Model (ADR 0006).
 	ModelRemoved bool `json:"model_removed"`
 }
@@ -446,12 +448,12 @@ func (m *Manager) Record(entry *LogEntry) error {
 			timestamp, api_key, api_key_name, api_key_id, provider_id, model, prompt_tokens, completion_tokens, total_tokens,
 			duration_ms, status_code, client_ip, stream, error_message, level,
 			plugins_skipped, plugins_applied, tokens_saved, tokens_overhead, plugin_errors, plugin_ms,
-			has_images, image_count
-		) VALUES (CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			has_images, image_count, model_id
+		) VALUES (CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, maskedKey, entry.APIKeyName, keyID, entry.ProviderID, entry.Model, entry.PromptTokens, entry.CompletionTokens, entry.TotalTokens,
 		entry.DurationMs, entry.StatusCode, entry.ClientIP, streamInt, errMsg, entry.Level,
 		entry.PluginsSkipped, entry.PluginsApplied, entry.TokensSaved, entry.TokensOverhead, entry.PluginErrors, entry.PluginMs,
-		hasImagesInt, entry.ImageCount)
+		hasImagesInt, entry.ImageCount, sql.NullString{String: entry.ModelID, Valid: entry.ModelID != ""})
 
 	if err == nil {
 		if id, idErr := res.LastInsertId(); idErr == nil {

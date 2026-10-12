@@ -250,6 +250,24 @@ func (d *DB) migrate() error {
 	_, _ = d.Exec("ALTER TABLE api_keys ADD COLUMN quota_period TEXT DEFAULT 'none'")
 	_, _ = d.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('heavy_token_threshold', '8000')")
 
+	// Model quotas (ADR 0007/0008)
+	_, _ = d.Exec("ALTER TABLE api_keys ADD COLUMN quota_mode TEXT DEFAULT 'key'")
+	if _, err := d.Exec(`
+		CREATE TABLE IF NOT EXISTS api_key_model_quotas (
+			api_key_id   TEXT NOT NULL,
+			model_id     TEXT NOT NULL COLLATE NOCASE,
+			quota_limit  INTEGER NOT NULL CHECK (quota_limit > 0),
+			quota_period TEXT NOT NULL CHECK (quota_period IN ('daily','weekly','monthly','total')),
+			created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (api_key_id, model_id)
+		)`); err != nil {
+		return fmt.Errorf("create api_key_model_quotas: %w", err)
+	}
+	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN model_id TEXT COLLATE NOCASE")
+	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_traffic_key_model_ts ON traffic_logs(api_key_id, model_id, timestamp)")
+	_, _ = d.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('quota_warn_percent', '80')")
+
 	if err := d.seedPlugins(); err != nil {
 		return fmt.Errorf("seed plugins: %w", err)
 	}

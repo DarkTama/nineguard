@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   quotaStatus, barTone, shortModel, formatResetIn, matchModelPattern, isModelAllowed, isCanonicalModelId,
   pickableModels, pickerSections, validateModelQuotaRows, quotaFiltersFromParams, quotaParamsFromFilters,
-  filterQuotaKeys, nearLimitRows,
+  filterQuotaKeys, nearLimitRows, velocityPresets,
 } from '../static/js/modelquotas.js';
 
 const providers = [
@@ -120,4 +120,27 @@ test('nearLimitRows orders exhausted first then by percent', () => {
     ['ari', 'a', 'exhausted'], ['ari', 'b', 'near'].map((x) => x), ['bot', 'all models', 'near'],
   ].map((x) => x));
   assert.equal(nearLimitRows(keys, 1).length, 1);
+});
+
+test('velocityPresets scales the daily average by the reset period', () => {
+  assert.deepEqual(velocityPresets(1000, 'daily'), [
+    { factor: 1.5, label: '1.5x daily', limit: 1500 },
+    { factor: 2, label: '2x daily', limit: 2000 },
+  ]);
+  assert.deepEqual(velocityPresets(1000, 'weekly').map((p) => [p.label, p.limit]), [['1.5x weekly', 10500], ['2x weekly', 14000]]);
+  assert.deepEqual(velocityPresets(1000, 'monthly').map((p) => [p.label, p.limit]), [['1.5x monthly', 45000], ['2x monthly', 60000]]);
+});
+
+test('velocityPresets rounds up and never returns 0', () => {
+  assert.equal(velocityPresets(3, 'daily')[0].limit, 5); // 4.5 -> 5
+  assert.equal(velocityPresets(0.2, 'daily')[0].limit, 1);
+});
+
+test('velocityPresets is empty without history or for lifetime/none/unknown periods', () => {
+  assert.deepEqual(velocityPresets(0, 'daily'), []);
+  assert.deepEqual(velocityPresets(undefined, 'daily'), []);
+  assert.deepEqual(velocityPresets(-5, 'daily'), []);
+  assert.deepEqual(velocityPresets(1000, 'total'), []);
+  assert.deepEqual(velocityPresets(1000, 'none'), []);
+  assert.deepEqual(velocityPresets(1000, 'yearly'), []);
 });

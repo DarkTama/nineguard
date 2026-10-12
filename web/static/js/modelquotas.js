@@ -9,6 +9,22 @@ export const MODEL_QUOTA_PERIODS = Object.freeze([
   ['total', 'Lifetime (All-time)'],
 ]);
 
+// Days in each reset window, used to scale the 7-day daily average into a limit suggestion.
+const PERIOD_DAYS = Object.freeze({ daily: 1, weekly: 7, monthly: 30 });
+
+// Preset limits (1.5x and 2x of the typical usage in one window) for the selected reset period.
+// avgPerDay is the 7-day average from the velocity endpoint. Lifetime/none/unknown periods and
+// a missing history give no presets: a daily average does not map onto them.
+export function velocityPresets(avgPerDay, period) {
+  const days = PERIOD_DAYS[period];
+  if (!days || !(avgPerDay > 0)) return [];
+  return [1.5, 2].map((factor) => ({
+    factor,
+    label: `${factor}x ${period}`,
+    limit: Math.max(1, Math.ceil(avgPerDay * days * factor)),
+  }));
+}
+
 // Status of a quota from its percent (uncapped) and the warning threshold.
 export function quotaStatus(percent, warn, exhausted = percent >= 100) {
   if (exhausted) return 'exhausted';

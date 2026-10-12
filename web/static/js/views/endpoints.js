@@ -8,7 +8,7 @@ import {
 } from '../keylist.js';
 import { quotaPercent, formatQuotaUsage, isQuotaExhausted, quotaPeriodLabel, formatTokensCompact } from '../quotahelpers.js';
 import { quotaStatus, barTone, shortModel } from '../modelquotas.js';
-import { quotaSection } from './keyquota.js';
+import { quotaSection, presetButtons } from './keyquota.js';
 
 export function mount(root) {
   let alive = true;
@@ -537,32 +537,10 @@ export function mount(root) {
         const pill7d = h('span', { class: 'badge', title: `${vel.tokens_7d_avg || 0} tokens/day average over past 7d` }, `7d avg: ${p7d}/day`);
         const pill30 = h('span', { class: 'badge', title: `${vel.tokens_30d || 0} tokens in past 30d` }, `30d: ${p30}`);
 
-        const preset15 = (vel.tokens_7d_avg > 0) ? h('button', {
-          class: 'btn btn-sm',
-          type: 'button',
-          style: { fontSize: '10.5px', padding: '1px 6px', height: '22px' },
-          title: `Set limit to 1.5x daily average (${Math.round(vel.tokens_7d_avg * 1.5)} tokens)`,
-          onclick: () => {
-            quotaLimitInput.value = String(Math.round(vel.tokens_7d_avg * 1.5));
-            quotaPeriodSelect.value = 'daily';
-          }
-        }, 'Set 1.5x Daily') : null;
-
-        const preset20 = (vel.tokens_7d_avg > 0) ? h('button', {
-          class: 'btn btn-sm',
-          type: 'button',
-          style: { fontSize: '10.5px', padding: '1px 6px', height: '22px' },
-          title: `Set limit to 2x daily average (${vel.tokens_7d_avg * 2} tokens)`,
-          onclick: () => {
-            quotaLimitInput.value = String(vel.tokens_7d_avg * 2);
-            quotaPeriodSelect.value = 'daily';
-          }
-        }, 'Set 2x Daily') : null;
-
         velocityBox.replaceChildren(
           h('b', { style: { color: 'var(--text-2)' } }, 'Historical Velocity:'),
           pill24, pill7d, pill30,
-          preset15, preset20
+          presetButtons(vel.tokens_7d_avg, quotaLimitInput, quotaPeriodSelect, true)
         );
       }).catch(() => {
         velocityBox.style.display = 'none';

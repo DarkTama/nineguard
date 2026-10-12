@@ -5,8 +5,25 @@ import { api } from '../api.js';
 import { h, icon } from '../ui.js';
 import { formatTokensCompact } from '../quotahelpers.js';
 import {
-  MODEL_QUOTA_PERIODS, barTone, shortModel, isModelAllowed, pickableModels, pickerSections, validateModelQuotaRows,
+  MODEL_QUOTA_PERIODS, barTone, shortModel, isModelAllowed, pickableModels, pickerSections, validateModelQuotaRows, velocityPresets,
 } from '../modelquotas.js';
+
+// Preset buttons for a limit input. They follow the selected reset period (labels and numbers),
+// never change it, and disappear for Lifetime or when there is no history. Returns a span.
+export function presetButtons(avgPerDay, limitInput, periodSelect, small = false) {
+  const box = h('span', { style: { display: 'inline-flex', gap: '6px', flexWrap: 'wrap' } });
+  function draw() {
+    box.replaceChildren(...velocityPresets(avgPerDay, periodSelect.value).map((p) => h('button', {
+      class: 'btn btn-sm', type: 'button',
+      style: small ? { fontSize: '10.5px', padding: '1px 6px', height: '22px' } : null,
+      title: `Set limit to ${p.factor}x the typical ${periodSelect.value} usage (${p.limit.toLocaleString('en-US')} tokens)`,
+      onclick: () => { limitInput.value = String(p.limit); limitInput.dispatchEvent(new Event('input', { bubbles: true })); },
+    }, `Set ${p.label}`)));
+  }
+  periodSelect.addEventListener('change', draw);
+  draw();
+  return box;
+}
 
 const REASON_LABEL = { removed: 'removed', disabled: 'disabled', no_access: 'no access' };
 
@@ -31,25 +48,19 @@ export function quotaSection(ctx) {
       inactive: Boolean(src.inactive), reason: src.inactive_reason || '',
       notAllowed: false, velocity: h('div', { class: 'qrow-sub' }),
     };
-    if (isEdit && stored) {
-      let requested = false;
-      limit.addEventListener('focus', () => {
-        if (requested) return;
-        requested = true;
-        row.velocity.textContent = 'Loading usage history...';
-        api.get(`/keys/${existingKey.id}/model-velocity`, { model: row.modelId }).then((v) => {
-          const avg = v.tokens_7d_avg || 0;
-          // Native replaceChildren prints null as text, so drop the absent buttons.
-          row.velocity.replaceChildren(...[
-            h('span', { class: 'muted' }, 'History (approx.): '),
-            h('span', { class: 'badge' }, `24h: ${formatTokensCompact(v.tokens_24h || 0)}`), ' ',
-            h('span', { class: 'badge' }, `7d avg: ${formatTokensCompact(avg)}/day`), ' ',
-            h('span', { class: 'badge' }, `30d: ${formatTokensCompact(v.tokens_30d || 0)}`), ' ',
-            avg > 0 ? h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { limit.value = String(Math.round(avg * 1.5)); period.value = 'daily'; } }, 'Set 1.5x Daily') : null, ' ',
-            avg > 0 ? h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { limit.value = String(avg * 2); period.value = 'daily'; } }, 'Set 2x Daily') : null,
-          ].filter(Boolean));
-        }).catch(() => { row.velocity.textContent = ''; });
-      });
+    // History loads as soon as the row exists (one small request per row), so it is visible
+    // without clicking. Inactive rows are not enforced, so they get none.
+    if (isEdit && !row.inactive) {
+      row.velocity.textContent = 'Loading usage history...';
+      api.get(`/keys/${existingKey.id}/model-velocity`, { model: row.modelId }).then((v) => {
+        const avg = v.tokens_7d_avg || 0;
+        row.velocity.replaceChildren(
+          h('span', { class: 'muted' }, 'History (approx.): '),
+          h('span', { class: 'badge' }, `24h: ${formatTokensCompact(v.tokens_24h || 0)}`), ' ',
+          h('span', { class: 'badge' }, `7d avg: ${formatTokensCompact(avg)}/day`), ' ',
+          h('span', { class: 'badge' }, `30d: ${formatTokensCompact(v.tokens_30d || 0)}`), ' ',
+          presetButtons(avg, limit, period));
+      }).catch(() => { row.velocity.textContent = ''; });
     }
     return row;
   }

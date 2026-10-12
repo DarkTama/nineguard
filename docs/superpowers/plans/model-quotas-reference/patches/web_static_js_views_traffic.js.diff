@@ -1,0 +1,50 @@
+--- a/web/static/js/views/traffic.js
++++ b/web/static/js/views/traffic.js
+@@ -38,9 +38,11 @@
+ 
+   let heavyThreshold = 8000;
+   let recordPayloads = 'disabled';
++  let quotaWarnPercent = 80;
+   api.get('/settings/traffic').then(s => {
+     if (s && s.heavy_token_threshold > 0) heavyThreshold = s.heavy_token_threshold;
+     if (s && s.record_payloads) recordPayloads = s.record_payloads;
++    if (s && s.quota_warn_percent > 0) quotaWarnPercent = s.quota_warn_percent;
+   }).catch(() => {});
+ 
+   function openTrafficSettingsModal() {
+@@ -51,6 +53,7 @@
+       step: '1000',
+       value: String(heavyThreshold)
+     });
++    const warnInput = h('input', { class: 'input', type: 'number', min: '1', max: '100', step: '1', value: String(quotaWarnPercent) });
+     const payloadSel = h('select', { class: 'input' },
+       h('option', { value: 'disabled', selected: recordPayloads === 'disabled' }, 'Disabled (Do not record)'),
+       h('option', { value: 'errors_only', selected: recordPayloads === 'errors_only' }, 'Errors Only (4xx, 5xx)'),
+@@ -71,6 +74,15 @@
+           )
+         },
+         {
++          label: 'Quota warning (%)',
++          node: h('div', null,
++            warnInput,
++            h('p', { class: 'muted', style: { fontSize: '11.5px', margin: '4px 0 0' } },
++              'Key Quotas and Model Quotas at or above this percentage are listed as near limit on the Dashboard and the Quotas page.'
++            )
++          )
++        },
++        {
+           label: 'Payload Recording (Inspector & Replay)',
+           node: h('div', null,
+             payloadSel,
+@@ -84,7 +96,10 @@
+         const val = parseInt(input.value, 10);
+         if (isNaN(val) || val <= 0) throw new Error('Threshold must be a positive number');
+         const pMode = payloadSel.value;
+-        await api.post('/settings/traffic', { heavy_token_threshold: val, record_payloads: pMode });
++        const warn = parseInt(warnInput.value, 10);
++        if (isNaN(warn) || warn < 1 || warn > 100) throw new Error('Quota warning must be between 1 and 100');
++        await api.post('/settings/traffic', { heavy_token_threshold: val, record_payloads: pMode, quota_warn_percent: warn });
++        quotaWarnPercent = warn;
+         heavyThreshold = val;
+         recordPayloads = pMode;
+         toast('Traffic settings updated', 'ok');

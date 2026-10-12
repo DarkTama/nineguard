@@ -1,0 +1,29 @@
+--- a/internal/providers/providers.go
++++ b/internal/providers/providers.go
+@@ -601,3 +601,26 @@
+ 		"target":       route,
+ 	}, nil
+ }
++
++// ResolveModelID routes a requested model (same rules as FindProviderForModel) and
++// returns the canonical Model ID: "<prefix>/<actual>" when the provider has a prefix,
++// otherwise "<actual>". An empty request yields an empty id (ADR 0008).
++func (m *Manager) ResolveModelID(requested string) (*Provider, string, string, error) {
++	p, actual, err := m.FindProviderForModel(requested)
++	if err != nil {
++		return nil, "", "", err
++	}
++	if strings.TrimSpace(requested) == "" {
++		return p, actual, "", nil
++	}
++	if p.Prefix != "" {
++		return p, actual, p.Prefix + "/" + actual, nil
++	}
++	return p, actual, actual, nil
++}
++
++// IsCanonicalModelID is true when id resolves to itself (case-insensitive).
++func (m *Manager) IsCanonicalModelID(id string) bool {
++	_, _, resolved, err := m.ResolveModelID(id)
++	return err == nil && resolved != "" && strings.EqualFold(resolved, strings.TrimSpace(id))
++}

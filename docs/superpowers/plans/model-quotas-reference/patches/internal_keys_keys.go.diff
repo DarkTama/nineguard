@@ -1,0 +1,208 @@
+--- a/internal/keys/keys.go
++++ b/internal/keys/keys.go
+@@ -30,6 +30,10 @@
+ 	QuotaLimit      int64     `json:"quota_limit"`
+ 	QuotaPeriod     string    `json:"quota_period"`
+ 	QuotaUsage      int64     `json:"quota_usage"`
++	QuotaMode       string    `json:"quota_mode"` // "key" (Key Quota) or "model" (Model Quotas), ADR 0007
++	// ModelQuotas is filled on single-key reads; list responses carry ModelQuotaSummary only.
++	ModelQuotas       []ModelQuota       `json:"model_quotas,omitempty"`
++	ModelQuotaSummary *ModelQuotaSummary `json:"model_quota_summary,omitempty"`
+ 	TotalRequests   int       `json:"total_requests"`
+ 	TotalTokens     int       `json:"total_tokens"`
+ 	LastUsedAt      *string   `json:"last_used_at,omitempty"`
+@@ -404,13 +408,18 @@
+ // ── NineGuard Client API Keys Management ──
+ 
+ func (m *Manager) loadLocalCache() {
++	// Read Model Quotas first and close that query: the database has a single connection,
++	// so a second query cannot start while another result set is still open.
++	quotaRows, _ := loadModelQuotaRows(m.db, "")
++
+ 	rows, err := m.db.Query(`
+ 		SELECT id, key, prefix, name, is_active, 
+ 		       COALESCE(model_access_mode, 'all'), 
+ 		       COALESCE(model_group_ids, '[]'), 
+ 		       COALESCE(allowed_models, ''),
+ 		       COALESCE(quota_limit, 0),
+-		       COALESCE(quota_period, 'none') 
++		       COALESCE(quota_period, 'none'),
++		       COALESCE(quota_mode, 'key')
+ 		FROM api_keys
+ 	`)
+ 	if err != nil {
+@@ -425,7 +434,8 @@
+ 		var ki KeyInfo
+ 		var isAct int
+ 		var mode, rawGroupIDs, rawModels string
+-		if err := rows.Scan(&ki.ID, &ki.RawKey, &ki.Prefix, &ki.Name, &isAct, &mode, &rawGroupIDs, &rawModels, &ki.QuotaLimit, &ki.QuotaPeriod); err == nil {
++		if err := rows.Scan(&ki.ID, &ki.RawKey, &ki.Prefix, &ki.Name, &isAct, &mode, &rawGroupIDs, &rawModels, &ki.QuotaLimit, &ki.QuotaPeriod, &ki.QuotaMode); err == nil {
++			ki.ModelQuotas = quotaRows[ki.ID]
+ 			ki.IsActive = (isAct == 1)
+ 			ki.Key = MaskKey(ki.RawKey)
+ 			ki.ModelAccessMode = mode
+@@ -459,6 +469,8 @@
+ 	AllowedModels   []string
+ 	QuotaLimit      int64
+ 	QuotaPeriod     string
++	QuotaMode       string       // "" means "key"
++	ModelQuotas     []ModelQuota // only model_id, quota_limit, quota_period are used
+ }
+ 
+ // CreateKey issues a new NineGuard API key with customizable model access mode, groups, and allowed models
+@@ -514,14 +526,30 @@
+ 	serializedModels := SerializeAllowedModels(opts.AllowedModels)
+ 	cleanModels := ParseAllowedModels(serializedModels)
+ 
++	quotaMode, ok := NormalizeQuotaMode(opts.QuotaMode)
++	if !ok {
++		return nil, fmt.Errorf("invalid quota_mode")
++	}
++
+ 	now := time.Now()
+-	_, err = m.db.Exec(`
+-		INSERT INTO api_keys (id, key, prefix, name, is_active, model_access_mode, model_group_ids, allowed_models, quota_limit, quota_period, created_at, updated_at)
+-		VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+-	`, id, rawKey, prefix, name, modelAccessMode, serializedGroups, serializedModels, quotaLimit, quotaPeriod)
++	// Key row and Model Quota rows in one transaction (only tx inside: single connection).
++	tx, err := m.db.Begin()
+ 	if err != nil {
+ 		return nil, fmt.Errorf("failed to save new key: %w", err)
+ 	}
++	defer tx.Rollback()
++	if _, err = tx.Exec(`
++		INSERT INTO api_keys (id, key, prefix, name, is_active, model_access_mode, model_group_ids, allowed_models, quota_limit, quota_period, quota_mode, created_at, updated_at)
++		VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
++	`, id, rawKey, prefix, name, modelAccessMode, serializedGroups, serializedModels, quotaLimit, quotaPeriod, quotaMode); err != nil {
++		return nil, fmt.Errorf("failed to save new key: %w", err)
++	}
++	if err := replaceModelQuotas(tx, id, opts.ModelQuotas); err != nil {
++		return nil, fmt.Errorf("failed to save new key: %w", err)
++	}
++	if err := tx.Commit(); err != nil {
++		return nil, fmt.Errorf("failed to save new key: %w", err)
++	}
+ 
+ 	ki := &KeyInfo{
+ 		ID:              id,
+@@ -535,6 +563,8 @@
+ 		AllowedModels:   cleanModels,
+ 		QuotaLimit:      quotaLimit,
+ 		QuotaPeriod:     quotaPeriod,
++		QuotaMode:       quotaMode,
++		ModelQuotas:     append([]ModelQuota(nil), opts.ModelQuotas...),
+ 		TotalRequests:   0,
+ 		TotalTokens:     0,
+ 		CreatedAt:       now,
+@@ -624,12 +654,14 @@
+ 		       COALESCE(allowed_models, ''), 
+ 		       COALESCE(quota_limit, 0),
+ 		       COALESCE(quota_period, 'none'),
++		       COALESCE(quota_mode, 'key'),
+ 		       created_at, updated_at
+ 		FROM api_keys WHERE id = ?
+-	`, id).Scan(&ki.ID, &rawKey, &ki.Prefix, &ki.Name, &isActiveInt, &mode, &rawGroupIDs, &rawModels, &ki.QuotaLimit, &ki.QuotaPeriod, &ki.CreatedAt, &ki.UpdatedAt)
++	`, id).Scan(&ki.ID, &rawKey, &ki.Prefix, &ki.Name, &isActiveInt, &mode, &rawGroupIDs, &rawModels, &ki.QuotaLimit, &ki.QuotaPeriod, &ki.QuotaMode, &ki.CreatedAt, &ki.UpdatedAt)
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	ki.ModelQuotas, _ = m.GetModelQuotas(id) // after QueryRow has released the connection
+ 	ki.IsActive = (isActiveInt == 1)
+ 	ki.Key = MaskKey(rawKey)
+ 	ki.RawKey = rawKey
+@@ -641,6 +673,12 @@
+ 		usage, _, _ := traffic.GetQuotaUsage(m.db, ki.ID, ki.QuotaPeriod, time.Now())
+ 		ki.QuotaUsage = usage
+ 	}
++	if len(ki.ModelQuotas) > 0 {
++		m.AnnotateModelQuotas(&ki, traffic.GetQuotaWarnPercent(m.db), time.Now())
++		if ki.QuotaMode == QuotaModeModel {
++			ki.ModelQuotaSummary = SummarizeModelQuotas(ki.ModelQuotas)
++		}
++	}
+ 	return &ki, nil
+ }
+ 
+@@ -665,6 +703,7 @@
+ 	COALESCE(k.allowed_models, ''),
+ 	COALESCE(k.quota_limit, 0),
+ 	COALESCE(k.quota_period, 'none'),
++	COALESCE(k.quota_mode, 'key'),
+ 	k.created_at, k.updated_at,
+ 	COALESCE(s.total_requests, 0),
+ 	COALESCE(s.total_tokens, 0),
+@@ -681,7 +720,7 @@
+ 		if err := rows.Scan(
+ 			&ki.ID, &rawKey, &ki.Prefix, &ki.Name, &isActiveInt,
+ 			&mode, &rawGroupIDs, &rawModels,
+-			&ki.QuotaLimit, &ki.QuotaPeriod,
++			&ki.QuotaLimit, &ki.QuotaPeriod, &ki.QuotaMode,
+ 			&ki.CreatedAt, &ki.UpdatedAt,
+ 			&ki.TotalRequests, &ki.TotalTokens, &lastUsed,
+ 		); err != nil {
+@@ -702,11 +741,24 @@
+ 
+ func (m *Manager) enrichQuotaUsage(list []KeyInfo) {
+ 	now := time.Now().UTC()
++	var quotaRows map[string][]ModelQuota // loaded once, only if a model-mode key is listed
++	var warn int
+ 	for i := range list {
+ 		if list[i].QuotaLimit > 0 && list[i].QuotaPeriod != "" && list[i].QuotaPeriod != "none" {
+ 			usage, _, _ := traffic.GetQuotaUsage(m.db, list[i].ID, list[i].QuotaPeriod, now)
+ 			list[i].QuotaUsage = usage
+ 		}
++		if list[i].QuotaMode == QuotaModeModel {
++			if quotaRows == nil {
++				quotaRows, _ = loadModelQuotaRows(m.db, "")
++				warn = traffic.GetQuotaWarnPercent(m.db)
++			}
++			// List responses carry the summary only; the full rows come from GET /keys/{id}.
++			list[i].ModelQuotas = quotaRows[list[i].ID]
++			m.AnnotateModelQuotas(&list[i], warn, now)
++			list[i].ModelQuotaSummary = SummarizeModelQuotas(list[i].ModelQuotas)
++			list[i].ModelQuotas = nil
++		}
+ 	}
+ }
+ 
+@@ -747,11 +799,23 @@
+ 	var rawKey string
+ 	_ = m.db.QueryRow("SELECT key FROM api_keys WHERE id = ?", id).Scan(&rawKey)
+ 
+-	_, err := m.db.Exec("DELETE FROM api_keys WHERE id = ?", id)
++	// One transaction (use only tx: the database has a single connection) so a key never
++	// outlives or orphans its Model Quotas.
++	tx, err := m.db.Begin()
+ 	if err != nil {
+ 		return err
+ 	}
+-	_, _ = m.db.Exec("DELETE FROM plugin_bindings WHERE scope_type = 'key' AND scope_id = ?", id)
++	defer tx.Rollback()
++	if _, err := tx.Exec("DELETE FROM api_keys WHERE id = ?", id); err != nil {
++		return err
++	}
++	if _, err := tx.Exec("DELETE FROM api_key_model_quotas WHERE api_key_id = ?", id); err != nil {
++		return err
++	}
++	_, _ = tx.Exec("DELETE FROM plugin_bindings WHERE scope_type = 'key' AND scope_id = ?", id)
++	if err := tx.Commit(); err != nil {
++		return err
++	}
+ 
+ 	if rawKey != "" {
+ 		m.mu.Lock()
+@@ -786,11 +850,12 @@
+ 	var ki KeyInfo
+ 	var isAct int
+ 	var mode, rawGroupIDs, rawModels string
+-	err := m.db.QueryRow("SELECT id, key, prefix, name, is_active, COALESCE(model_access_mode, 'all'), COALESCE(model_group_ids, '[]'), COALESCE(allowed_models, '') FROM api_keys WHERE key = ? LIMIT 1", rawKey).
+-		Scan(&ki.ID, &ki.RawKey, &ki.Prefix, &ki.Name, &isAct, &mode, &rawGroupIDs, &rawModels)
++	err := m.db.QueryRow("SELECT id, key, prefix, name, is_active, COALESCE(model_access_mode, 'all'), COALESCE(model_group_ids, '[]'), COALESCE(allowed_models, ''), COALESCE(quota_limit, 0), COALESCE(quota_period, 'none'), COALESCE(quota_mode, 'key') FROM api_keys WHERE key = ? LIMIT 1", rawKey).
++		Scan(&ki.ID, &ki.RawKey, &ki.Prefix, &ki.Name, &isAct, &mode, &rawGroupIDs, &rawModels, &ki.QuotaLimit, &ki.QuotaPeriod, &ki.QuotaMode)
+ 	if err != nil {
+ 		return nil, false
+ 	}
++	ki.ModelQuotas, _ = m.GetModelQuotas(ki.ID)
+ 
+ 	ki.IsActive = (isAct == 1)
+ 	ki.Key = MaskKey(ki.RawKey)

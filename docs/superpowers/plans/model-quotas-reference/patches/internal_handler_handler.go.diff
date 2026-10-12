@@ -1,0 +1,176 @@
+--- a/internal/handler/handler.go
++++ b/internal/handler/handler.go
+@@ -1203,12 +1203,14 @@
+ 		return
+ 	}
+ 	var body struct {
+-		Name            string   `json:"name"`
+-		ModelAccessMode string   `json:"model_access_mode"`
+-		ModelGroupIDs   []string `json:"model_group_ids"`
+-		AllowedModels   []string `json:"allowed_models"`
+-		QuotaLimit      int64    `json:"quota_limit"`
+-		QuotaPeriod     string   `json:"quota_period"`
++		Name            string            `json:"name"`
++		ModelAccessMode string            `json:"model_access_mode"`
++		ModelGroupIDs   []string          `json:"model_group_ids"`
++		AllowedModels   []string          `json:"allowed_models"`
++		QuotaLimit      int64             `json:"quota_limit"`
++		QuotaPeriod     string            `json:"quota_period"`
++		QuotaMode       string            `json:"quota_mode"`
++		ModelQuotas     []keys.ModelQuota `json:"model_quotas"`
+ 	}
+ 	_ = json.NewDecoder(r.Body).Decode(&body)
+ 
+@@ -1224,6 +1226,17 @@
+ 		jsonError(w, http.StatusBadRequest, "Invalid quota period: must be none, daily, weekly, monthly, or total")
+ 		return
+ 	}
++	quotaMode, okMode := keys.NormalizeQuotaMode(body.QuotaMode)
++	if !okMode {
++		jsonError(w, http.StatusBadRequest, "Invalid quota_mode: must be key or model")
++		return
++	}
++	access := h.keys.AccessPreview(body.ModelAccessMode, body.ModelGroupIDs, body.AllowedModels)
++	modelQuotas, status, verr := h.validateModelQuotas(body.ModelQuotas, nil, access)
++	if verr != nil {
++		jsonError(w, status, verr.Error())
++		return
++	}
+ 
+ 	keyInfo, err := h.keys.CreateKeyWithOptions(body.Name, keys.CreateKeyOptions{
+ 		ModelAccessMode: body.ModelAccessMode,
+@@ -1231,6 +1244,8 @@
+ 		AllowedModels:   body.AllowedModels,
+ 		QuotaLimit:      body.QuotaLimit,
+ 		QuotaPeriod:     body.QuotaPeriod,
++		QuotaMode:       quotaMode,
++		ModelQuotas:     modelQuotas,
+ 	})
+ 	if err != nil {
+ 		slog.Error("failed to create key", "error", err)
+@@ -1254,12 +1269,14 @@
+ 	}
+ 	id := r.PathValue("id")
+ 	var body struct {
+-		Name            string   `json:"name"`
+-		ModelAccessMode string   `json:"model_access_mode"`
+-		ModelGroupIDs   []string `json:"model_group_ids"`
+-		AllowedModels   []string `json:"allowed_models"`
+-		QuotaLimit      *int64   `json:"quota_limit"`
+-		QuotaPeriod     *string  `json:"quota_period"`
++		Name            string             `json:"name"`
++		ModelAccessMode string             `json:"model_access_mode"`
++		ModelGroupIDs   []string           `json:"model_group_ids"`
++		AllowedModels   []string           `json:"allowed_models"`
++		QuotaLimit      *int64             `json:"quota_limit"`
++		QuotaPeriod     *string            `json:"quota_period"`
++		QuotaMode       *string            `json:"quota_mode"`
++		ModelQuotas     *[]keys.ModelQuota `json:"model_quotas"`
+ 	}
+ 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+ 		jsonError(w, http.StatusBadRequest, "Invalid payload")
+@@ -1281,27 +1298,41 @@
+ 		}
+ 		*body.QuotaPeriod = p
+ 	}
++	if body.QuotaMode != nil {
++		qm, okMode := keys.NormalizeQuotaMode(*body.QuotaMode)
++		if !okMode {
++			jsonError(w, http.StatusBadRequest, "Invalid quota_mode: must be key or model")
++			return
++		}
++		*body.QuotaMode = qm
++	}
++
++	upd := keys.KeyUpdate{
++		Name: body.Name, ModelAccessMode: body.ModelAccessMode, ModelGroupIDs: body.ModelGroupIDs, AllowedModels: body.AllowedModels,
++		QuotaLimit: body.QuotaLimit, QuotaPeriod: body.QuotaPeriod, QuotaMode: body.QuotaMode,
++	}
++	if body.ModelQuotas != nil {
++		// Rows already saved on this key are accepted as they are (they may be inactive now).
++		stored := map[string]bool{}
++		if cur, err := h.keys.GetModelQuotas(id); err == nil {
++			for _, q := range cur {
++				stored[strings.ToLower(q.ModelID)] = true
++			}
++		}
++		access := h.keys.AccessPreview(body.ModelAccessMode, body.ModelGroupIDs, body.AllowedModels)
++		rows, status, verr := h.validateModelQuotas(*body.ModelQuotas, stored, access)
++		if verr != nil {
++			jsonError(w, status, verr.Error())
++			return
++		}
++		upd.ModelQuotas = &rows
++	}
+ 
+-	keyInfo, err := h.keys.UpdateKey(id, body.Name, body.ModelAccessMode, body.ModelGroupIDs, body.AllowedModels)
++	keyInfo, err := h.keys.UpdateKeyAll(id, upd)
+ 	if err != nil {
+ 		jsonError(w, http.StatusBadRequest, err.Error())
+ 		return
+ 	}
+-	if body.QuotaLimit != nil || body.QuotaPeriod != nil {
+-		qLimit := keyInfo.QuotaLimit
+-		if body.QuotaLimit != nil {
+-			qLimit = *body.QuotaLimit
+-		}
+-		qPeriod := keyInfo.QuotaPeriod
+-		if body.QuotaPeriod != nil {
+-			qPeriod = *body.QuotaPeriod
+-		}
+-		keyInfo, err = h.keys.UpdateKeyQuota(id, qLimit, qPeriod)
+-		if err != nil {
+-			jsonError(w, http.StatusInternalServerError, err.Error())
+-			return
+-		}
+-	}
+ 	var actorID int64
+ 	var username string
+ 	if u := auth.UserFromContext(r.Context()); u != nil {
+@@ -1715,9 +1746,14 @@
+ 		threshold = h.traffic.GetHeavyTokenThreshold()
+ 		recMode = h.traffic.GetRecordPayloadsSetting()
+ 	}
++	warn := 80
++	if h.traffic != nil {
++		warn = h.traffic.GetQuotaWarnPercent()
++	}
+ 	jsonResponse(w, http.StatusOK, map[string]interface{}{
+ 		"heavy_token_threshold": threshold,
+ 		"record_payloads":       recMode,
++		"quota_warn_percent":    warn,
+ 	})
+ }
+ 
+@@ -1725,11 +1761,18 @@
+ 	var body struct {
+ 		HeavyTokenThreshold int    `json:"heavy_token_threshold"`
+ 		RecordPayloads      string `json:"record_payloads"`
++		QuotaWarnPercent    *int   `json:"quota_warn_percent"`
+ 	}
+ 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+ 		jsonError(w, http.StatusBadRequest, "Invalid payload")
+ 		return
+ 	}
++	if body.QuotaWarnPercent != nil && h.traffic != nil {
++		if err := h.traffic.SetQuotaWarnPercent(*body.QuotaWarnPercent); err != nil {
++			jsonError(w, http.StatusBadRequest, err.Error())
++			return
++		}
++	}
+ 	if body.HeavyTokenThreshold > 0 && h.traffic != nil {
+ 		if err := h.traffic.SetHeavyTokenThreshold(body.HeavyTokenThreshold); err != nil {
+ 			slog.Error("failed to set heavy token threshold", "error", err)
+@@ -1753,6 +1796,7 @@
+ 		"status":                "ok",
+ 		"heavy_token_threshold": h.traffic.GetHeavyTokenThreshold(),
+ 		"record_payloads":       h.traffic.GetRecordPayloadsSetting(),
++		"quota_warn_percent":    h.traffic.GetQuotaWarnPercent(),
+ 	})
+ }
+ 
+@@ -1774,4 +1818,3 @@
+ 	}
+ 	jsonResponse(w, http.StatusOK, payload)
+ }
+-

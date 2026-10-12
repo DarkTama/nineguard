@@ -94,14 +94,29 @@ What happens when a plugin errors or times out. *Fail-open*: forward the request
 
 ## Quotas & Traffic Controls
 
-**Token Quota**
-The maximum cumulative tokens (`total_tokens`) an API Key may consume within its Quota Period before subsequent requests are blocked.
+**Key Quota** (formerly Token Quota)
+The maximum cumulative tokens (`total_tokens`) an API Key may consume across all models within its Quota Period before subsequent requests are blocked.
+
+**Model Quota**
+The maximum cumulative tokens (always greater than zero) an API Key may consume on one exact Model within the quota's own Quota Period. Usage on other Models never counts against it. A Model with no Model Quota on a key in model mode is unlimited for that key. Model Quotas belong to an API Key only; Model Groups never carry or supply quota limits.
+
+**Requested Model**
+The model name exactly as a client sent it, which may omit the Provider prefix (e.g. `gpt-4o`). Resolves to exactly one Model. Model Quotas always count against the resolved Model, never the Requested Model.
+
+**Inactive Model Quota**
+A Model Quota whose Model the API Key can currently no longer use (access lost, Disabled Model, or Removed Model). Kept with its limit, enforces nothing, and applies again if access returns. A Model Quota can never be created for a Model the key cannot use.
+
+**Quota Mode**
+Which kind of quota an API Key enforces: `key` (a single Key Quota) or `model` (Model Quotas). Exactly one mode is enforced at a time. Settings of the inactive mode are kept, not deleted, and take effect again if the mode is switched back.
 
 **Quota Period**
-The fixed time cycle for resetting a Token Quota: `daily`, `weekly`, `monthly`, or `total` (all-time). Unlike reporting periods, Quota Periods always anchor to UTC midnight (ISO Monday 00:00 UTC for weekly; 1st of month 00:00 UTC for monthly).
+The fixed time cycle for resetting a Key Quota or Model Quota: `daily`, `weekly`, `monthly`, or `total` (all-time). Unlike reporting periods, Quota Periods always anchor to UTC midnight (ISO Monday 00:00 UTC for weekly; 1st of month 00:00 UTC for monthly).
 
 **Soft Post-Facto Enforcement**
 The mechanism where pre-flight checks block requests only when accumulated tokens already meet or exceed the quota. An admitted request is never truncated mid-flight; final token count is tallied on completion.
+
+**Near-Limit Quota**
+A Key Quota or Model Quota whose usage in the current Quota Period has reached the system-wide warning percentage (default 80%), including quotas already exhausted. Advisory only; never blocks a request.
 
 **Heavy Request**
 A request whose total tokens meet or exceed the system-wide `heavy_token_threshold`, triggering an advisory warning badge and system log alert without blocking traffic.

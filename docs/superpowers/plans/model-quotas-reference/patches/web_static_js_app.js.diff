@@ -1,0 +1,23 @@
+--- a/web/static/js/app.js
++++ b/web/static/js/app.js
+@@ -13,10 +13,11 @@
+ import * as logs from './views/logs.js';
+ import * as profile from './views/profile.js';
+ import * as users from './views/users.js';
++import * as quotas from './views/quotas.js';
+ import * as about from './views/about.js';
+ 
+ const APP = 'NineGuard';
+-const VIEWS = { dashboard, providers, endpoints, plugins, reports, models, traffic, logs, profile, users, about };
++const VIEWS = { dashboard, providers, endpoints, quotas, plugins, reports, models, traffic, logs, profile, users, about };
+ 
+ // Sidebar menu, top to bottom. Groups without a title render as plain links.
+ // auth: only with authentication enabled; admin: only for administrators.
+@@ -25,6 +26,7 @@
+   { id: 'gateway', title: 'Gateway', links: [
+     { view: 'providers', label: 'Providers', icon: 'server', keywords: 'providers upstream openai compatible route apikey target prefix' },
+     { view: 'endpoints', label: 'Endpoints & Keys', icon: 'key', keywords: 'endpoints agent setup url integration cursor cline continue python node curl' },
++    { view: 'quotas', label: 'Quotas', icon: 'chart', keywords: 'quota limit per model usage budget near limit exhausted' },
+     { view: 'plugins', label: 'Plugins', icon: 'puzzle', keywords: 'plugins caveman ponytail headroom compress tokens transform token savers' },
+     { view: 'models', label: 'Models', icon: 'box', keywords: 'models enable disable firewall' },
+     { view: 'traffic', label: 'Traffic Explorer', icon: 'clock', keywords: 'traffic requests telemetry tokens latency usage' },

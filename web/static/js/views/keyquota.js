@@ -71,9 +71,11 @@ export function quotaSection(ctx) {
   }
 
   // ── Mode switch ──
-  const btnKey = h('button', { type: 'button', class: 'tab', onclick: () => setMode('key') }, 'Key Quota (total, all models)');
-  const btnModel = h('button', { type: 'button', class: 'tab', onclick: () => setMode('model') }, 'Per Model');
-  const modeBar = h('div', { class: 'tabs', style: { marginBottom: '6px' } }, btnKey, btnModel);
+  const btnKey = h('button', { type: 'button', class: 'seg-btn', 'aria-pressed': 'false', onclick: () => setMode('key') }, h('span', { class: 'seg-title' }, 'Key Quota'), h('span', { class: 'seg-sub' }, 'one limit, all models'));
+  const btnModel = h('button', { type: 'button', class: 'seg-btn', 'aria-pressed': 'false', onclick: () => setMode('model') }, h('span', { class: 'seg-title' }, 'Per Model'), h('span', { class: 'seg-sub' }, 'a limit for each model'));
+  const modeBar = h('div', { class: 'seg-wrap' },
+    h('div', { class: 'seg-label' }, 'Quota mode ', h('span', { class: 'muted' }, '(only one is enforced)')),
+    h('div', { class: 'seg', role: 'group', 'aria-label': 'Quota mode' }, btnKey, btnModel));
   const savedHint = h('div', { class: 'muted', style: { fontSize: '11.5px' } });
   const keyBox = h('div', null, keyQuotaNode, savedHint);
 
@@ -168,8 +170,8 @@ export function quotaSection(ctx) {
   }
 
   function render() {
-    btnKey.classList.toggle('active', mode === 'key');
-    btnModel.classList.toggle('active', mode === 'model');
+    btnKey.classList.toggle('on', mode === 'key'); btnKey.setAttribute('aria-pressed', String(mode === 'key'));
+    btnModel.classList.toggle('on', mode === 'model'); btnModel.setAttribute('aria-pressed', String(mode === 'model'));
     keyBox.style.display = mode === 'key' ? '' : 'none';
     modelBox.style.display = mode === 'model' ? '' : 'none';
     savedHint.textContent = mode === 'key' && rows.length

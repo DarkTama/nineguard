@@ -104,7 +104,7 @@ export function mount(root) {
         ? 'Clear the search or filters.' : 'No API key has a quota yet. Set one in Endpoints & Keys.'));
       return;
     }
-    body.replaceChildren(h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
+    body.replaceChildren(h('div', { class: 'table-wrap' }, h('table', { class: 'table quota-table' },
       h('thead', null, h('tr', null, ['API key / Model', 'Mode', 'Used / Limit', 'Usage', 'Period', 'Resets'].map((t) => h('th', null, t)))),
       h('tbody', null, list.flatMap(keyRows)))));
   }

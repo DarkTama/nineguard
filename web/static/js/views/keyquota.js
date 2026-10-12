@@ -23,7 +23,7 @@ export function quotaSection(ctx) {
   function makeRow(src, stored) {
     const limit = h('input', { class: 'input', type: 'number', min: '1', step: '1', placeholder: 'tokens', style: { width: '130px' } });
     limit.value = src.quota_limit ? String(src.quota_limit) : '';
-    const period = h('select', { class: 'input', style: { width: '170px' } },
+    const period = h('select', { class: 'input qk-period', style: { width: '170px' } },
       MODEL_QUOTA_PERIODS.map(([v, l]) => h('option', { value: v, selected: v === (src.quota_period || 'daily') }, l)));
     const row = {
       modelId: src.model_id, stored, limit, period,
@@ -79,14 +79,14 @@ export function quotaSection(ctx) {
 
   // ── Model rows ──
   const tbody = h('tbody');
-  const table = h('table', { class: 'table' },
+  const table = h('table', { class: 'table qk-table' },
     h('thead', null, h('tr', null, h('th', null, 'Model'), h('th', null, 'Token limit'), h('th', null, 'Reset period'), h('th', null, 'Used (current window)'), h('th'))),
     tbody);
   const empty = h('p', { class: 'muted', style: { fontSize: '12px', margin: '6px 0' } }, 'No Model Quotas. All models are unlimited for this key.');
   const loadErr = h('p', { class: 'muted', style: { fontSize: '12px', margin: '6px 0' } }, 'Could not load the saved Model Quotas. Saving will leave them unchanged.');
   const addBtn = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => togglePicker() }, icon('plus'), 'Add Model');
   const picker = h('div', { class: 'card', style: { display: 'none', padding: '10px', marginTop: '8px' } });
-  const modelBox = h('div', null, table, empty, loadErr,
+  const modelBox = h('div', null, h('div', { class: 'table-wrap' }, table), empty, loadErr,
     h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' } }, addBtn,
       h('span', { class: 'muted', style: { fontSize: '11.5px' } }, 'Models without a row are unlimited for this key.')),
     picker);

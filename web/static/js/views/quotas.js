@@ -15,7 +15,7 @@ export function mount(root) {
   let filters = quotaFiltersFromParams({});
   const toggled = new Map(); // key id -> expanded (user choice beats the default)
 
-  const cards = h('div', { class: 'grid grid-4' });
+  const cards = h('div', { class: 'grid grid-4 quota-summary' });
   const search = h('input', { class: 'input', type: 'search', placeholder: 'Search key or model...', style: { width: '220px' } });
   const modeSel = h('select', { class: 'select' }, [['all', 'Mode: all'], ['key', 'Key Quota'], ['model', 'Per Model']].map(([v, l]) => h('option', { value: v }, l)));
   const statusSel = h('select', { class: 'select' }, [['all', 'Status: all'], ['near', 'Near limit'], ['exhausted', 'Exhausted'], ['inactive', 'Inactive']].map(([v, l]) => h('option', { value: v }, l)));

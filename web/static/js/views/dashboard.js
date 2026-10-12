@@ -136,7 +136,7 @@ export function mount(root) {
           h('button', { class: 'btn btn-sm', type: 'button', onclick: () => setRoute('quotas', { status: 'near' }) }, 'View all \u2192')),
         h('div', { class: 'removed-body' }, h('div', { class: 'removed-list' }, rows.map((r) => {
           const tone = barTone(r.status);
-          return h('div', { class: 'removed-row' },
+          return h('div', { class: 'removed-row quota-row' },
             h('b', null, r.keyName), h('span', { class: 'muted' }, r.label),
             h('span', { style: { marginLeft: 'auto' } },
               h('span', { class: `qbar ${tone}`, style: { width: '80px' } }, h('i', { style: { width: `${Math.min(100, r.percent)}%` } })),

@@ -15,18 +15,18 @@
 The implementation was written and verified in a scratch copy of the repo before this plan was finalized. The verified code is stored next to the plan:
 
 ```
-R=docs/superpowers/plans/model-quotas-reference
+R=docs/superpowers/plans/_model-quotas-reference
 $R/new/<repo path>      new files, copy as-is to the same path in the repo
 $R/patches/<name>.diff  edits to existing files (git apply --ignore-whitespace)
 $R/e2e/                 headless-Chrome scripts used for the UI check (Task 6)
 ```
 
-Each task: copy its new files, apply its patches, run its tests. Do not re-derive the code; if a patch does not apply because the file moved, re-apply that diff by hand and keep the behavior. `R/` is scaffolding and is deleted in Task 7.
+Each task: copy its new files, apply its patches, run its tests. Do not re-derive the code; if a patch does not apply because the file moved, re-apply that diff by hand and keep the behavior. `R/` is scaffolding and is deleted in Task 7. The folder name starts with `_` on purpose: Go ignores such directories, so its `.go` files are not built or tested as packages by `./...`.
 
 Helper used in every task (run from the repo root, bash):
 
 ```bash
-R=docs/superpowers/plans/model-quotas-reference
+R=docs/superpowers/plans/_model-quotas-reference
 put() { for f in "$@"; do mkdir -p "$(dirname "$f")"; cp "$R/new/$f" "$f"; done; }
 patch_() { for p in "$@"; do git apply --ignore-whitespace "$R/patches/$p.diff" || return 1; done; }
 ```
@@ -169,12 +169,12 @@ NINEGUARD_PORT=18080 NINEGUARD_AUTH_ENABLED=false NINEGUARD_DB_FILE=/tmp/ng-e2e/
 
 ### Task 7: Docs, cleanup, final verification
 
-**Files:** modify `docs/superpowers/specs/2026-10-12-model-quotas-design.md`, `docs/ARCHITECTURE.md`, `docs/FUTURE_PLANNED_FEATURES.md`; delete `docs/superpowers/plans/model-quotas-reference/`.
+**Files:** modify `docs/superpowers/specs/2026-10-12-model-quotas-design.md`, `docs/ARCHITECTURE.md`, `docs/FUTURE_PLANNED_FEATURES.md`; delete `docs/superpowers/plans/_model-quotas-reference/`.
 
 - [ ] **Step 1:** Apply "Spec corrections" 1-8 to the spec (§7 example and `total` behavior, §8 UTC note, §9 order and helper name, §10.1-10.4, §11.1, §11.3); set its status to `Implemented`.
 - [ ] **Step 2:** `docs/ARCHITECTURE.md` §2: add "Cek Key Quota (mode key)" before the model checks and "Cek Model Quota (mode model, Model ID hasil resolve)" after provider matching.
 - [ ] **Step 3:** `docs/FUTURE_PLANNED_FEATURES.md` §3: add an "Extension: Model Quotas (ADR 0007/0008)" note; rename "Token Quotas" to "Key Quotas" in that section.
-- [ ] **Step 4:** `git rm -r docs/superpowers/plans/model-quotas-reference` (or `rm -r` if untracked).
+- [ ] **Step 4:** `git rm -r docs/superpowers/plans/_model-quotas-reference` (or `rm -r` if untracked).
 - [ ] **Step 5:** `CGO_ENABLED=0 go test -tags server ./...` and `node --test web/jstest/*.mjs`. Expected: all PASS.
 - [ ] **Step 6: Commit** `git add -A docs && git commit -m "docs: model quotas spec corrections and architecture notes"`
 

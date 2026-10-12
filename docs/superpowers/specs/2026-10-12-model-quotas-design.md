@@ -1,7 +1,7 @@
 # Per-Model Quotas per API Key — Design Spec
 
 - Date: 2026-10-12
-- Status: Draft, awaiting review
+- Status: Implemented
 - Related: `GLOSSARY.md` (Key Quota, Model Quota, Quota Mode, Requested Model, Inactive Model Quota, Near-Limit Quota), `docs/adr/0005-token-quotas-utc-windows.md`, `docs/adr/0007-model-quotas-per-key.md`, `docs/adr/0008-resolved-model-id-in-traffic.md`, mockup `docs/mockups/model-quotas.html` (approved)
 
 ## 1. Problem
@@ -131,7 +131,7 @@ Content-Type: application/json
 Retry-After: <seconds until reset, min 1>     (omitted for period total)
 
 {"error":{
-  "message":"Model quota exceeded for '9router/claude-opus-4' (1.00M / 1.00M tokens daily). Resets in 6h 12m (at 07:00 WIB / 00:00 UTC).",
+  "message":"Model quota exceeded for '9router/claude-opus-4' (1,004,211 / 1,000,000 tokens daily). Resets in 6h 12m (at 07:00 WIB / 00:00 UTC).",
   "type":"insufficient_quota",
   "code":"model_quota_exceeded",
   "param":"model"
@@ -165,11 +165,11 @@ A row is Inactive when, for the key's **current** access settings:
 
 | Reason | Condition |
 |---|---|
-| `no_access` | `!keyInfo.IsModelAllowed(modelID)` |
+| `removed` | model id missing from `models`, or `removed = 1` |
 | `disabled` | model row exists with `enabled = 0` |
-| `removed` | `models.IsModelRemoved(modelID)` |
+| `no_access` | `!keyInfo.IsModelAllowed(modelID)` |
 
-Checked in that order; first match wins. The disabled lookup must be read-only: `models.IsModelEnabled` auto-registers unknown IDs, so a new `models.LookupEnabled(id) (enabled, found bool)` is used.
+Checked in the order `removed` → `disabled` → `no_access`; first match wins. The disabled lookup must be read-only: `models.IsModelEnabled` auto-registers unknown IDs, so `models.LookupStatus(db, id) (found, enabled, removed bool)` (and `(*Manager).Status`) is used. An id missing from `models` counts as `removed`.
 
 Enforcement does not need this: a request for a `no_access` or `disabled` Model is already rejected at steps 5–6. Inactive is a read-side state for API/UI. Inactive rows report `usage` but are excluded from a key's "max %" and from Near-Limit lists.
 
@@ -273,7 +273,7 @@ Layout per approved mockup `docs/mockups/model-quotas.html`.
   - Velocity line + 1.5x/2x buttons shown under the focused row only, labelled "approx.", loaded from §10.3 on focus.
   - Inactive rows greyed, badge with reason, "not enforced".
   - Empty state: "No Model Quotas. All models are unlimited for this key."
-  - **+ Add Model** popover: search, grouped by Model Group, then "Other allowed models". Source: `GET /api/v1/models` filtered by enabled, not removed, canonical, and allowed under the modal's current access settings (client mirror of `matchModelPattern`). Already-added Models shown checked and disabled. Multi-select → "Add N rows" with empty limits; Save is blocked until each new row has a limit > 0.
+  - **+ Add Model** inline panel: search, grouped by Model Group, then "Other allowed models". Source: `GET /api/v1/models` filtered by enabled, not removed, canonical, and allowed under the modal's current access settings (client mirror of `matchModelPattern`). Already-added Models shown checked and disabled. Multi-select → "Add N rows" with empty limits; Save is blocked until each new row has a limit > 0.
   - Changing the access settings in the same modal re-evaluates which unsaved rows are allowed and flags them.
 - One Save sends name, access, `quota_mode`, Key Quota, and `model_quotas` together (§10.1).
 
@@ -357,3 +357,18 @@ One branch, three commits-worth of phases; each phase ships green tests.
 3. **UI**: key modal, keys column, Quotas page, dashboard card, settings input, label rename.
 
 Docs: update `docs/ARCHITECTURE.md` §2 (Request Lifecycle) and `docs/FUTURE_PLANNED_FEATURES.md` §3 status after phase 3.
+
+## 14. Implementation notes (where the build differs from the text above)
+
+The build is authoritative; these points replace the matching text above.
+
+1. **Message and headers (§7).** Token counts are comma-formatted (`1,004,211 / 1,000,000`). The 429 body is built with `json.Marshal`; `param: "model"` appears for Model Quotas only. Period `total` sends no `Retry-After`, for Key Quota and Model Quota alike.
+2. **UTC timestamps (§8).** `GetModelUsageSince` compares in UTC (`start.UTC().Format(...)`); stored timestamps are UTC and a local-time start silently returns nothing.
+3. **Access fields on save (§10.1).** Access fields come from the request payload, as `UpdateKey` always did; new rows are checked against the payload's access. An unknown key on update stays HTTP 400. `UpdateKeyAll` runs in one transaction; absent `model_quotas` keeps rows, present (even `[]`) replaces them.
+4. **Key reads (§10.2).** List responses carry `model_quota_summary` only. `GET /api/v1/keys/{id}` is new and returns the full key including `model_quotas`.
+5. **Overview (§10.4).** `key_quota` also carries `status`. A model-mode key whose rows are all inactive has status `unlimited`. `summary.model_quotas` counts every row of model-mode keys; `near_limit` and `exhausted` count enforced rows only.
+6. **Add Model (§11.1).** The picker is an inline panel. Its list is filtered client-side from `/providers` (mirrors `ResolveModelID`). Limit inputs use `step=1`. Velocity history is its own full-width row.
+7. **Quotas page (§11.3).** The key name links to `#/endpoints?edit=<id>`; Endpoints opens the modal and clears the parameter.
+8. **Provider prefix match is case-sensitive.** `OPENAI/gpt-4o` is not a canonical id; `openai/GPT-4o` is (model part compares case-insensitively in the database).
+9. **Bare unknown model.** A bare name with no `models` row is rejected as "unknown model" (400) on save, with no canonical hint.
+10. **Traffic API.** `GET /api/v1/traffic` does not expose `model_id` in log JSON (it is stored in the database). Surfacing it is a follow-up.

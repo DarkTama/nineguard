@@ -68,7 +68,14 @@ Enforce daily, weekly, monthly, or lifetime token budgets per client API key wit
   - Key modal: inputs for `Quota Limit` and `Quota Period`.
   - Endpoints table: quota consumption progress bar (e.g. `340k / 500k (68%)`). Red highlight when quota exhausted.
   - Reset times rendered in viewer's local timezone (e.g. WIB) using browser context.
-### Extension: Model Quotas (see ADR-0007, ADR-0008)- Each key has a **Quota Mode**: `key` (the Key Quota above, total across models) or `model` (separate limits per exact Model). Exclusive: the inactive mode's settings are kept.- Table `api_key_model_quotas(api_key_id, model_id, quota_limit, quota_period)`; periods `daily|weekly|monthly|total`. A Model without a row is unlimited.- Requests are matched on the resolved canonical Model ID (`<prefix>/<model>`), stored in `traffic_logs.model_id`. Over-limit requests get 429 `model_quota_exceeded`; lifetime (`total`) limits send no `Retry-After`.- UI: Quotas page, dashboard "Quotas near limit" card (setting `quota_warn_percent`, default 80), Quota column in the keys table.- Follow-up: raw Requested Model is used by the access and disabled checks, so a bare name can bypass a disabled prefixed Model.
+
+### Extension: Model Quotas (see ADR-0007, ADR-0008)
+
+- Each key has a **Quota Mode**: `key` (the Key Quota above, total across models) or `model` (separate limits per exact Model). Exclusive: the inactive mode's settings are kept.
+- Table `api_key_model_quotas(api_key_id, model_id, quota_limit, quota_period)`; periods `daily|weekly|monthly|total`. A Model without a row is unlimited.
+- Requests are matched on the resolved canonical Model ID (`<prefix>/<model>`), stored in `traffic_logs.model_id`. Over-limit requests get 429 `model_quota_exceeded`; lifetime (`total`) limits send no `Retry-After`.
+- UI: Quotas page, dashboard "Quotas near limit" card (setting `quota_warn_percent`, default 80), Quota column in the keys table.
+- Follow-up: raw Requested Model is used by the access and disabled checks, so a bare name can bypass a disabled prefixed Model.
 
 ---
 

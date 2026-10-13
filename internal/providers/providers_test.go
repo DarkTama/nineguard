@@ -213,3 +213,78 @@ func TestProvidersUpstreamTokenSaving(t *testing.T) {
 	}
 }
 
+func TestProvidersQuotaOptions(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test_quota_opts.db")
+	database, err := db.InitDB(dbPath)
+	if err != nil {
+		t.Fatalf("failed to init db: %v", err)
+	}
+	defer database.Close()
+
+	mgr := providers.NewManager(database)
+	secret := "pass123"
+	p, err := mgr.CreateProviderWithOptions(providers.ProviderOptions{
+		Name:            "9router Upstream",
+		Route:           "http://localhost:20128/v1",
+		APIKey:          "sk-upstream",
+		Prefix:          "9router",
+		IsDefault:       true,
+		IsActive:        true,
+		QuotaType:       "9router",
+		QuotaAuthSecret: &secret,
+	})
+	if err != nil {
+		t.Fatalf("failed to create provider with quota options: %v", err)
+	}
+	if p.QuotaType != "9router" || !p.HasQuotaAuthSecret {
+		t.Fatalf("unexpected quota fields on created: %+v", p)
+	}
+
+	got, err := mgr.GetProvider(p.ID)
+	if err != nil {
+		t.Fatalf("failed to get provider: %v", err)
+	}
+	if got.QuotaType != "9router" || !got.HasQuotaAuthSecret || got.QuotaAuthSecret != "pass123" {
+		t.Fatalf("unexpected fetched quota options: %+v", got)
+	}
+
+	// Update without modifying secret (secret = nil)
+	updated, err := mgr.UpdateProviderWithOptions(p.ID, providers.ProviderOptions{
+		Name:            "9router Upstream Renamed",
+		Route:           got.Route,
+		APIKey:          got.APIKey,
+		Prefix:          got.Prefix,
+		IsDefault:       got.IsDefault,
+		IsActive:        got.IsActive,
+		QuotaType:       "9router",
+		QuotaAuthSecret: nil, // keep existing
+	})
+	if err != nil {
+		t.Fatalf("failed to update provider: %v", err)
+	}
+	if updated.QuotaAuthSecret != "pass123" || !updated.HasQuotaAuthSecret {
+		t.Fatalf("expected secret to be preserved when nil passed: %+v", updated)
+	}
+
+	// Update with new secret
+	newSecret := ""
+	cleared, err := mgr.UpdateProviderWithOptions(p.ID, providers.ProviderOptions{
+		Name:            updated.Name,
+		Route:           updated.Route,
+		APIKey:          updated.APIKey,
+		Prefix:          updated.Prefix,
+		IsDefault:       updated.IsDefault,
+		IsActive:        updated.IsActive,
+		QuotaType:       "disabled",
+		QuotaAuthSecret: &newSecret, // clear secret
+	})
+	if err != nil {
+		t.Fatalf("failed to clear secret: %v", err)
+	}
+	if cleared.QuotaType != "disabled" || cleared.HasQuotaAuthSecret || cleared.QuotaAuthSecret != "" {
+		t.Fatalf("expected cleared secret and disabled quota: %+v", cleared)
+	}
+}
+
+

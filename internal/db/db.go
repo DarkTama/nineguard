@@ -122,6 +122,8 @@ func (d *DB) migrate() error {
 		prefix TEXT NOT NULL DEFAULT '',
 		is_default INTEGER DEFAULT 0,
 		is_active INTEGER DEFAULT 1,
+		quota_type TEXT DEFAULT 'disabled',
+		quota_auth_secret TEXT DEFAULT '',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
@@ -267,6 +269,11 @@ func (d *DB) migrate() error {
 	_, _ = d.Exec("ALTER TABLE traffic_logs ADD COLUMN model_id TEXT COLLATE NOCASE")
 	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_traffic_key_model_ts ON traffic_logs(api_key_id, model_id, timestamp)")
 	_, _ = d.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('quota_warn_percent', '80')")
+
+	// Upstream quotas (ADR 0009)
+	_, _ = d.Exec("ALTER TABLE providers ADD COLUMN quota_type TEXT DEFAULT 'disabled'")
+	_, _ = d.Exec("ALTER TABLE providers ADD COLUMN quota_auth_secret TEXT DEFAULT ''")
+	_, _ = d.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('chat_commands_enabled', 'true')")
 
 	if err := d.seedPlugins(); err != nil {
 		return fmt.Errorf("seed plugins: %w", err)

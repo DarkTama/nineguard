@@ -15,23 +15,50 @@ import (
 )
 
 type Provider struct {
-	ID                     string    `json:"id"`
-	Name                   string    `json:"name"`
-	Route                  string    `json:"route"`
-	APIKey                 string    `json:"-"`
-	MaskedKey              string    `json:"masked_key"`
-	Prefix                 string    `json:"prefix"`
-	IsDefault              bool      `json:"is_default"`
-	IsActive               bool      `json:"is_active"`
-	UpstreamTokenSaving    bool      `json:"upstream_token_saving"`
-	UpstreamTokenSavingNote string   `json:"upstream_token_saving_note"`
-	CreatedAt              time.Time `json:"created_at"`
-	UpdatedAt              time.Time `json:"updated_at"`
+	ID                      string    `json:"id"`
+	Name                    string    `json:"name"`
+	Route                   string    `json:"route"`
+	APIKey                  string    `json:"-"`
+	MaskedKey               string    `json:"masked_key"`
+	Prefix                  string    `json:"prefix"`
+	IsDefault               bool      `json:"is_default"`
+	IsActive                bool      `json:"is_active"`
+	UpstreamTokenSaving     bool      `json:"upstream_token_saving"`
+	UpstreamTokenSavingNote string    `json:"upstream_token_saving_note"`
+	QuotaType               string    `json:"quota_type"`
+	QuotaAuthSecret         string    `json:"-"`
+	HasQuotaAuthSecret      bool      `json:"has_quota_auth_secret"`
+	CreatedAt               time.Time `json:"created_at"`
+	UpdatedAt               time.Time `json:"updated_at"`
+}
+
+type ProviderOptions struct {
+	Name                    string
+	Route                   string
+	APIKey                  string
+	Prefix                  string
+	IsDefault               bool
+	IsActive                bool
+	UpstreamTokenSaving     bool
+	UpstreamTokenSavingNote string
+	QuotaType               string
+	QuotaAuthSecret         *string // nil keeps existing on update
 }
 
 type Manager struct {
 	db *db.DB
 	mu sync.RWMutex
+}
+
+func normalizeQuotaType(t string) string {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "9router":
+		return "9router"
+	case "nineguard":
+		return "nineguard"
+	default:
+		return "disabled"
+	}
 }
 
 func NewManager(database *db.DB) *Manager {
@@ -64,6 +91,7 @@ func (m *Manager) ListProviders() ([]Provider, error) {
 	rows, err := m.db.Query(`
 		SELECT id, name, route, COALESCE(api_key, ''), prefix, is_default, is_active,
 		       COALESCE(upstream_token_saving, 0), COALESCE(upstream_token_saving_note, ''),
+		       COALESCE(quota_type, 'disabled'), COALESCE(quota_auth_secret, ''),
 		       created_at, updated_at
 		FROM providers
 		ORDER BY is_default DESC, is_active DESC, name ASC
@@ -80,6 +108,7 @@ func (m *Manager) ListProviders() ([]Provider, error) {
 		if err := rows.Scan(
 			&p.ID, &p.Name, &p.Route, &p.APIKey, &p.Prefix,
 			&defInt, &actInt, &utsInt, &p.UpstreamTokenSavingNote,
+			&p.QuotaType, &p.QuotaAuthSecret,
 			&p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -87,6 +116,8 @@ func (m *Manager) ListProviders() ([]Provider, error) {
 		p.IsDefault = (defInt == 1)
 		p.IsActive = (actInt == 1)
 		p.UpstreamTokenSaving = (utsInt == 1)
+		p.QuotaType = normalizeQuotaType(p.QuotaType)
+		p.HasQuotaAuthSecret = strings.TrimSpace(p.QuotaAuthSecret) != ""
 		p.MaskedKey = maskKey(p.APIKey)
 		list = append(list, p)
 	}
@@ -107,34 +138,62 @@ func (m *Manager) getProviderUnlocked(id string) (*Provider, error) {
 	err := m.db.QueryRow(`
 		SELECT id, name, route, COALESCE(api_key, ''), prefix, is_default, is_active,
 		       COALESCE(upstream_token_saving, 0), COALESCE(upstream_token_saving_note, ''),
+		       COALESCE(quota_type, 'disabled'), COALESCE(quota_auth_secret, ''),
 		       created_at, updated_at
 		FROM providers WHERE id = ?
-	`, id).Scan(&p.ID, &p.Name, &p.Route, &p.APIKey, &p.Prefix, &defInt, &actInt, &utsInt, &p.UpstreamTokenSavingNote, &p.CreatedAt, &p.UpdatedAt)
+	`, id).Scan(&p.ID, &p.Name, &p.Route, &p.APIKey, &p.Prefix, &defInt, &actInt, &utsInt, &p.UpstreamTokenSavingNote, &p.QuotaType, &p.QuotaAuthSecret, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	p.IsDefault = (defInt == 1)
 	p.IsActive = (actInt == 1)
 	p.UpstreamTokenSaving = (utsInt == 1)
+	p.QuotaType = normalizeQuotaType(p.QuotaType)
+	p.HasQuotaAuthSecret = strings.TrimSpace(p.QuotaAuthSecret) != ""
 	p.MaskedKey = maskKey(p.APIKey)
 	return &p, nil
 }
 
 func (m *Manager) CreateProvider(name, route, apiKey, prefix string, isDefault, isActive bool) (*Provider, error) {
-	return m.CreateProviderWithTokenSaving(name, route, apiKey, prefix, isDefault, isActive, false, "")
+	return m.CreateProviderWithOptions(ProviderOptions{
+		Name:      name,
+		Route:     route,
+		APIKey:    apiKey,
+		Prefix:    prefix,
+		IsDefault: isDefault,
+		IsActive:  isActive,
+	})
 }
 
 func (m *Manager) CreateProviderWithTokenSaving(name, route, apiKey, prefix string, isDefault, isActive, upstreamTokenSaving bool, upstreamTokenSavingNote string) (*Provider, error) {
+	return m.CreateProviderWithOptions(ProviderOptions{
+		Name:                    name,
+		Route:                   route,
+		APIKey:                  apiKey,
+		Prefix:                  prefix,
+		IsDefault:               isDefault,
+		IsActive:                isActive,
+		UpstreamTokenSaving:     upstreamTokenSaving,
+		UpstreamTokenSavingNote: upstreamTokenSavingNote,
+	})
+}
+
+func (m *Manager) CreateProviderWithOptions(opts ProviderOptions) (*Provider, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	name = strings.TrimSpace(name)
-	route = strings.TrimRight(strings.TrimSpace(route), "/")
-	apiKey = strings.TrimSpace(apiKey)
-	prefix = strings.ToLower(strings.Trim(strings.TrimSpace(prefix), "/"))
-	upstreamTokenSavingNote = strings.TrimSpace(upstreamTokenSavingNote)
+	name := strings.TrimSpace(opts.Name)
+	route := strings.TrimRight(strings.TrimSpace(opts.Route), "/")
+	apiKey := strings.TrimSpace(opts.APIKey)
+	prefix := strings.ToLower(strings.Trim(strings.TrimSpace(opts.Prefix), "/"))
+	upstreamTokenSavingNote := strings.TrimSpace(opts.UpstreamTokenSavingNote)
 	if len(upstreamTokenSavingNote) > 200 {
 		upstreamTokenSavingNote = upstreamTokenSavingNote[:200]
+	}
+	quotaType := normalizeQuotaType(opts.QuotaType)
+	quotaSecret := ""
+	if opts.QuotaAuthSecret != nil {
+		quotaSecret = strings.TrimSpace(*opts.QuotaAuthSecret)
 	}
 
 	if name == "" {
@@ -165,6 +224,7 @@ func (m *Manager) CreateProviderWithTokenSaving(name, route, apiKey, prefix stri
 	defer tx.Rollback()
 
 	defInt := 0
+	isDefault := opts.IsDefault
 	if isDefault {
 		defInt = 1
 		// When newly set as default, clear default flag from all other providers
@@ -183,20 +243,20 @@ func (m *Manager) CreateProviderWithTokenSaving(name, route, apiKey, prefix stri
 	}
 
 	actInt := 0
-	if isActive {
+	if opts.IsActive {
 		actInt = 1
 	}
 
 	utsInt := 0
-	if upstreamTokenSaving {
+	if opts.UpstreamTokenSaving {
 		utsInt = 1
 	}
 
 	now := time.Now()
 	_, err = tx.Exec(`
-		INSERT INTO providers (id, name, route, api_key, prefix, is_default, is_active, upstream_token_saving, upstream_token_saving_note, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, id, name, route, apiKey, prefix, defInt, actInt, utsInt, upstreamTokenSavingNote, now, now)
+		INSERT INTO providers (id, name, route, api_key, prefix, is_default, is_active, upstream_token_saving, upstream_token_saving_note, quota_type, quota_auth_secret, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, name, route, apiKey, prefix, defInt, actInt, utsInt, upstreamTokenSavingNote, quotaType, quotaSecret, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -206,18 +266,21 @@ func (m *Manager) CreateProviderWithTokenSaving(name, route, apiKey, prefix stri
 	}
 
 	return &Provider{
-		ID:                     id,
-		Name:                   name,
-		Route:                  route,
-		APIKey:                 apiKey,
-		MaskedKey:              maskKey(apiKey),
-		Prefix:                 prefix,
-		IsDefault:              isDefault,
-		IsActive:               isActive,
-		UpstreamTokenSaving:    upstreamTokenSaving,
+		ID:                      id,
+		Name:                    name,
+		Route:                   route,
+		APIKey:                  apiKey,
+		MaskedKey:               maskKey(apiKey),
+		Prefix:                  prefix,
+		IsDefault:               isDefault,
+		IsActive:                opts.IsActive,
+		UpstreamTokenSaving:     opts.UpstreamTokenSaving,
 		UpstreamTokenSavingNote: upstreamTokenSavingNote,
-		CreatedAt:              now,
-		UpdatedAt:              now,
+		QuotaType:               quotaType,
+		QuotaAuthSecret:         quotaSecret,
+		HasQuotaAuthSecret:      quotaSecret != "",
+		CreatedAt:               now,
+		UpdatedAt:               now,
 	}, nil
 }
 
@@ -233,16 +296,43 @@ func (m *Manager) UpdateProvider(id, name, route, apiKey, prefix string, isDefau
 }
 
 func (m *Manager) UpdateProviderWithTokenSaving(id, name, route, apiKey, prefix string, isDefault, isActive, upstreamTokenSaving bool, upstreamTokenSavingNote string) (*Provider, error) {
+	return m.UpdateProviderWithOptions(id, ProviderOptions{
+		Name:                    name,
+		Route:                   route,
+		APIKey:                  apiKey,
+		Prefix:                  prefix,
+		IsDefault:               isDefault,
+		IsActive:                isActive,
+		UpstreamTokenSaving:     upstreamTokenSaving,
+		UpstreamTokenSavingNote: upstreamTokenSavingNote,
+	})
+}
+
+func (m *Manager) UpdateProviderWithOptions(id string, opts ProviderOptions) (*Provider, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	name = strings.TrimSpace(name)
-	route = strings.TrimRight(strings.TrimSpace(route), "/")
-	apiKey = strings.TrimSpace(apiKey)
-	prefix = strings.ToLower(strings.Trim(strings.TrimSpace(prefix), "/"))
-	upstreamTokenSavingNote = strings.TrimSpace(upstreamTokenSavingNote)
+	curr, err := m.getProviderUnlocked(id)
+	if err != nil {
+		return nil, fmt.Errorf("provider not found: %w", err)
+	}
+
+	name := strings.TrimSpace(opts.Name)
+	route := strings.TrimRight(strings.TrimSpace(opts.Route), "/")
+	apiKey := strings.TrimSpace(opts.APIKey)
+	prefix := strings.ToLower(strings.Trim(strings.TrimSpace(opts.Prefix), "/"))
+	upstreamTokenSavingNote := strings.TrimSpace(opts.UpstreamTokenSavingNote)
 	if len(upstreamTokenSavingNote) > 200 {
 		upstreamTokenSavingNote = upstreamTokenSavingNote[:200]
+	}
+
+	quotaType := curr.QuotaType
+	if opts.QuotaType != "" {
+		quotaType = normalizeQuotaType(opts.QuotaType)
+	}
+	quotaSecret := curr.QuotaAuthSecret
+	if opts.QuotaAuthSecret != nil {
+		quotaSecret = strings.TrimSpace(*opts.QuotaAuthSecret)
 	}
 
 	if name == "" {
@@ -259,6 +349,7 @@ func (m *Manager) UpdateProviderWithTokenSaving(id, name, route, apiKey, prefix 
 	defer tx.Rollback()
 
 	defInt := 0
+	isDefault := opts.IsDefault
 	if isDefault {
 		defInt = 1
 		// When set as default, reset all other providers so exactly this one is default
@@ -277,19 +368,19 @@ func (m *Manager) UpdateProviderWithTokenSaving(id, name, route, apiKey, prefix 
 	}
 
 	actInt := 0
-	if isActive {
+	if opts.IsActive {
 		actInt = 1
 	}
 
 	utsInt := 0
-	if upstreamTokenSaving {
+	if opts.UpstreamTokenSaving {
 		utsInt = 1
 	}
 
 	_, err = tx.Exec(`
-		UPDATE providers SET name = ?, route = ?, api_key = ?, prefix = ?, is_default = ?, is_active = ?, upstream_token_saving = ?, upstream_token_saving_note = ?, updated_at = CURRENT_TIMESTAMP
+		UPDATE providers SET name = ?, route = ?, api_key = ?, prefix = ?, is_default = ?, is_active = ?, upstream_token_saving = ?, upstream_token_saving_note = ?, quota_type = ?, quota_auth_secret = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, name, route, apiKey, prefix, defInt, actInt, utsInt, upstreamTokenSavingNote, id)
+	`, name, route, apiKey, prefix, defInt, actInt, utsInt, upstreamTokenSavingNote, quotaType, quotaSecret, id)
 	if err != nil {
 		return nil, err
 	}

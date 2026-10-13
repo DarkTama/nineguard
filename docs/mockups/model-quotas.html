@@ -1,0 +1,189 @@
+<!doctype html><html lang="en" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NineGuard Model Quotas - mockup</title>
+<style>
+:root{--bg:#f4f3f1;--panel:#fff;--panel-2:#fafaf9;--hover:#f1efec;--border:#e7e4e0;--border-strong:#d5d1cc;--text:#1c1917;--text-2:#4a4542;--muted:#7c756f;--accent:#c2410c;--accent-soft:#fcece2;--accent-text:#b13a0a;--danger:#c42b1c;--ok:#15803d;--warn:#c98a0c;--warnt:#94620a;--shadow-pop:0 8px 28px rgb(41 37 36/.14);--font:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace}
+[data-theme=dark]{--bg:#121110;--panel:#1c1a19;--panel-2:#211f1d;--hover:#292624;--border:#302d2a;--border-strong:#423e3a;--text:#ece9e6;--text-2:#c4beb8;--muted:#948d86;--accent:#ea6a2a;--accent-soft:rgb(234 106 42/.15);--accent-text:#f28b52;--danger:#e5584e;--ok:#4ade80;--warn:#b88c14;--warnt:#e0b240;--shadow-pop:0 10px 30px rgb(0 0 0/.45)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:12px/1.5 var(--font);padding:28px 20px 60px}
+h1{font-size:15px;margin:0 0 4px}.note{max-width:900px;color:var(--text-2);margin:0 0 8px}
+.toggle{position:fixed;top:12px;right:16px;border:1px solid var(--border);background:var(--panel);color:var(--text);border-radius:6px;padding:6px 10px;font:inherit;cursor:pointer}
+section{margin:34px 0 0}
+section>h2{font-size:13px;margin:0 0 4px;color:var(--accent-text)}
+section>p{margin:0 0 12px;color:var(--muted);max-width:900px}
+.frame{border:1px solid var(--border-strong);border-radius:10px;background:var(--bg);overflow:hidden;max-width:1080px}
+.app{display:grid;grid-template-columns:170px 1fr;min-height:420px}
+.side{background:var(--panel);border-right:1px solid var(--border);padding:12px 8px}
+.side b{display:block;padding:4px 8px 12px;font-size:13px}
+.nav{display:block;padding:6px 10px;border-radius:6px;color:var(--text-2);margin-bottom:2px}
+.nav.on{background:var(--accent-soft);color:var(--accent-text);font-weight:700}
+.nav .new{font-size:9px;background:var(--accent);color:#fff;border-radius:4px;padding:0 4px;margin-left:4px}
+.main{padding:16px 18px}
+.top{display:flex;align-items:center;gap:8px;margin-bottom:14px}.top h3{margin:0;font-size:14px}.sp{flex:1}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+.card small{color:var(--muted);display:block}.card strong{font-size:20px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:10px}
+input,select,.inp{background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 8px;font:inherit}
+.btn{display:inline-block;border:1px solid var(--border);background:var(--panel);color:var(--text-2);border-radius:6px;padding:5px 10px}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.sm{padding:2px 7px;font-size:11px}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;color:var(--muted);font-weight:600;font-size:11px;padding:6px 8px;border-bottom:1px solid var(--border)}
+td{padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr.sub td{background:var(--panel-2)}
+tr.sub td:first-child{padding-left:30px}
+tr.inactive td{opacity:.5}
+.bar{height:6px;border-radius:3px;background:var(--hover);overflow:hidden;width:120px;display:inline-block;vertical-align:middle;margin-right:6px}
+.bar i{display:block;height:100%;background:var(--ok)}
+.bar i.w{background:var(--warn)}.bar i.d{background:var(--danger)}
+.pct{font-weight:700}.pct.w{color:var(--warnt)}.pct.d{color:var(--danger)}
+.badge{font-size:10px;border-radius:4px;padding:1px 6px;border:1px solid var(--border);color:var(--muted);white-space:nowrap}
+.badge.mode{color:var(--accent-text);border-color:var(--accent);background:var(--accent-soft)}
+.badge.d{color:var(--danger);border-color:var(--danger)}
+.badge.w{color:var(--warnt);border-color:var(--warn)}
+.muted{color:var(--muted)}.chev{color:var(--muted);display:inline-block;width:14px}
+.filters{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+/* modal */
+.modalwrap{position:relative;padding:20px;background:rgb(0 0 0/.35)}
+.modal{background:var(--panel);border:1px solid var(--border);border-radius:10px;max-width:760px;margin:0 auto;box-shadow:var(--shadow-pop)}
+.mh{display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border)}.mh b{font-size:13px}
+.mb{padding:14px 16px;display:grid;gap:14px}
+.mf{display:flex;justify-content:flex-end;gap:8px;padding:10px 16px;border-top:1px solid var(--border)}
+.sect{border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:var(--panel-2)}
+.sect h4{margin:0 0 8px;font-size:12px}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.seg span{padding:5px 12px;color:var(--text-2)}.seg span.on{background:var(--accent-soft);color:var(--accent-text);font-weight:700}
+.hint{color:var(--muted);font-size:11px}
+.vel{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:11px}
+.vel span{border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--text-2)}
+.dim{opacity:.45}
+.picker{position:absolute;right:46px;top:250px;width:330px;background:var(--panel);border:1px solid var(--border-strong);border-radius:8px;box-shadow:var(--shadow-pop);padding:8px}
+.picker .gt{color:var(--muted);font-size:10px;font-weight:700;margin:8px 4px 2px;text-transform:uppercase}
+.picker label{display:flex;gap:6px;align-items:center;padding:3px 4px;border-radius:4px}
+.picker label.dis{color:var(--muted)}
+.code{background:var(--panel-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;white-space:pre;overflow:auto;color:var(--text-2)}
+.callout{border-left:3px solid var(--accent);padding:2px 10px;color:var(--text-2);margin-top:8px}
+</style></head><body>
+<button class="toggle" onclick="document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark'">toggle theme</button>
+<h1>Model Quotas - layout mockup (static, not wired)</h1>
+<p class="note">Per ADR 0007/0008. Each API Key enforces one Quota Mode: <b>Key Quota</b> (one cumulative limit) or <b>Model Quotas</b> (one limit per exact Model, each with its own period). Sample data only. Colors: green &lt; 80%, amber &ge; 80% (quota_warn_percent), red = exhausted.</p>
+
+<!-- 1. KEY MODAL : MODEL MODE -->
+<section><h2>1. API Key modal - Quota section, mode = Per Model</h2>
+<p>Replaces the current "Token Quota" block. Switching to Total keeps these rows (greyed, not deleted). Rows can only be added for Models the key can use. Limit is required and &gt; 0.</p>
+<div class="frame"><div class="modalwrap"><div class="modal">
+<div class="mh"><b>Edit API Key - ari-laptop</b><span class="sp"></span><span class="muted">✕</span></div>
+<div class="mb">
+<div class="sect"><h4>Model Access</h4><span class="muted">Mode:</span> <span class="badge">group</span> &nbsp;Groups: <span class="badge">Claude Team</span> <span class="badge">OpenAI Basic</span></div>
+<div class="sect">
+<h4>Quota (Rate Limiting)</h4>
+<div style="display:flex;gap:12px;align-items:center;margin-bottom:10px"><div class="seg"><span>Key Quota (total, all models)</span><span class="on">Per Model</span></div><span class="hint">One mode is enforced. The other mode's settings are kept.</span></div>
+<table>
+<tr><th style="width:34%">Model</th><th>Token limit</th><th>Reset period</th><th>Used (current window)</th><th></th></tr>
+<tr><td>9router/claude-opus-4</td><td><input value="1,000,000" size="10"></td><td><select><option>Daily</option></select></td><td><span class="bar"><i class="w" style="width:86%"></i></span><span class="pct w">86%</span></td><td class="muted">✕</td></tr>
+<tr><td colspan="5" style="border-top:0;padding-top:0"><div class="vel"><span class="muted">History (approx.):</span><span>24h: 940k</span><span>7d avg: 610k/day</span><span>30d: 14.2M</span><a class="btn sm">Set 1.5x Daily</a><a class="btn sm">Set 2x Daily</a></div></td></tr>
+<tr><td>9router/claude-haiku-4</td><td><input value="20,000,000" size="10"></td><td><select><option>Weekly</option></select></td><td><span class="bar"><i style="width:31%"></i></span><span class="pct">31%</span></td><td class="muted">✕</td></tr>
+<tr><td>openai/gpt-4o</td><td><input value="500,000" size="10"></td><td><select><option>Monthly</option></select></td><td><span class="bar"><i class="d" style="width:100%"></i></span><span class="pct d">100%</span></td><td class="muted">✕</td></tr>
+<tr class="inactive"><td>9router/claude-sonnet-3.7 <span class="badge d">removed</span></td><td><input value="2,000,000" size="10"></td><td><select><option>Daily</option></select></td><td class="muted">not enforced</td><td class="muted">✕</td></tr>
+</table>
+<div style="margin-top:10px;display:flex;gap:10px;align-items:center"><a class="btn">+ Add Model</a><span class="hint">Models without a row are unlimited for this key.</span></div>
+</div>
+</div>
+<div class="mf"><a class="btn">Cancel</a><a class="btn pri">Save</a></div>
+</div>
+<!-- picker popover -->
+<div class="picker">
+<input placeholder="Search models..." style="width:100%">
+<div class="gt">Claude Team</div>
+<label class="dis"><input type="checkbox" checked disabled> 9router/claude-opus-4 <span class="badge">added</span></label>
+<label><input type="checkbox" checked> 9router/claude-sonnet-4</label>
+<label class="dis"><input type="checkbox" checked disabled> 9router/claude-haiku-4 <span class="badge">added</span></label>
+<div class="gt">OpenAI Basic (openai/*)</div>
+<label class="dis"><input type="checkbox" checked disabled> openai/gpt-4o <span class="badge">added</span></label>
+<label><input type="checkbox" checked> openai/gpt-4o-mini</label>
+<label><input type="checkbox"> openai/o3-mini</label>
+<div style="display:flex;justify-content:space-between;margin-top:8px"><span class="hint">2 selected</span><a class="btn pri sm">Add 2 rows</a></div>
+</div>
+</div></div></section>
+
+<!-- 2. KEY MODAL : KEY MODE -->
+<section><h2>2. Same section, mode = Key Quota</h2>
+<p>The existing form, relabelled. Saved Model Quotas stay visible as a collapsed, inactive summary.</p>
+<div class="frame"><div class="modalwrap"><div class="modal"><div class="mb">
+<div class="sect">
+<h4>Quota (Rate Limiting)</h4>
+<div style="display:flex;gap:12px;align-items:center;margin-bottom:10px"><div class="seg"><span class="on">Key Quota (total, all models)</span><span>Per Model</span></div></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div><div class="hint">Token Limit</div><input value="5,000,000" style="width:100%"><div class="hint">Max tokens across all models. 0 = unlimited.</div></div><div><div class="hint">Reset Period</div><select style="width:100%"><option>Daily</option></select><div class="hint">Anchors to UTC calendar boundaries.</div></div></div>
+<div class="vel" style="margin-top:8px"><span class="muted">Historical Velocity:</span><span>24h: 172.4M</span><span>7d avg: 138.6M/day</span><span>30d: 831.6M</span><a class="btn sm">Set 1.5x Daily</a><a class="btn sm">Set 2x Daily</a></div>
+<div class="dim" style="margin-top:10px">▸ 4 Model Quotas saved (inactive while in Key Quota mode)</div>
+</div></div></div></div></div></section>
+
+<!-- 3. QUOTAS PAGE -->
+<section><h2>3. New page: Quotas (sidebar nav)</h2>
+<p>Grouped by API Key, sorted by highest % used. Expand a model-mode key to see each Model Quota. Keys with no quota are hidden unless "Show unlimited" is on.</p>
+<div class="frame"><div class="app">
+<div class="side"><b>NineGuard</b><span class="nav">Dashboard</span><span class="nav">Traffic</span><span class="nav">API Keys</span><span class="nav on">Quotas <span class="new">NEW</span></span><span class="nav">Models</span><span class="nav">Providers</span><span class="nav">Plugins</span><span class="nav">Reports</span></div>
+<div class="main">
+<div class="top"><h3>Quotas</h3><span class="sp"></span><span class="muted">Windows reset at UTC boundaries</span></div>
+<div class="grid4">
+<div class="card"><small>Keys with quotas</small><strong>14</strong></div>
+<div class="card"><small>Model Quotas</small><strong>37</strong></div>
+<div class="card"><small>Near limit (&ge;80%)</small><strong style="color:var(--warnt)">5</strong></div>
+<div class="card"><small>Exhausted</small><strong style="color:var(--danger)">2</strong></div>
+</div>
+<div class="filters"><input placeholder="Search key or model..." style="width:220px"><select><option>Mode: All</option><option>Key Quota</option><option>Per Model</option></select><select><option>Status: All</option><option>Near limit</option><option>Exhausted</option><option>Inactive</option></select><label class="muted"><input type="checkbox"> Show unlimited</label></div>
+<div class="card" style="padding:0">
+<table>
+<tr><th>API Key / Model</th><th>Mode</th><th>Used / Limit</th><th>Usage</th><th>Period</th><th>Resets</th></tr>
+<tr><td><span class="chev">▾</span><b>ari-laptop</b> <span class="muted">· 4 limits</span></td><td><span class="badge mode">per model</span></td><td class="muted">max of 3 active</td><td><span class="bar"><i class="d" style="width:100%"></i></span><span class="pct d">100%</span></td><td></td><td></td></tr>
+<tr class="sub"><td>openai/gpt-4o <span class="badge d">exhausted</span></td><td></td><td>512k / 500k</td><td><span class="bar"><i class="d" style="width:100%"></i></span><span class="pct d">102%</span></td><td>monthly</td><td>in 19d 4h</td></tr>
+<tr class="sub"><td>9router/claude-opus-4</td><td></td><td>860k / 1M</td><td><span class="bar"><i class="w" style="width:86%"></i></span><span class="pct w">86%</span></td><td>daily</td><td>in 6h 12m</td></tr>
+<tr class="sub"><td>9router/claude-haiku-4</td><td></td><td>6.2M / 20M</td><td><span class="bar"><i style="width:31%"></i></span><span class="pct">31%</span></td><td>weekly</td><td>in 3d 6h</td></tr>
+<tr class="sub inactive"><td>9router/claude-sonnet-3.7 <span class="badge d">removed</span></td><td></td><td>- / 2M</td><td class="muted">not enforced</td><td>daily</td><td></td></tr>
+<tr><td><span class="chev">▸</span><b>budi-ci-agent</b> <span class="muted">· 2 limits</span></td><td><span class="badge mode">per model</span></td><td class="muted">max of 2 active</td><td><span class="bar"><i class="w" style="width:91%"></i></span><span class="pct w">91%</span></td><td></td><td></td></tr>
+<tr><td><span class="chev"></span><b>support-bot</b></td><td><span class="badge">key</span></td><td>4.1M / 5M</td><td><span class="bar"><i class="w" style="width:82%"></i></span><span class="pct w">82%</span></td><td>daily</td><td>in 6h 12m</td></tr>
+<tr><td><span class="chev">▸</span><b>dina-notebook</b> <span class="muted">· 3 limits</span></td><td><span class="badge mode">per model</span></td><td class="muted">max of 3 active</td><td><span class="bar"><i style="width:44%"></i></span><span class="pct">44%</span></td><td></td><td></td></tr>
+<tr><td><span class="chev"></span><b>staging-tests</b></td><td><span class="badge">key</span></td><td>1.2M / 50M</td><td><span class="bar"><i style="width:2%"></i></span><span class="pct">2%</span></td><td>monthly</td><td>in 19d 4h</td></tr>
+</table></div>
+</div></div></div></section>
+
+<!-- 4. DASHBOARD CARD -->
+<section><h2>4. Home dashboard: Near-limit card</h2>
+<p>Lists Key Quotas and Model Quotas at or above quota_warn_percent (Settings, default 80), exhausted first. Hidden when empty. Links to Quotas.</p>
+<div class="frame"><div class="main">
+<div class="grid4"><div class="card"><small>Requests today</small><strong>12,480</strong></div><div class="card"><small>Tokens</small><strong>3.2M</strong></div><div class="card"><small>Providers</small><strong style="color:var(--ok)">4 up</strong></div><div class="card"><small>Errors</small><strong>12</strong></div></div>
+<div class="card" style="max-width:520px">
+<div style="display:flex;align-items:center;margin-bottom:6px"><b>Quotas near limit</b><span class="sp"></span><a class="btn sm">View all →</a></div>
+<table>
+<tr><td><b>ari-laptop</b> <span class="muted">· openai/gpt-4o</span></td><td><span class="bar" style="width:80px"><i class="d" style="width:100%"></i></span><span class="pct d">102%</span></td><td class="muted">19d</td></tr>
+<tr><td><b>budi-ci-agent</b> <span class="muted">· openai/gpt-4o</span></td><td><span class="bar" style="width:80px"><i class="w" style="width:91%"></i></span><span class="pct w">91%</span></td><td class="muted">6h</td></tr>
+<tr><td><b>ari-laptop</b> <span class="muted">· claude-opus-4</span></td><td><span class="bar" style="width:80px"><i class="w" style="width:86%"></i></span><span class="pct w">86%</span></td><td class="muted">6h</td></tr>
+<tr><td><b>support-bot</b> <span class="muted">· all models</span></td><td><span class="bar" style="width:80px"><i class="w" style="width:82%"></i></span><span class="pct w">82%</span></td><td class="muted">6h</td></tr>
+</table></div></div></div></section>
+
+<!-- 5. KEYS TABLE COLUMN -->
+<section><h2>5. API Keys table: Quota column</h2>
+<p>Key mode: unchanged bar. Model mode: highest-% Model Quota plus count of limits.</p>
+<div class="frame"><div class="main"><div class="card" style="padding:0">
+<table>
+<tr><th>Name</th><th>Access</th><th>Quota</th><th>Last Active</th></tr>
+<tr><td><b>ari-laptop</b></td><td><span class="badge">group</span></td><td><span class="bar" style="width:80px"><i class="d" style="width:100%"></i></span><span class="pct d">102%</span> <span class="muted">gpt-4o · 4 limits</span></td><td class="muted">2m ago</td></tr>
+<tr><td><b>support-bot</b></td><td><span class="badge">all</span></td><td><span class="bar" style="width:80px"><i class="w" style="width:82%"></i></span><span class="pct w">82%</span> <span class="muted">4.1M / 5M daily</span></td><td class="muted">just now</td></tr>
+<tr><td><b>intern-01</b></td><td><span class="badge">custom</span></td><td class="muted">unlimited</td><td class="muted">3d ago</td></tr>
+</table></div></div></div></section>
+
+<!-- 6. 429 -->
+<section><h2>6. What a blocked client receives (model mode)</h2>
+<div class="code">HTTP/1.1 429 Too Many Requests
+Retry-After: 22320
+Content-Type: application/json
+
+{
+  "error": {
+    "message": "Model quota exceeded for '9router/claude-opus-4' (1,004,211 / 1,000,000 tokens daily). Resets in 6h 12m (at 2026-10-13 00:00 UTC).",
+    "type": "insufficient_quota",
+    "code": "model_quota_exceeded"
+  }
+}</div>
+<div class="callout">Other Models on the same key keep working. Key-mode keys keep the existing <code>quota_exceeded</code> response.</div>
+</section>
+</body></html>

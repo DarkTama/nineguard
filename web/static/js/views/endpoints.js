@@ -7,6 +7,8 @@ import {
   totalPages, rangeLabel, pageItems, pageAfterReload, PAGE_SIZES,
 } from '../keylist.js';
 import { quotaPercent, formatQuotaUsage, isQuotaExhausted, quotaPeriodLabel, formatTokensCompact } from '../quotahelpers.js';
+import { quotaStatus, barTone, shortModel } from '../modelquotas.js';
+import { quotaSection, presetButtons } from './keyquota.js';
 
 export function mount(root) {
   let alive = true;
@@ -17,6 +19,8 @@ export function mount(root) {
   let keyPage = { keys: [], total: 0, page: 1, limit: keyState.limit };
   let keyLoadSeq = 0;
   let modelGroupsList = [];
+  let providersList = [];
+  let quotaWarn = 80;
   let upstreamInfo = { configured: false, masked_key: '', key: '', router_target: '' };
 
   const origin = location.origin || `${location.protocol}//${location.host}` || 'http://localhost:8080';
@@ -244,7 +248,22 @@ export function mount(root) {
     return h('td', null, h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '2px', alignItems: 'center' } }, ...badges));
   }
 
+  // Key in Per Model mode: its highest active Model Quota plus how many limits it has.
+  function modelQuotaCell(k) {
+    const s = k.model_quota_summary;
+    if (!s || !s.count) return h('td', { class: 'muted', style: { fontSize: '12px' } }, 'Unlimited');
+    if (!s.active) return h('td', { class: 'muted', style: { fontSize: '12px' } }, `Per model \u00b7 ${s.count} inactive`);
+    const status = quotaStatus(s.top_percent, quotaWarn);
+    const tone = barTone(status);
+    return h('td', { style: { verticalAlign: 'middle' }, title: `${s.top_model_id}: ${s.top_percent}% \u00b7 ${s.active} of ${s.count} limits active` },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' } },
+        h('span', { class: `qbar ${tone}`, style: { width: '70px' } }, h('i', { style: { width: `${Math.min(100, s.top_percent)}%` } })),
+        h('span', { class: `qpct ${tone}` }, `${s.top_percent}%`)),
+      h('div', { class: 'muted', style: { fontSize: '11px' } }, `${shortModel(s.top_model_id)} \u00b7 ${s.count} limit${s.count === 1 ? '' : 's'}`));
+  }
+
   function quotaCell(k) {
+    if (k.quota_mode === 'model') return modelQuotaCell(k);
     if (!k.quota_limit || k.quota_limit <= 0 || !k.quota_period || k.quota_period === 'none') {
       return h('td', { class: 'muted', style: { fontSize: '12px' } }, 'Unlimited');
     }
@@ -518,32 +537,10 @@ export function mount(root) {
         const pill7d = h('span', { class: 'badge', title: `${vel.tokens_7d_avg || 0} tokens/day average over past 7d` }, `7d avg: ${p7d}/day`);
         const pill30 = h('span', { class: 'badge', title: `${vel.tokens_30d || 0} tokens in past 30d` }, `30d: ${p30}`);
 
-        const preset15 = (vel.tokens_7d_avg > 0) ? h('button', {
-          class: 'btn btn-sm',
-          type: 'button',
-          style: { fontSize: '10.5px', padding: '1px 6px', height: '22px' },
-          title: `Set limit to 1.5x daily average (${Math.round(vel.tokens_7d_avg * 1.5)} tokens)`,
-          onclick: () => {
-            quotaLimitInput.value = String(Math.round(vel.tokens_7d_avg * 1.5));
-            quotaPeriodSelect.value = 'daily';
-          }
-        }, 'Set 1.5x Daily') : null;
-
-        const preset20 = (vel.tokens_7d_avg > 0) ? h('button', {
-          class: 'btn btn-sm',
-          type: 'button',
-          style: { fontSize: '10.5px', padding: '1px 6px', height: '22px' },
-          title: `Set limit to 2x daily average (${vel.tokens_7d_avg * 2} tokens)`,
-          onclick: () => {
-            quotaLimitInput.value = String(vel.tokens_7d_avg * 2);
-            quotaPeriodSelect.value = 'daily';
-          }
-        }, 'Set 2x Daily') : null;
-
         velocityBox.replaceChildren(
           h('b', { style: { color: 'var(--text-2)' } }, 'Historical Velocity:'),
           pill24, pill7d, pill30,
-          preset15, preset20
+          presetButtons(vel.tokens_7d_avg, quotaLimitInput, quotaPeriodSelect, true)
         );
       }).catch(() => {
         velocityBox.style.display = 'none';
@@ -916,8 +913,48 @@ export function mount(root) {
       )
     );
 
+    // What the access panels currently select (also used to check unsaved Model Quota rows).
+    function currentAccess() {
+      const groupIds = [];
+      groupCheckboxes.forEach((cb, gid) => { if (cb.checked) groupIds.push(gid); });
+      const allowed = [];
+      checkboxes.forEach((cb, id) => { if (cb.checked) allowed.push(id); });
+      customInput.value.split(',').map((s) => s.trim()).filter(Boolean).forEach((m) => { if (!allowed.includes(m)) allowed.push(m); });
+      return { mode, groupIds, allowed };
+    }
+
+    // Key Quota block (limit, period, velocity). The quota section shows it in Key Quota mode.
+    const keyQuotaNode = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+      h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' } },
+        h('div', { class: 'field', style: { marginBottom: 0 } },
+          h('span', { style: { fontSize: '11.5px', fontWeight: '600' } }, 'Key Quota limit'),
+          quotaLimitInput,
+          h('small', { class: 'muted', style: { fontSize: '11px' } }, 'Max tokens across all models. 0 = unlimited.')
+        ),
+        h('div', { class: 'field', style: { marginBottom: 0 } },
+          h('span', { style: { fontSize: '11.5px', fontWeight: '600' } }, 'Reset Period'),
+          quotaPeriodSelect,
+          h('small', { class: 'muted', style: { fontSize: '11px' } }, 'Anchors to UTC calendar boundaries.')
+        )
+      ),
+      velocityBox
+    );
+
+    const quotaUI = quotaSection({
+      existingKey, isEdit, keyQuotaNode, getAccess: currentAccess,
+      groups: modelGroupsList, models: modelsList, providers: providersList,
+    });
+
+    // Group/model checkboxes and the extra-models input all live in these panels, so one
+    // delegated listener re-checks unsaved Model Quota rows whenever the access changes.
+    [panelGroup, panelCustom].forEach((panel) => {
+      panel.addEventListener('change', () => quotaUI.refreshAccess());
+      panel.addEventListener('input', () => quotaUI.refreshAccess());
+    });
+
     function switchAccessMode(newMode) {
       mode = newMode;
+      queueMicrotask(() => quotaUI.refreshAccess());
       btnAll.classList.toggle('active', mode === 'all');
       btnGroup.classList.toggle('active', mode === 'group');
       btnCustom.classList.toggle('active', mode === 'custom');
@@ -953,35 +990,8 @@ export function mount(root) {
           )
         },
         {
-          label: 'Token Quota (Rate Limiting)',
-          node: h('div', {
-            style: {
-              padding: '12px 14px',
-              background: 'var(--hover)',
-              borderRadius: '8px',
-              border: '1px solid var(--border)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '10px'
-            }
-          },
-            h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' } },
-              h('div', { class: 'field', style: { marginBottom: 0 } },
-                h('span', { style: { fontSize: '11.5px', fontWeight: '600' } }, 'Token Limit'),
-                quotaLimitInput,
-                h('small', { class: 'muted', style: { fontSize: '11px' } }, 'Max tokens. Set 0 for unlimited.')
-              ),
-              h('div', { class: 'field', style: { marginBottom: 0 } },
-                h('span', { style: { fontSize: '11.5px', fontWeight: '600' } }, 'Reset Period'),
-                quotaPeriodSelect,
-                h('small', { class: 'muted', style: { fontSize: '11px' } }, 'Anchors to UTC calendar boundaries.')
-              )
-            ),
-            velocityBox,
-            h('p', { class: 'muted', style: { fontSize: '11px', margin: 0, lineHeight: 1.4 } },
-              '🛡️ Soft Post-Facto Gating: Requests are blocked with HTTP 429 once consumed tokens reach quota. Admitted requests run to completion.'
-            )
-          )
+          label: 'Quota (Rate Limiting)',
+          node: quotaUI.node
         },
         {
           label: 'Plugin Overrides (Optional)',
@@ -1023,6 +1033,9 @@ export function mount(root) {
           allowed_models = selected;
         }
 
+        const quotaProblem = quotaUI.problem();
+        if (quotaProblem) throw new Error(quotaProblem);
+
         const quota_limit = parseInt(quotaLimitInput.value, 10) || 0;
         const quota_period = quotaPeriodSelect.value;
         const payload = {
@@ -1031,7 +1044,8 @@ export function mount(root) {
           model_group_ids,
           allowed_models,
           quota_limit,
-          quota_period
+          quota_period,
+          ...quotaUI.payload()
         };
 
         try {
@@ -1424,12 +1438,16 @@ console.log(response.choices[0].message.content);`
   // ── Main Load ──
   async function load() {
     try {
-      const [u, m, k, g] = await Promise.all([
+      const [u, m, k, g, pv, ts] = await Promise.all([
         api.get('/settings/upstream').catch(() => ({})),
         api.get('/models').catch(() => []),
         api.get('/keys').catch(() => ({ keys: [] })),
-        api.get('/model-groups').catch(() => ({ groups: [] }))
+        api.get('/model-groups').catch(() => ({ groups: [] })),
+        api.get('/providers').catch(() => ({ providers: [] })),
+        api.get('/settings/traffic').catch(() => ({}))
       ]);
+      providersList = (pv && Array.isArray(pv.providers)) ? pv.providers : [];
+      quotaWarn = (ts && ts.quota_warn_percent) || 80;
       upstreamInfo = u || {};
       modelsList = Array.isArray(m) ? m : [];
       keysList = (k && k.keys) ? k.keys : [];
@@ -1466,11 +1484,29 @@ console.log(response.choices[0].message.content);`
     testerCard
   ));
 
-  load();
+  // #/endpoints?edit=<id> (from the Quotas page): open that key's edit modal, then drop the param.
+  let editHandled = '';
+  async function openEditFromRoute(params) {
+    const id = params && params.edit;
+    if (!id || id === editHandled) return;
+    editHandled = id;
+    try {
+      const key = await api.get('/keys/' + encodeURIComponent(id));
+      if (alive) openKeyModal(key);
+    } catch (e) {
+      toast(`Could not open key: ${e.message}`, 'error');
+    }
+    const { edit, ...rest } = getRoute().params;
+    setRoute('endpoints', rest, { replace: true });
+    editHandled = '';
+  }
+
+  load().then(() => openEditFromRoute(getRoute().params));
 
   return {
     // Router calls update() on hash changes (sort, page, filters, back/forward).
     update(params) {
+      if (params.edit) { openEditFromRoute(params); return; }
       const next = stateFromParams(params);
       if (JSON.stringify(next) === JSON.stringify(keyState)) return;
       keyState = next;

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"sync"
 	"time"
@@ -130,4 +131,41 @@ func (h *Handler) BuildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.K
 
 func (h *Handler) SetUpstreamManager(um *upstream.Manager) {
 	h.upstream = um
+}
+
+// ConsumeUpstreamReset triggers spending an upstream reset grant/credit on 9router.
+func (h *Handler) ConsumeUpstreamReset(w http.ResponseWriter, r *http.Request) {
+	if h.providers == nil {
+		jsonError(w, http.StatusBadRequest, "Providers manager not available")
+		return
+	}
+	if h.upstream == nil {
+		h.upstream = upstream.NewManager()
+	}
+
+	providerID := r.PathValue("id")
+	connID := r.PathValue("connId")
+
+	p, err := h.providers.GetProvider(providerID)
+	if err != nil || p == nil {
+		jsonError(w, http.StatusNotFound, "Provider not found")
+		return
+	}
+
+	var body struct {
+		ProviderKind string `json:"provider"`
+		GrantID      string `json:"grant_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	err = h.upstream.ConsumeReset(r.Context(), *p, connID, body.ProviderKind, body.GrantID)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"status":  "ok",
+		"message": "Reset applied successfully",
+	})
 }

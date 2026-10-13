@@ -16,14 +16,17 @@ type QuotaBucket struct {
 
 // ConnectionQuota represents quota data for a specific upstream account connection.
 type ConnectionQuota struct {
-	ConnectionID string        `json:"connection_id"`
-	Provider     string        `json:"provider"`      // e.g. "anthropic", "google", "openai"
-	AccountLabel string        `json:"account_label"` // Email or display name
-	Plan         string        `json:"plan,omitempty"`
-	Buckets      []QuotaBucket `json:"buckets"`
-	Status       string        `json:"status"` // "ok", "degraded", "error"
-	ErrorMsg     string        `json:"error_msg,omitempty"`
-	LastUpdated  time.Time     `json:"last_updated"`
+	ConnectionID   string        `json:"connection_id"`
+	Provider       string        `json:"provider"`      // e.g. "anthropic", "google", "openai"
+	AccountLabel   string        `json:"account_label"` // Email or display name
+	Plan           string        `json:"plan,omitempty"`
+	Buckets        []QuotaBucket `json:"buckets"`
+	ResetCredits   int           `json:"reset_credits,omitempty"`
+	NextGrantID    string        `json:"next_grant_id,omitempty"`
+	ResetExpiresAt *string       `json:"reset_expires_at,omitempty"`
+	Status         string        `json:"status"` // "ok", "degraded", "error"
+	ErrorMsg       string        `json:"error_msg,omitempty"`
+	LastUpdated    time.Time     `json:"last_updated"`
 }
 
 // ProviderQuotaResult holds the complete quota state for an upstream provider.

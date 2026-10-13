@@ -276,6 +276,7 @@ func main() {
 	mux.HandleFunc("GET /api/v1/keys/{id}", h.GetKey)
 	mux.HandleFunc("GET /api/v1/quotas", h.GetQuotas)
 	mux.HandleFunc("GET /api/v1/upstream-quotas", h.GetUpstreamQuotas)
+	mux.HandleFunc("POST /api/v1/upstream-quotas/{id}/connections/{connId}/reset", h.ConsumeUpstreamReset)
 
 	mux.HandleFunc("GET /api/v1/providers", h.ListProviders)
 	mux.HandleFunc("POST /api/v1/providers", h.CreateProvider)

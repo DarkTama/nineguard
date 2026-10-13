@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"nineguard/internal/db"
@@ -95,6 +96,57 @@ func TestGetUpstreamQuotas_AdminHandler(t *testing.T) {
 	bucket := pRes.Connections[0].Buckets[0]
 	if bucket.Name != "5h Session" || bucket.RemainingPercentage != 90 {
 		t.Fatalf("unexpected bucket: %+v", bucket)
+	}
+}
+
+func TestConsumeUpstreamReset(t *testing.T) {
+	tmpDir := t.TempDir()
+	d, err := db.InitDB(filepath.Join(tmpDir, "test_handler_reset.db"))
+	if err != nil {
+		t.Fatalf("InitDB failed: %v", err)
+	}
+	defer d.Close()
+
+	pm := providers.NewManager(d)
+
+	var resetCalled bool
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/usage/c1/claude-reset" && r.Method == "POST" {
+			resetCalled = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok": true, "message": "Reset applied"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	prov, err := pm.CreateProviderWithOptions(providers.ProviderOptions{
+		Name:      "9router",
+		Route:     mockServer.URL,
+		Prefix:    "9r",
+		IsDefault: true,
+		IsActive:  true,
+		QuotaType: "9router",
+	})
+	if err != nil {
+		t.Fatalf("CreateProviderWithOptions failed: %v", err)
+	}
+
+	h := handler.New(nil, nil, nil, nil, nil, pm, nil, "")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/upstream-quotas/"+prov.ID+"/connections/c1/reset", strings.NewReader(`{"provider":"claude","grant_id":"g1"}`))
+	req.SetPathValue("id", prov.ID)
+	req.SetPathValue("connId", "c1")
+	rec := httptest.NewRecorder()
+
+	h.ConsumeUpstreamReset(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !resetCalled {
+		t.Fatalf("expected 9router claude-reset endpoint to be called")
 	}
 }
 

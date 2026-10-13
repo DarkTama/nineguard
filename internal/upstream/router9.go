@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -150,6 +151,12 @@ type router9UsageQuotaItem struct {
 	Unlimited           bool     `json:"unlimited"`
 }
 
+type router9ResetCredits struct {
+	AvailableCount int     `json:"availableCount"`
+	NextGrantID    *string `json:"nextGrantId"`
+	ExpiresAt      *string `json:"expiresAt"`
+}
+
 type router9UsageResponse struct {
 	Plan          string                           `json:"plan"`
 	ResetDate     *string                          `json:"resetDate"`
@@ -157,6 +164,7 @@ type router9UsageResponse struct {
 	Credits       *float64                         `json:"credits"`
 	CreditBalance *float64                         `json:"creditBalance"`
 	Balance       *float64                         `json:"balance"`
+	ResetCredits  *router9ResetCredits             `json:"resetCredits"`
 	Message       string                           `json:"message"`
 	Error         string                           `json:"error"`
 }
@@ -207,6 +215,14 @@ func (a *Router9Adapter) fetchConnectionQuota(ctx context.Context, p providers.P
 	}
 
 	cq.Plan = data.Plan
+
+	if data.ResetCredits != nil {
+		cq.ResetCredits = data.ResetCredits.AvailableCount
+		if data.ResetCredits.NextGrantID != nil {
+			cq.NextGrantID = *data.ResetCredits.NextGrantID
+		}
+		cq.ResetExpiresAt = data.ResetCredits.ExpiresAt
+	}
 
 	// Parse buckets
 	for name, item := range data.Quotas {
@@ -430,6 +446,45 @@ func (a *Router9Adapter) login(ctx context.Context, p providers.Provider, baseUR
 		a.cookieMu.Lock()
 		a.cookieJar[p.ID] = cookies
 		a.cookieMu.Unlock()
+	}
+
+	return nil
+}
+
+// ConsumeReset triggers spending an upstream reset credit on 9router.
+func (a *Router9Adapter) ConsumeReset(ctx context.Context, p providers.Provider, connectionID, providerKind, grantID string) error {
+	baseURL := extractBaseURL(p.Route)
+	if baseURL == "" {
+		return fmt.Errorf("empty base URL for provider %s", p.ID)
+	}
+
+	endpoint := "/api/usage/" + url.PathEscape(connectionID) + "/codex-reset-credits"
+	var body []byte
+	if strings.EqualFold(providerKind, "claude") || strings.EqualFold(providerKind, "anthropic") {
+		endpoint = "/api/usage/" + url.PathEscape(connectionID) + "/claude-reset"
+		if grantID != "" {
+			body, _ = json.Marshal(map[string]string{"grantId": grantID})
+		}
+	}
+
+	reqURL := baseURL + endpoint
+	respBytes, err := a.doWithAuth(ctx, p, "POST", reqURL, body)
+	if err != nil {
+		return fmt.Errorf("reset failed: %w", err)
+	}
+
+	var res map[string]interface{}
+	if err := json.Unmarshal(respBytes, &res); err == nil {
+		if errMsg, ok := res["error"].(string); ok && errMsg != "" {
+			return errors.New(errMsg)
+		}
+		if errMsg, ok := res["message"].(string); ok && errMsg != "" {
+			if okVal, _ := res["ok"].(bool); !okVal {
+				if resetVal, _ := res["reset"].(bool); !resetVal {
+					return errors.New(errMsg)
+				}
+			}
+		}
 	}
 
 	return nil

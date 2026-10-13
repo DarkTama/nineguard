@@ -141,3 +141,15 @@ func (m *Manager) GetProviderQuotas(ctx context.Context, p providers.Provider, f
 
 	return res, err
 }
+
+// ConsumeReset delegates to router9 adapter and invalidates provider cache.
+func (m *Manager) ConsumeReset(ctx context.Context, p providers.Provider, connectionID, providerKind, grantID string) error {
+	if p.QuotaType != "9router" {
+		return fmt.Errorf("quota resets are only supported for 9router providers")
+	}
+	err := m.router9.ConsumeReset(ctx, p, connectionID, providerKind, grantID)
+	if err == nil {
+		m.InvalidateCache(p.ID)
+	}
+	return err
+}

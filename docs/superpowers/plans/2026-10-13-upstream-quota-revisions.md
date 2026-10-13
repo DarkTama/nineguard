@@ -17,7 +17,7 @@
 
 ## Plan Structure
 
-- [ ] **Task 1: Secret Vault (AES-256-GCM Encryption-at-Rest)**
+- [x] **Task 1: Secret Vault (AES-256-GCM Encryption-at-Rest)**
   - Create package `internal/vault`:
     - `Init(dataDir string)`: resolves key from `NINEGUARD_ENCRYPTION_KEY` or `data/.master.key` (mode `0600`).
     - `Encrypt(plaintext string) (string, error)`: generates random 12-byte nonce, returns `enc:v1:<base64>`.
@@ -26,14 +26,14 @@
   - Wire vault encryption into `internal/providers`, `internal/keys`, and `internal/plugins`.
   - Add unit tests for vault encryption, decryption, key generation, and migration.
 
-- [ ] **Task 2: Infinite Loop Protection & Instance Trace**
+- [x] **Task 2: Infinite Loop Protection & Instance Trace**
   - Ensure `instance_id` exists in `settings` table on startup.
   - In `internal/proxy/proxy.go`, check incoming `X-NineGuard-Trace` and `X-NineGuard-Hop`.
   - Reject with HTTP 508 if trace contains own `instance_id` or hop > 3.
   - In outgoing HTTP client calls, append `X-NineGuard-Trace` and increment `X-NineGuard-Hop`.
   - Add proxy unit tests for loop detection.
 
-- [ ] **Task 3: Deterministic Bucket Sorting & 30s Cooldown**
+- [x] **Task 3: Deterministic Bucket Sorting & 30s Cooldown**
   - In `internal/upstream/router9.go`, sort buckets before returning:
     1. Warnings (`Warning == true` or lowest remaining %) first.
     2. 5h Session, Weekly 7d, Credit Balance.
@@ -41,19 +41,19 @@
   - In `internal/upstream/client.go`, enforce 30s minimum cooldown on `force=1` per provider.
   - Add unit tests verifying sorting order and 30s cooldown enforcement.
 
-- [ ] **Task 4: Upstream Quota Reset Action**
+- [x] **Task 4: Upstream Quota Reset Action**
   - In `internal/upstream/types.go`, add `ResetCredits` and `NextGrantID` to `ConnectionQuota`.
   - In `internal/upstream/router9.go`, extract reset credits from usage payload and implement `ConsumeReset(ctx, p, connId, grantId)`.
   - Add endpoint `POST /api/v1/upstream-quotas/{id}/connections/{connId}/reset` in `internal/handler/upstream_quota.go`.
   - Add handler tests.
 
-- [ ] **Task 5: `/quota` Slash Command Content Parts & Arguments**
+- [x] **Task 5: `/quota` Slash Command Content Parts & Arguments**
   - In `internal/proxy/chat_command.go`, implement `extractMessageText` supporting `[]interface{}` content blocks.
   - Parse slash command arguments: `/quota [key|upstream|<filter>]`.
   - Filter output according to arguments.
   - Add unit tests verifying Pi-style content parts and argument filtering.
 
-- [ ] **Task 6: Web UI Revisions**
+- [x] **Task 6: Web UI Revisions**
   - In `web/static/js/views/upstream_quotas.js`:
     - Add 30s cooldown timer badge on "Refresh" button.
     - Render `[🔄 N Reset]` button on connection cards with confirmation dialog.
@@ -62,7 +62,7 @@
     - Apply 2-column grid layout on desktop (`max-width: 820px`).
   - Update frontend tests in `web/jstest/`.
 
-- [ ] **Task 7: Verification & End-to-End Testing**
+- [x] **Task 7: Verification & End-to-End Testing**
   - Run `CGO_ENABLED=0 go test ./...`.
   - Run `node --test web/jstest/*.mjs`.
   - Push branch and trigger Docker build.

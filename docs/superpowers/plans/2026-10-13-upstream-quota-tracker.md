@@ -18,43 +18,43 @@
 
 ## Plan Structure
 
-- [ ] **Task 1: Schema Migrations & Provider Data Model**
+- [x] **Task 1: Schema Migrations & Provider Data Model**
   - Update SQLite schema in `internal/db/db.go`.
   - Extend `Provider` struct and CRUD methods in `internal/providers/providers.go`.
   - Add unit tests for migrations and provider CRUD.
 
-- [ ] **Task 2: Upstream Quota Client Engine**
+- [x] **Task 2: Upstream Quota Client Engine**
   - Create package `internal/upstream/client.go` and `internal/upstream/types.go`.
   - Implement 9router client adapter (connection discovery, usage fetch, auto-login session cookie).
   - Implement cascaded NineGuard client adapter (`GET /v1/quota`).
   - Implement 60s in-memory TTL caching with force-refresh bypass.
   - Add unit tests with mock HTTP upstreams.
 
-- [ ] **Task 3: Merged Account Pool & Privacy Scoping**
+- [x] **Task 3: Merged Account Pool & Privacy Scoping**
   - Implement `MergeAccountPools` in `internal/upstream/pool.go`.
   - Implement model-group access filtering for client API keys.
   - Implement privacy sanitizer (scrub emails, connection IDs, and account counts).
   - Add unit tests for summing math, earliest reset calculation, and privacy scrubbing.
 
-- [ ] **Task 4: REST API Endpoints & Admin Handlers**
+- [x] **Task 4: REST API Endpoints & Admin Handlers**
   - Add Admin API `GET /api/v1/upstream-quotas` in `internal/handler/handler.go`.
   - Add Client API `GET /v1/quota` with key authentication.
   - Update Provider create/update handlers to accept `quota_type` and `quota_auth_secret`.
   - Add handler tests in `internal/handler/`.
 
-- [ ] **Task 5: Chat Command Interceptor in Proxy**
+- [x] **Task 5: Chat Command Interceptor in Proxy**
   - Implement slash prompt detector in `internal/proxy/proxy.go` for `/quota`, `/limits`, `/usage`.
   - Implement synthetic OpenAI response generator (JSON and SSE chunks).
   - Add setting check for `chat_commands_enabled`.
   - Add proxy unit tests verifying zero token consumption and response formatting.
 
-- [ ] **Task 6: Web UI Integration**
+- [x] **Task 6: Web UI Integration**
   - Add "Upstream Quotas" sub-tab to `web/static/js/views/quotas.js`.
   - Implement provider cards, progress bars, reset timers, and manual refresh buttons.
   - Add Quota Protocol selector and Auth Secret field to Provider modal in `web/static/js/views/providers.js`.
   - Add frontend unit tests in `web/jstest/`.
 
-- [ ] **Task 7: End-to-End Verification & Sanity Check**
+- [x] **Task 7: End-to-End Verification & Sanity Check**
   - Run full test suite: `CGO_ENABLED=0 go test ./...`.
   - Run frontend test suite: `node --test web/jstest/*.mjs`.
   - Test live integration via `curl` against local mock instances.

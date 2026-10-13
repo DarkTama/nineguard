@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -138,10 +139,10 @@ func (a *Router9Adapter) fetchConnections(ctx context.Context, p providers.Provi
 }
 
 type router9UsageQuotaItem struct {
-	Used                *int64   `json:"used"`
-	Total               *int64   `json:"total"`
-	Remaining           *int64   `json:"remaining"`
-	RemainingPercentage *int     `json:"remainingPercentage"`
+	Used                *float64 `json:"used"`
+	Total               *float64 `json:"total"`
+	Remaining           *float64 `json:"remaining"`
+	RemainingPercentage *float64 `json:"remainingPercentage"`
 	ResetAt             *string  `json:"resetAt"`
 	ResetTime           *string  `json:"resetTime"`
 	DisplayName         string   `json:"displayName"`
@@ -213,13 +214,13 @@ func (a *Router9Adapter) fetchConnectionQuota(ctx context.Context, p providers.P
 		}
 
 		if item.Used != nil {
-			bucket.Used = *item.Used
+			bucket.Used = int64(math.Round(*item.Used))
 		}
 		if item.Total != nil {
-			bucket.Total = *item.Total
+			bucket.Total = int64(math.Round(*item.Total))
 		}
 		if item.Remaining != nil {
-			bucket.Remaining = *item.Remaining
+			bucket.Remaining = int64(math.Round(*item.Remaining))
 		} else if bucket.Total > 0 {
 			bucket.Remaining = bucket.Total - bucket.Used
 			if bucket.Remaining < 0 {
@@ -228,9 +229,15 @@ func (a *Router9Adapter) fetchConnectionQuota(ctx context.Context, p providers.P
 		}
 
 		if item.RemainingPercentage != nil {
-			bucket.RemainingPercentage = *item.RemainingPercentage
+			pct := int(math.Round(*item.RemainingPercentage))
+			if pct < 0 {
+				pct = 0
+			} else if pct > 100 {
+				pct = 100
+			}
+			bucket.RemainingPercentage = pct
 		} else if bucket.Total > 0 {
-			pct := int((float64(bucket.Remaining) / float64(bucket.Total)) * 100)
+			pct := int(math.Round((float64(bucket.Remaining) / float64(bucket.Total)) * 100))
 			if pct < 0 {
 				pct = 0
 			} else if pct > 100 {

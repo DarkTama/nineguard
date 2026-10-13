@@ -76,6 +76,13 @@ func TestRouter9Adapter_SuccessAndAuth(t *testing.T) {
 						"remaining": 200,
 						"remainingPercentage": 20,
 						"displayName": "Weekly Limit"
+					},
+					"gemini-3.1-flash-image": {
+						"used": 12.2,
+						"total": 100,
+						"remaining": 87.8,
+						"remainingPercentage": 87.79839,
+						"displayName": "Gemini 3.1 Flash Image"
 					}
 				}
 			}`))
@@ -110,8 +117,8 @@ func TestRouter9Adapter_SuccessAndAuth(t *testing.T) {
 	if conn.ConnectionID != "c1" || conn.AccountLabel != "Claude Pro" {
 		t.Fatalf("unexpected connection: %+v", conn)
 	}
-	if len(conn.Buckets) != 2 {
-		t.Fatalf("expected 2 buckets, got %d", len(conn.Buckets))
+	if len(conn.Buckets) != 3 {
+		t.Fatalf("expected 3 buckets, got %d", len(conn.Buckets))
 	}
 
 	// Verify warning flag on 20% bucket

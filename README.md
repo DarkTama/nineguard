@@ -100,8 +100,10 @@ NineGuard bertindak sebagai gateway tunggal antara AI Coding Agents dan Upstream
 | **Per-Key Model Access Control** | Atur hak akses model per API key (akses global `*`, Model Groups dinamis, atau custom whitelist). |
 | **Model Groups** | Kelompokkan model ke grup reusable (e.g. GPT Ecosystem, Claude) dengan sinkronisasi dinamis ke API key. |
 | **Model Firewall** | Aktifkan/nonaktifkan model secara instan dengan HTTP 403 Forbidden. |
-| **Token Quotas & Rate Limiting** | Batasi anggaran token per API key (harian, mingguan, bulanan, lifetime) dengan soft post-facto gating, respons standar HTTP 429, header `Retry-After`, dan notifikasi waktu reset (WIB & UTC). |
-| **Token Burn Velocity & Presets** | Pantau laju konsumsi historis (24 jam, rata-rata 7 hari, 30 hari) per key untuk membantu penentuan batas kuota dengan tombol preset instan (1.5x / 2x daily avg). |
+| **Key Quotas & Rate Limiting** | Batasi anggaran token per API key (harian, mingguan, bulanan, lifetime) dengan soft post-facto gating, respons standar HTTP 429, header `Retry-After` (kecuali kuota lifetime yang tidak pernah reset), dan notifikasi waktu reset (WIB & UTC). |
+| **Model Quotas (Per Model)** | Alternatif Key Quota: tiap API key bisa punya batas token terpisah untuk model tertentu (misalnya `openai/gpt-4o` 50k/hari, `anthropic/claude-sonnet` 1M/bulan). Satu key memakai salah satu mode (Key Quota atau Per Model), tidak keduanya, dan pengaturan mode yang tidak aktif tetap tersimpan. Model tanpa batas tetap berjalan. Saat batas tercapai, respons HTTP 429 `model_quota_exceeded` hanya untuk model tersebut. |
+| **Halaman Quotas & Peringatan** | Halaman **Quotas** menampilkan pemakaian semua key dan model (difilter berdasarkan mode/status), kartu "Quotas near limit" di Dashboard, dan kolom Quota di tabel keys. Ambang peringatan diatur lewat `quota_warn_percent` (default 80%). |
+| **Token Burn Velocity & Presets** | Pantau laju konsumsi historis (24 jam, rata-rata 7 hari, 30 hari) per key untuk membantu penentuan batas kuota dengan tombol preset instan (1.5x / 2x rata-rata) yang mengikuti periode reset yang dipilih (daily, weekly, atau monthly). Tersedia untuk Key Quota dan tiap baris Model Quota. |
 | **Plugin Pipeline & Token Savers** | Hemat token dan modifikasi request otomatis via built-in plugins (Headroom, Ponytail, Caveman) atau layanan HTTP eksternal dengan urutan pipeline global dan hierarki override (Global $\rightarrow$ Model Group $\rightarrow$ API Key). |
 | **Secret Leak Guardrail (SecretGuard)** | Cegah kebocoran API token (`sk-`, `ghp-`, `AKIA`), private key, dan environment credential ke LLM upstream dengan inspeksi regex (pilihan mode Block HTTP 403, Redact in-flight, atau Audit mode). |
 | **Traffic Spike Alerts** | Tandai request raksasa yang melewati ambang batas (`heavy_token_threshold`) dengan badge peringatan ⚠️ di Traffic Explorer dan log audit tanpa memutus request. |
@@ -462,12 +464,15 @@ curl -b cookies.txt -X PUT http://localhost:8080/api/v1/model-groups/ID_GRUP \
 * `POST /api/v1/providers/{id}/default` — Menjadikan provider sebagai fallback default.
 * `DELETE /api/v1/providers/{id}` — Menghapus provider (otomatis menghapus model terkait di NineGuard).
 * `POST /api/v1/providers/test` — Menguji koneksi probe ke provider upstream.
-* `GET /api/v1/keys` — Daftar NineGuard API key yang aktif beserta allowed models dan kuota.
+* `GET /api/v1/keys` — Daftar NineGuard API key yang aktif beserta allowed models, kuota, dan ringkasan Model Quota.
+* `GET /api/v1/keys/{id}` — Detail satu key, termasuk seluruh baris Model Quota (`quota_mode`, `model_quotas`).
 * `POST /api/v1/keys` — Menerbitkan NineGuard API key baru dengan konfigurasi allowed models dan batas kuota.
-* `PUT /api/v1/keys/{id}` — Mengubah nama, daftar model yang diizinkan, dan kuota untuk key tertentu.
+* `PUT /api/v1/keys/{id}` — Mengubah nama, daftar model yang diizinkan, Key Quota, mode kuota (`quota_mode`: `key` atau `model`), dan baris Model Quota (`model_quotas`) dalam satu transaksi.
 * `POST /api/v1/keys/{id}/toggle` — Mengaktifkan / menonaktifkan key.
 * `DELETE /api/v1/keys/{id}` — Mencabut / menghapus key.
 * `GET /api/v1/keys/{id}/velocity` — Mengambil metrik laju konsumsi token historis per key (24 jam, rata-rata 7 hari, 30 hari).
+* `GET /api/v1/keys/{id}/model-velocity?model=<id>` — Metrik laju konsumsi yang sama untuk satu model pada key tersebut (perkiraan).
+* `GET /api/v1/quotas` — Ringkasan pemakaian Key Quota dan Model Quota semua key beserta statusnya (`ok`, `near`, `exhausted`, `unlimited`).
 * `GET /api/v1/models` — Daftar model terdaftar dan status firewall.
 * `POST /api/v1/models/toggle` — Mengubah status aktif/blokir model.
 * `POST /api/v1/models/sync` — Mengambil model terbaru dari semua provider aktif.
@@ -484,7 +489,7 @@ curl -b cookies.txt -X PUT http://localhost:8080/api/v1/model-groups/ID_GRUP \
 * `GET /api/v1/traffic/export` — Ekspor log traffic ke CSV/JSON.
 * `GET /api/v1/traffic/{id}/payload` — Mengambil body payload request & response untuk inspeksi dan replay cURL.
 * `GET /api/v1/settings/traffic` — Mengambil pengaturan threshold lonjakan token dan status perekaman payload.
-* `POST /api/v1/settings/traffic` — Memperbarui threshold lonjakan token (`heavy_token_threshold`) dan mode perekaman payload.
+* `POST /api/v1/settings/traffic` — Memperbarui threshold lonjakan token (`heavy_token_threshold`), mode perekaman payload, dan ambang peringatan kuota (`quota_warn_percent`, 1–100).
 * `GET /api/v1/plugins` — Daftar seluruh plugin terdaftar (built-in & HTTP) beserta urutan pipeline.
 * `POST /api/v1/plugins` — Mendaftarkan plugin HTTP baru.
 * `PUT /api/v1/plugins/{id}` — Memperbarui konfigurasi default plugin.

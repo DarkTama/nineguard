@@ -4,6 +4,7 @@ import { h, icon, emptyState, fmtNum, debounce } from '../ui.js';
 import { patchRoute } from '../state.js';
 import { formatTokensCompact } from '../quotahelpers.js';
 import { barTone, formatResetIn, filterQuotaKeys, quotaFiltersFromParams } from '../modelquotas.js';
+import { renderUpstreamQuotas } from './upstream_quotas.js';
 
 const PERIOD_LABEL = { daily: 'daily', weekly: 'weekly', monthly: 'monthly', total: 'lifetime' };
 const REASON_LABEL = { removed: 'removed', disabled: 'disabled', no_access: 'no access' };
@@ -27,12 +28,54 @@ export function mount(root) {
   statusSel.addEventListener('change', () => patchRoute({ status: statusSel.value === 'all' ? '' : statusSel.value }));
   unlimited.addEventListener('change', () => patchRoute({ unlimited: unlimited.checked ? '1' : '' }));
 
-  root.append(h('div', { class: 'page' },
-    h('div', { class: 'page-head' }, h('div', null, h('h1', null, 'Quotas'), h('p', null, 'Token limits per API key and per model. Windows reset at UTC boundaries.'))),
+  let activeTab = 'client';
+  const clientTabBtn = h('button', {
+    class: 'btn btn-sm btn-primary',
+    type: 'button',
+    onclick: () => switchTab('client')
+  }, 'Client Quotas');
+  const upstreamTabBtn = h('button', {
+    class: 'btn btn-sm',
+    type: 'button',
+    onclick: () => switchTab('upstream')
+  }, 'Upstream Quotas');
+  const tabSwitcher = h('div', { class: 'btn-group mb', style: { display: 'inline-flex' } }, clientTabBtn, upstreamTabBtn);
+
+  const clientContainer = h('div', null,
     cards,
     h('div', { class: 'toolbar mt', style: { borderBottom: '0', paddingLeft: 0 } }, search, modeSel, statusSel,
       h('label', { class: 'muted', style: { display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12px' } }, unlimited, 'Show unlimited')),
-    body));
+    body
+  );
+  const upstreamContainer = h('div', { style: { display: 'none' } });
+
+  function switchTab(tab) {
+    activeTab = tab;
+    if (tab === 'upstream') {
+      clientTabBtn.className = 'btn btn-sm';
+      upstreamTabBtn.className = 'btn btn-sm btn-primary';
+      clientContainer.style.display = 'none';
+      upstreamContainer.style.display = 'block';
+      renderUpstreamQuotas(upstreamContainer);
+    } else {
+      clientTabBtn.className = 'btn btn-sm btn-primary';
+      upstreamTabBtn.className = 'btn btn-sm';
+      clientContainer.style.display = 'block';
+      upstreamContainer.style.display = 'none';
+    }
+  }
+
+  root.append(h('div', { class: 'page' },
+    h('div', { class: 'page-head' },
+      h('div', null,
+        h('h1', null, 'Quotas & Limits'),
+        h('p', null, 'Token limits per client key/model and live rolling capacity from upstream providers.')
+      ),
+      h('div', { class: 'page-actions' }, tabSwitcher)
+    ),
+    clientContainer,
+    upstreamContainer
+  ));
 
   function card(label, value, tone) {
     return h('div', { class: 'card' }, h('small', { class: 'muted' }, label),

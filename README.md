@@ -33,6 +33,10 @@ Dalam ekosistem AI engineering, tim dan developer sering menggunakan berbagai mo
 * **Audit & Pelacakan Token Akurat** — Mencatat request, nama key client, nama model, prompt tokens, completion tokens, latency, dan IP client secara detail ke SQLite.
 * **Streaming Transparan Tanpa Latensi Tambahan** — Response Server-Sent Events (SSE) di-*flush* secara instan ke client.
 * **Single Binary Murni Tanpa Ketergantungan** — Dibangun dengan Go murni (`CGO_ENABLED=0`) dan frontend Vanilla JS yang di-embed langsung ke binary.
+* **Pemantauan Kuota Upstream & Cascaded Gateway (v1.4.0)** — Melacak kapasitas dan rolling limits provider upstream (misal rolling window 5 jam & mingguan di 9router, saldo kredit) serta gateway NineGuard bertingkat (*Office -> VM -> Local*) secara instan.
+* **Perintah Chat Langsung (`/quota`, `/limits`, `/usage`)** — Cek sisa kuota personal dan kapasitas upstream langsung dari jendela percakapan Cursor/Cline/Pi/IDE tanpa membuka browser, menghabiskan 0 token upstream.
+* **Secret Vault (Enkripsi AES-256-GCM di Database)** — Seluruh API key dan password upstream dienkripsi otomatis saat disimpan di SQLite menggunakan cipher AES-256-GCM terotentikasi.
+* **Proteksi Loop Rekursif (*Anti-Recursion Loop Guard*)** — Header `X-NineGuard-Trace` dan penghitung hop otomatis memblokir panggilan melingkar antar-gateway bertingkat (HTTP 508 Loop Detected).
 
 ---
 
@@ -280,6 +284,7 @@ File `.env` otomatis dibaca saat startup (hanya port, auth, dan path database ya
 | `NINEGUARD_AUTH_ENABLED` | `true` | Proteksi login dashboard (`true`/`false`) |
 | `NINEGUARD_DB_FILE` | `./data/nineguard.db` | Lokasi file database SQLite lokal NineGuard |
 | `NINEGUARD_AUTH_FILE` | `./data/auth.json` | Lokasi file fallback autentikasi (opsional) |
+| `NINEGUARD_ENCRYPTION_KEY` | *(Auto-generated)* | Kunci master AES-256 (32 byte / 64 hex) untuk Secret Vault. Jika kosong, NineGuard otomatis membuat dan menyimpan kunci di `data/.master.key` (mode 0600). |
 
 *Catatan: Upstream provider dikelola langsung secara dinamis melalui UI Dashboard (menu Providers) dan tersimpan di database lokal, sehingga tidak perlu mengatur target upstream di `.env`.*
 
@@ -452,11 +457,14 @@ curl -b cookies.txt -X PUT http://localhost:8080/api/v1/model-groups/ID_GRUP \
 
 ### OpenAI-Compatible Proxy (Memerlukan NineGuard API Key)
 * `GET /v1/models` — Daftar agregat seluruh model dari semua provider aktif.
-* `POST /v1/chat/completions` — Chat completions (mendukung SSE streaming & tracking token).
+* `GET /v1/quota` — Mengambil ringkasan dua-tingkat kuota token key pemanggil dan kapasitas shared pool upstream.
+* `POST /v1/chat/completions` — Chat completions (mendukung SSE streaming & tracking token, serta intersepsi `/quota`, `/limits`, `/usage` instan 0 token).
 * `POST /v1/*` — Proxy transparan untuk endpoint OpenAI standar lainnya.
 
 ### NineGuard Management API (Dashboard & Admin)
 * `GET /healthz` — Health check status probe.
+* `GET /api/v1/upstream-quotas` — Mengambil data telemetri kuota live dari seluruh provider upstream aktif (mendukung `?force=1` dengan cooldown 30 detik).
+* `POST /api/v1/upstream-quotas/{id}/connections/{connId}/reset` — Membelanjakan 1 jatah reset kuota (Claude limit grant / Codex reset credit) pada provider upstream.
 * `GET /api/v1/providers` — Daftar provider upstream yang terdaftar.
 * `POST /api/v1/providers` — Menambahkan provider baru dengan prefix kustom.
 * `PUT /api/v1/providers/{id}` — Memperbarui data provider.

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"nineguard/internal/db"
@@ -76,6 +77,37 @@ func (m *Manager) SetHeavyTokenThreshold(threshold int) error {
 	`, strconv.Itoa(threshold))
 	return err
 }
+
+// IsChatCommandsEnabled checks if slash commands in chat completions are enabled.
+func (m *Manager) IsChatCommandsEnabled() bool {
+	if m == nil || m.db == nil {
+		return true
+	}
+	var val string
+	err := m.db.QueryRow("SELECT value FROM settings WHERE key = 'chat_commands_enabled' LIMIT 1").Scan(&val)
+	if err != nil {
+		return true
+	}
+	return strings.ToLower(strings.TrimSpace(val)) == "true"
+}
+
+// SetChatCommandsEnabled updates the chat commands enabled setting.
+func (m *Manager) SetChatCommandsEnabled(enabled bool) error {
+	if m == nil || m.db == nil {
+		return nil
+	}
+	val := "false"
+	if enabled {
+		val = "true"
+	}
+	_, err := m.db.Exec(`
+		INSERT INTO settings (key, value, updated_at)
+		VALUES ('chat_commands_enabled', ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+	`, val)
+	return err
+}
+
 
 // GetQuotaUsage queries cumulative tokens consumed by apiKeyID within its active quota window.
 func GetQuotaUsage(d *db.DB, apiKeyID string, period string, now time.Time) (int64, time.Time, error) {

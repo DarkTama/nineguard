@@ -16,6 +16,12 @@ type VelocityStats struct {
 
 // GetVelocityStats calculates token consumption over past 24h, 7d daily average, and 30d total.
 func (m *Manager) GetVelocityStats(apiKeyID string, now time.Time) (*VelocityStats, error) {
+	return m.velocity(apiKeyID, "", nil, now)
+}
+
+// velocity is shared by the per-key and per-model variants. extraWhere (starting with " AND")
+// narrows the rows, with extraArgs bound after the base arguments.
+func (m *Manager) velocity(apiKeyID, extraWhere string, extraArgs []any, now time.Time) (*VelocityStats, error) {
 	if m == nil || m.db == nil {
 		return &VelocityStats{}, nil
 	}
@@ -32,12 +38,13 @@ func (m *Manager) GetVelocityStats(apiKeyID string, now time.Time) (*VelocitySta
 			COALESCE(SUM(CASE WHEN timestamp >= ? THEN total_tokens ELSE 0 END), 0) AS tok_30d,
 			MIN(timestamp) AS first_seen
 		FROM traffic_logs
-		WHERE api_key_id = ? AND timestamp >= ?
+		WHERE api_key_id = ? AND timestamp >= ?` + extraWhere + `
 	`
 
 	var tok24h, tok7d, tok30d int64
 	var firstSeen sql.NullString
-	err := m.db.QueryRow(query, t24h, t7d, t30d, apiKeyID, t30d).Scan(&tok24h, &tok7d, &tok30d, &firstSeen)
+	args := append([]any{t24h, t7d, t30d, apiKeyID, t30d}, extraArgs...)
+	err := m.db.QueryRow(query, args...).Scan(&tok24h, &tok7d, &tok30d, &firstSeen)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("query velocity stats: %w", err)
 	}

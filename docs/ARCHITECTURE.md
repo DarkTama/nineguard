@@ -27,6 +27,9 @@ NineGuard dirancang berdasarkan prinsip:
        ├── Cek Validitas NineGuard API Key
        │     └── Jika Invalid / Disabled ──► 401 Unauthorized
        │
+       ├── Cek Key Quota (hanya mode "key", total semua model)
+       │     └── Jika limit tercapai ───────► 429 Too Many Requests
+       │
        ├── Cek Izin Model Per-Key (Allowed Models)
        │     └── Jika Model Tidak Diizinkan ──► 403 Forbidden
        │
@@ -37,6 +40,9 @@ NineGuard dirancang berdasarkan prinsip:
        │     └── "openrouter/anthropic/claude-3.5-sonnet"
        │           ├── Prefix "openrouter" ──► Provider OpenRouter
        │           └── Model "anthropic/claude-3.5-sonnet"
+       │
+       ├── Cek Model Quota (hanya mode "model", pakai Model ID hasil resolve)
+       │     └── Jika limit tercapai ───────► 429 model_quota_exceeded
        │
        ├── Rewrite Request Header:
        │     └── Authorization: Bearer <Master_API_Key_Provider>

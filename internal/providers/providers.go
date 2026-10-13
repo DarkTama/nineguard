@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"nineguard/internal/db"
+	"nineguard/internal/vault"
 )
 
 type Provider struct {
@@ -117,6 +118,8 @@ func (m *Manager) ListProviders() ([]Provider, error) {
 		p.IsActive = (actInt == 1)
 		p.UpstreamTokenSaving = (utsInt == 1)
 		p.QuotaType = normalizeQuotaType(p.QuotaType)
+		p.APIKey, _ = vault.Decrypt(p.APIKey)
+		p.QuotaAuthSecret, _ = vault.Decrypt(p.QuotaAuthSecret)
 		p.HasQuotaAuthSecret = strings.TrimSpace(p.QuotaAuthSecret) != ""
 		p.MaskedKey = maskKey(p.APIKey)
 		list = append(list, p)
@@ -149,6 +152,8 @@ func (m *Manager) getProviderUnlocked(id string) (*Provider, error) {
 	p.IsActive = (actInt == 1)
 	p.UpstreamTokenSaving = (utsInt == 1)
 	p.QuotaType = normalizeQuotaType(p.QuotaType)
+	p.APIKey, _ = vault.Decrypt(p.APIKey)
+	p.QuotaAuthSecret, _ = vault.Decrypt(p.QuotaAuthSecret)
 	p.HasQuotaAuthSecret = strings.TrimSpace(p.QuotaAuthSecret) != ""
 	p.MaskedKey = maskKey(p.APIKey)
 	return &p, nil
@@ -253,10 +258,12 @@ func (m *Manager) CreateProviderWithOptions(opts ProviderOptions) (*Provider, er
 	}
 
 	now := time.Now()
+	encAPIKey, _ := vault.Encrypt(apiKey)
+	encQuotaSecret, _ := vault.Encrypt(quotaSecret)
 	_, err = tx.Exec(`
 		INSERT INTO providers (id, name, route, api_key, prefix, is_default, is_active, upstream_token_saving, upstream_token_saving_note, quota_type, quota_auth_secret, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, id, name, route, apiKey, prefix, defInt, actInt, utsInt, upstreamTokenSavingNote, quotaType, quotaSecret, now, now)
+	`, id, name, route, encAPIKey, prefix, defInt, actInt, utsInt, upstreamTokenSavingNote, quotaType, encQuotaSecret, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -377,10 +384,12 @@ func (m *Manager) UpdateProviderWithOptions(id string, opts ProviderOptions) (*P
 		utsInt = 1
 	}
 
+	encAPIKey, _ := vault.Encrypt(apiKey)
+	encQuotaSecret, _ := vault.Encrypt(quotaSecret)
 	_, err = tx.Exec(`
 		UPDATE providers SET name = ?, route = ?, api_key = ?, prefix = ?, is_default = ?, is_active = ?, upstream_token_saving = ?, upstream_token_saving_note = ?, quota_type = ?, quota_auth_secret = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, name, route, apiKey, prefix, defInt, actInt, utsInt, upstreamTokenSavingNote, quotaType, quotaSecret, id)
+	`, name, route, encAPIKey, prefix, defInt, actInt, utsInt, upstreamTokenSavingNote, quotaType, encQuotaSecret, id)
 	if err != nil {
 		return nil, err
 	}

@@ -20,6 +20,7 @@
 # Database & runtime storage
 data/*
 !data/.gitkeep
+**/.master.key
 
 # Operating System files
 .DS_Store

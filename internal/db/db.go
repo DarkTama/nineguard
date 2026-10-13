@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"nineguard/internal/vault"
 	_ "modernc.org/sqlite"
 )
 
@@ -28,8 +30,14 @@ func InitDB(dbPath string) (*DB, error) {
 	conn.SetConnMaxLifetime(time.Hour)
 
 	database := &DB{conn}
+	if err := vault.Init(filepath.Dir(dbPath)); err != nil {
+		return nil, fmt.Errorf("vault init failed: %w", err)
+	}
 	if err := database.migrate(); err != nil {
 		return nil, fmt.Errorf("database migration failed: %w", err)
+	}
+	if err := database.migrateSecretsToVault(); err != nil {
+		return nil, fmt.Errorf("secret vault migration failed: %w", err)
 	}
 
 	return database, nil
@@ -381,4 +389,81 @@ func (d *DB) seedPlugins() error {
 	}
 	return nil
 }
+
+// migrateSecretsToVault migrates unencrypted credentials in SQLite to AES-256-GCM.
+func (d *DB) migrateSecretsToVault() error {
+	// 1. Providers: api_key and quota_auth_secret
+	rows, err := d.Query("SELECT id, COALESCE(api_key, ''), COALESCE(quota_auth_secret, '') FROM providers")
+	if err == nil {
+		type provSecret struct {
+			id, key, secret string
+		}
+		var list []provSecret
+		for rows.Next() {
+			var ps provSecret
+			if err := rows.Scan(&ps.id, &ps.key, &ps.secret); err == nil {
+				list = append(list, ps)
+			}
+		}
+		rows.Close()
+
+		for _, ps := range list {
+			needsUpdate := false
+			encKey := ps.key
+			if ps.key != "" && !strings.HasPrefix(ps.key, vault.Prefix) {
+				if enc, err := vault.Encrypt(ps.key); err == nil {
+					encKey = enc
+					needsUpdate = true
+				}
+			}
+			encSecret := ps.secret
+			if ps.secret != "" && !strings.HasPrefix(ps.secret, vault.Prefix) {
+				if enc, err := vault.Encrypt(ps.secret); err == nil {
+					encSecret = enc
+					needsUpdate = true
+				}
+			}
+			if needsUpdate {
+				_, _ = d.Exec("UPDATE providers SET api_key = ?, quota_auth_secret = ? WHERE id = ?", encKey, encSecret, ps.id)
+			}
+		}
+	}
+
+	// 2. Settings: router_api_key
+	var routerKey string
+	if err := d.QueryRow("SELECT value FROM settings WHERE key = 'router_api_key'").Scan(&routerKey); err == nil {
+		if routerKey != "" && !strings.HasPrefix(routerKey, vault.Prefix) {
+			if enc, err := vault.Encrypt(routerKey); err == nil {
+				_, _ = d.Exec("UPDATE settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'router_api_key'", enc)
+			}
+		}
+	}
+
+	// 3. Plugins: secret
+	pRows, err := d.Query("SELECT id, COALESCE(secret, '') FROM plugins WHERE secret != ''")
+	if err == nil {
+		type plugSecret struct {
+			id, secret string
+		}
+		var pList []plugSecret
+		for pRows.Next() {
+			var pl plugSecret
+			if err := pRows.Scan(&pl.id, &pl.secret); err == nil {
+				pList = append(pList, pl)
+			}
+		}
+		pRows.Close()
+
+		for _, pl := range pList {
+			if pl.secret != "" && !strings.HasPrefix(pl.secret, vault.Prefix) {
+				if enc, err := vault.Encrypt(pl.secret); err == nil {
+					_, _ = d.Exec("UPDATE plugins SET secret = ? WHERE id = ?", enc, pl.id)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 

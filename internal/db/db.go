@@ -1,6 +1,7 @@
 package db
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"fmt"
 	"os"
@@ -283,6 +284,16 @@ func (d *DB) migrate() error {
 	_, _ = d.Exec("ALTER TABLE providers ADD COLUMN quota_auth_secret TEXT DEFAULT ''")
 	_, _ = d.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('chat_commands_enabled', 'true')")
 
+	// Instance ID for loop detection
+	var instID string
+	_ = d.QueryRow("SELECT value FROM settings WHERE key = 'instance_id'").Scan(&instID)
+	if instID == "" {
+		b := make([]byte, 16)
+		_, _ = rand.Read(b)
+		newInstID := fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+		_, _ = d.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('instance_id', ?)", newInstID)
+	}
+
 	if err := d.seedPlugins(); err != nil {
 		return fmt.Errorf("seed plugins: %w", err)
 	}
@@ -388,6 +399,13 @@ func (d *DB) seedPlugins() error {
 		}
 	}
 	return nil
+}
+
+// GetInstanceID returns the unique instance UUID for loop detection.
+func (d *DB) GetInstanceID() string {
+	var id string
+	_ = d.QueryRow("SELECT value FROM settings WHERE key = 'instance_id'").Scan(&id)
+	return id
 }
 
 // migrateSecretsToVault migrates unencrypted credentials in SQLite to AES-256-GCM.

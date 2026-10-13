@@ -14,7 +14,8 @@ import (
 
 // NineGuardAdapter communicates with a cascaded NineGuard instance.
 type NineGuardAdapter struct {
-	client *http.Client
+	client     *http.Client
+	instanceID string
 }
 
 func NewNineGuardAdapter() *NineGuardAdapter {
@@ -23,6 +24,10 @@ func NewNineGuardAdapter() *NineGuardAdapter {
 			Timeout: 10 * time.Second,
 		},
 	}
+}
+
+func (a *NineGuardAdapter) SetInstanceID(id string) {
+	a.instanceID = id
 }
 
 // FetchQuotas calls GET /v1/quota on the upstream NineGuard instance.
@@ -55,6 +60,10 @@ func (a *NineGuardAdapter) FetchQuotas(ctx context.Context, p providers.Provider
 	req.Header.Set("Accept", "application/json")
 	if strings.TrimSpace(p.APIKey) != "" {
 		req.Header.Set("Authorization", "Bearer "+p.APIKey)
+	}
+	if a.instanceID != "" {
+		req.Header.Set("X-NineGuard-Trace", a.instanceID)
+		req.Header.Set("X-NineGuard-Hop", "1")
 	}
 
 	resp, err := a.client.Do(req)

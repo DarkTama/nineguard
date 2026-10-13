@@ -18,8 +18,9 @@ type cachedQuota struct {
 
 // Manager orchestrates quota fetches across various upstream provider protocols.
 type Manager struct {
-	router9   *Router9Adapter
-	nineguard *NineGuardAdapter
+	router9    *Router9Adapter
+	nineguard  *NineGuardAdapter
+	instanceID string
 
 	cacheMu sync.RWMutex
 	cache   map[string]cachedQuota // providerID -> cachedQuota
@@ -32,6 +33,14 @@ func NewManager() *Manager {
 		nineguard: NewNineGuardAdapter(),
 		cache:     make(map[string]cachedQuota),
 		ttl:       DefaultCacheTTL,
+	}
+}
+
+// SetInstanceID configures instance UUID for loop protection.
+func (m *Manager) SetInstanceID(id string) {
+	m.instanceID = id
+	if m.nineguard != nil {
+		m.nineguard.SetInstanceID(id)
 	}
 }
 

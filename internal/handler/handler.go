@@ -41,6 +41,12 @@ func (h *Handler) SetPlugins(plm *plugins.Manager) {
 	h.plugins = plm
 }
 
+func (h *Handler) SetInstanceID(id string) {
+	if h.upstream != nil {
+		h.upstream.SetInstanceID(id)
+	}
+}
+
 func New(am *auth.Manager, mm *models.Manager, tm *traffic.Manager, sm *syslog.Manager, km *keys.Manager, pm *providers.Manager, pr *proxy.Proxy, target string) *Handler {
 	return &Handler{
 		auth:         am,

@@ -30,7 +30,12 @@ type Proxy struct {
 	providers  *providers.Manager
 	plugins    *plugins.Manager
 	upstream   *upstream.Manager
+	instanceID string
 	httpClient *http.Client
+}
+
+func (p *Proxy) SetInstanceID(id string) {
+	p.instanceID = id
 }
 
 func (p *Proxy) SetUpstreamManager(um *upstream.Manager) {
@@ -109,6 +114,25 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	clientIP := r.RemoteAddr
 	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
 		clientIP = strings.Split(forwarded, ",")[0]
+	}
+
+	// 0. Loop Protection (Recursion Guard)
+	traceHeader := r.Header.Get("X-NineGuard-Trace")
+	hopHeader := r.Header.Get("X-NineGuard-Hop")
+	hopCount := 0
+	if hopHeader != "" {
+		if h, err := strconv.Atoi(hopHeader); err == nil {
+			hopCount = h
+		}
+	}
+
+	if (p.instanceID != "" && traceHeader != "" && strings.Contains(traceHeader, p.instanceID)) || hopCount >= 3 {
+		slog.Error("loop detected: recursive request aborted", "instance_id", p.instanceID, "trace", traceHeader, "hop", hopCount)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(508) // 508 Loop Detected
+		errJSON := `{"error":{"message":"Loop detected: request was routed recursively back to the same NineGuard instance or exceeded maximum hop count (3).","type":"routing_error","code":"loop_detected"}}`
+		_, _ = w.Write([]byte(errJSON))
+		return
 	}
 
 	// 1. Strict Gatekeeper: Validate Client NineGuard API Key
@@ -495,6 +519,20 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		outReq.Header.Del("Authorization")
 	}
+
+	// Propagate recursion trace headers
+	newTrace := p.instanceID
+	if traceHeader != "" {
+		if p.instanceID != "" {
+			newTrace = traceHeader + "," + p.instanceID
+		} else {
+			newTrace = traceHeader
+		}
+	}
+	if newTrace != "" {
+		outReq.Header.Set("X-NineGuard-Trace", newTrace)
+	}
+	outReq.Header.Set("X-NineGuard-Hop", strconv.Itoa(hopCount+1))
 
 	client := p.httpClient
 	if client == nil {

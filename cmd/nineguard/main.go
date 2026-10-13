@@ -141,6 +141,9 @@ func main() {
 	// 4. Handlers
 	h := handler.New(authMgr, modelsMgr, trafficMgr, syslogMgr, keysMgr, providersMgr, revProxy, routerTarget)
 	h.SetPlugins(pluginsMgr)
+	instanceID := database.GetInstanceID()
+	revProxy.SetInstanceID(instanceID)
+	h.SetInstanceID(instanceID)
 	// Key allow lists skip Removed Models, so refresh them after each sync (ADR 0006).
 	modelsMgr.SetOnSynced(keysMgr.ReloadGroupCache)
 

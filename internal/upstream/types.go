@@ -77,4 +77,5 @@ type UnifiedQuotaResponse struct {
 	KeyQuota      *ClientKeyBudget    `json:"key_quota,omitempty"`
 	ModelQuotas   []ModelQuotaSummary `json:"model_quotas,omitempty"`
 	UpstreamPools []MergedPoolQuota   `json:"upstream_pools"`
+	LastUpdated   *time.Time          `json:"last_updated,omitempty"`
 }

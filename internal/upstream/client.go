@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	DefaultCacheTTL      = 60 * time.Second
+	DefaultCacheTTL      = 10 * time.Minute
 	DefaultForceCooldown = 30 * time.Second
 )
 
@@ -70,6 +70,17 @@ func (m *Manager) InvalidateCache(providerID string) {
 	m.cacheMu.Lock()
 	defer m.cacheMu.Unlock()
 	delete(m.cache, providerID)
+}
+
+// GetCachedQuota returns the latest cached quota for a provider without making any network calls.
+func (m *Manager) GetCachedQuota(p providers.Provider) *ProviderQuotaResult {
+	m.cacheMu.RLock()
+	cached, ok := m.cache[p.ID]
+	m.cacheMu.RUnlock()
+	if ok && cached.result != nil {
+		return cached.result
+	}
+	return nil
 }
 
 // GetProviderQuotas retrieves quotas for a provider, using cache unless force=true or expired.

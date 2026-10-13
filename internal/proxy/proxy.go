@@ -822,7 +822,7 @@ func (p *Proxy) buildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.Key
 		}
 	}
 
-	// 2. Upstream provider pools
+	// 2. Upstream provider pools (served instantly from warm memory cache)
 	if p.providers != nil {
 		provList, err := p.providers.ListProviders()
 		if err == nil {
@@ -831,11 +831,27 @@ func (p *Proxy) buildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.Key
 					continue
 				}
 
-				res, fetchErr := p.upstream.GetProviderQuotas(ctx, prov, force)
-				if fetchErr == nil && res != nil && len(res.Connections) > 0 {
+				var res *upstream.ProviderQuotaResult
+				if force {
+					res, _ = p.upstream.GetProviderQuotas(ctx, prov, true)
+				} else {
+					res = p.upstream.GetCachedQuota(prov)
+					if res == nil {
+						// Cold start fallback: fetch with 3s timeout so request never hangs
+						fetchCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+						res, _ = p.upstream.GetProviderQuotas(fetchCtx, prov, false)
+						cancel()
+					}
+				}
+
+				if res != nil && len(res.Connections) > 0 {
 					merged := upstream.MergeAccountPools(prov.Name, res.Connections)
 					if merged != nil {
 						resp.UpstreamPools = append(resp.UpstreamPools, *merged)
+					}
+					if resp.LastUpdated == nil || res.LastUpdated.After(*resp.LastUpdated) {
+						tCopy := res.LastUpdated
+						resp.LastUpdated = &tCopy
 					}
 				}
 			}

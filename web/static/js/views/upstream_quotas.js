@@ -10,6 +10,15 @@ export function upstreamBarTone(pct) {
   return 'danger';
 }
 
+function timeAgo(dateStr) {
+  if (!dateStr) return '';
+  const diffSec = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (diffSec < 60) return 'just now';
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+  return `${Math.floor(diffSec / 86400)}d ago`;
+}
+
 export function renderUpstreamQuotas(container) {
   let alive = true;
   let loading = false;
@@ -205,13 +214,18 @@ export function renderUpstreamQuotas(container) {
         ? 'NineGuard Cascaded'
         : 'Direct LLM (No Tracker)';
 
+      const lastUpdatedLabel = p.last_updated
+        ? h('span', { class: 'muted', style: { fontSize: '11.5px', marginLeft: '6px' } }, `Synced ${timeAgo(p.last_updated)}`)
+        : null;
+
       return h('div', { class: 'card', style: { marginBottom: '16px' } },
         h('div', { class: 'card-head', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
             icon('server'),
             h('h2', { style: { margin: 0, fontSize: '15px' } }, p.provider_name),
             h('span', { class: 'badge', style: { background: 'var(--hover)' } }, protocolLabel),
-            h('span', { class: `badge ${p.status === 'ok' ? 'ok' : p.status === 'degraded' ? 'warn' : 'muted'}` }, p.status)
+            h('span', { class: `badge ${p.status === 'ok' ? 'ok' : p.status === 'degraded' ? 'warn' : 'muted'}` }, p.status),
+            lastUpdatedLabel
           ),
           refreshBtn
         ),

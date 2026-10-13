@@ -160,6 +160,19 @@ func main() {
 		}
 	}()
 
+	// Background Auto-Sync: periodically warm and refresh upstream quotas in memory
+	go func() {
+		time.Sleep(2 * time.Second)
+		if n := h.SyncAllUpstreamQuotas(context.Background(), false); n > 0 {
+			slog.Info("warmed upstream quota cache in background", "providers", n)
+		}
+
+		ticker := time.NewTicker(5 * time.Minute)
+		for range ticker.C {
+			h.SyncAllUpstreamQuotas(context.Background(), true)
+		}
+	}()
+
 	mux := http.NewServeMux()
 
 	// Public Health Probe

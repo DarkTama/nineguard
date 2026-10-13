@@ -133,6 +133,40 @@ func (h *Handler) SetUpstreamManager(um *upstream.Manager) {
 	h.upstream = um
 }
 
+// SyncAllUpstreamQuotas refreshes quotas for all active providers in parallel (used by background worker).
+func (h *Handler) SyncAllUpstreamQuotas(ctx context.Context, force bool) int {
+	if h.providers == nil || h.upstream == nil {
+		return 0
+	}
+	provList, err := h.providers.ListProviders()
+	if err != nil {
+		return 0
+	}
+
+	var wg sync.WaitGroup
+	syncedCount := 0
+	var mu sync.Mutex
+
+	for _, p := range provList {
+		if !p.IsActive || p.QuotaType == "disabled" || p.QuotaType == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(provCopy providers.Provider) {
+			defer wg.Done()
+			res, fetchErr := h.upstream.GetProviderQuotas(ctx, provCopy, force)
+			if fetchErr == nil && res != nil && res.Status == "ok" {
+				mu.Lock()
+				syncedCount++
+				mu.Unlock()
+			}
+		}(p)
+	}
+
+	wg.Wait()
+	return syncedCount
+}
+
 // ConsumeUpstreamReset triggers spending an upstream reset grant/credit on 9router.
 func (h *Handler) ConsumeUpstreamReset(w http.ResponseWriter, r *http.Request) {
 	if h.providers == nil {

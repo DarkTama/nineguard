@@ -54,6 +54,20 @@ func IsChatCommand(messages []chatMessage) (command string, arg string, isCmd bo
 	return "", "", false
 }
 
+func formatTimeAgo(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return "just now"
+	}
+	diff := time.Since(*t)
+	if diff < 1*time.Minute {
+		return "just now"
+	}
+	if diff < 1*time.Hour {
+		return fmt.Sprintf("%dm ago", int(diff.Minutes()))
+	}
+	return fmt.Sprintf("%dh ago", int(diff.Hours()))
+}
+
 func formatResetIn(t *time.Time) string {
 	if t == nil {
 		return "-"
@@ -201,6 +215,10 @@ func FormatQuotaMarkdown(resp *upstream.UnifiedQuotaResponse, arg string) string
 				formatResetIn(b.ResetAt),
 			))
 		}
+	}
+
+	if resp.LastUpdated != nil && !resp.LastUpdated.IsZero() {
+		sb.WriteString(fmt.Sprintf("\n*Upstream pools last checked %s · Auto-refreshes every 5m*\n", formatTimeAgo(resp.LastUpdated)))
 	}
 
 	return sb.String()

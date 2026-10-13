@@ -96,7 +96,8 @@ func FormatQuotaMarkdown(resp *upstream.UnifiedQuotaResponse, arg string) string
 			if kq.Warning {
 				warnIcon = "⚠️ "
 			}
-			sb.WriteString(fmt.Sprintf("**API Key Budget:** %s%s / %s tokens remaining (%s",
+			sb.WriteString("### 👤 Key Allowance (Admin Limit)\n\n")
+			sb.WriteString(fmt.Sprintf("**Token Budget:** %s%s / %s tokens remaining (%s",
 				warnIcon,
 				formatTokenCount(kq.Remaining),
 				formatTokenCount(kq.Limit),
@@ -107,7 +108,7 @@ func FormatQuotaMarkdown(resp *upstream.UnifiedQuotaResponse, arg string) string
 			}
 			sb.WriteString(")\n\n")
 		} else if len(resp.ModelQuotas) > 0 {
-			sb.WriteString("**API Key Model Quotas:**\n\n")
+			sb.WriteString("### 👤 Key Allowance (Admin Model Limits)\n\n")
 			sb.WriteString("| Model | Limit | Used | Remaining | Period | Reset |\n")
 			sb.WriteString("|---|---|---|---|---|---|\n")
 			for _, mq := range resp.ModelQuotas {
@@ -163,7 +164,7 @@ func FormatQuotaMarkdown(resp *upstream.UnifiedQuotaResponse, arg string) string
 		return sb.String()
 	}
 
-	sb.WriteString("### Upstream Model Pools\n\n")
+	sb.WriteString("### 🌐 Upstream Provider Capacity (Shared Pool)\n\n")
 	sb.WriteString("| Provider / Family | Window | Used / Total | Remaining | Next Reset |\n")
 	sb.WriteString("|---|---|---|---|---|\n")
 

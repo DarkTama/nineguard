@@ -94,7 +94,7 @@ func (a *NineGuardAdapter) FetchQuotas(ctx context.Context, p providers.Provider
 		return res, nil
 	}
 
-	// 1. If upstream returns personal KeyQuota, synthesize an account connection for it
+	// 1. If upstream returns personal KeyQuota or ModelQuotas, synthesize an allowance connection
 	if upstreamData.KeyQuota != nil {
 		kq := upstreamData.KeyQuota
 		var pct int
@@ -104,7 +104,8 @@ func (a *NineGuardAdapter) FetchQuotas(ctx context.Context, p providers.Provider
 		res.Connections = append(res.Connections, ConnectionQuota{
 			ConnectionID: "company_key_allowance",
 			Provider:     "nineguard",
-			AccountLabel: "Company Key Budget",
+			AccountLabel: "Key Allowance (Admin Limit)",
+			Plan:         "Client Key Budget",
 			Status:       "ok",
 			LastUpdated:  time.Now(),
 			Buckets: []QuotaBucket{
@@ -119,17 +120,48 @@ func (a *NineGuardAdapter) FetchQuotas(ctx context.Context, p providers.Provider
 				},
 			},
 		})
+	} else if len(upstreamData.ModelQuotas) > 0 {
+		var buckets []QuotaBucket
+		for _, mq := range upstreamData.ModelQuotas {
+			var pct int
+			if mq.Limit > 0 {
+				pct = int((float64(mq.Remaining) / float64(mq.Limit)) * 100)
+			}
+			buckets = append(buckets, QuotaBucket{
+				Name:                fmt.Sprintf("%s (%s)", mq.ModelID, mq.Period),
+				Used:                mq.Used,
+				Total:               mq.Limit,
+				Remaining:           mq.Remaining,
+				RemainingPercentage: pct,
+				ResetAt:             mq.ResetAt,
+				Warning:             mq.Warning,
+			})
+		}
+		sortBuckets(buckets)
+		res.Connections = append(res.Connections, ConnectionQuota{
+			ConnectionID: "company_model_allowances",
+			Provider:     "nineguard",
+			AccountLabel: "Key Allowance (Admin Limit)",
+			Plan:         "Per-Model Budgets",
+			Status:       "ok",
+			LastUpdated:  time.Now(),
+			Buckets:      buckets,
+		})
 	}
 
 	// 2. Include all upstream pools as connections
 	for _, pool := range upstreamData.UpstreamPools {
+		buckets := make([]QuotaBucket, len(pool.Buckets))
+		copy(buckets, pool.Buckets)
+		sortBuckets(buckets)
 		res.Connections = append(res.Connections, ConnectionQuota{
 			ConnectionID: pool.Family,
 			Provider:     pool.Provider,
 			AccountLabel: pool.Family,
+			Plan:         "Shared Upstream Pool",
 			Status:       pool.Status,
 			LastUpdated:  time.Now(),
-			Buckets:      pool.Buckets,
+			Buckets:      buckets,
 		})
 	}
 

@@ -121,6 +121,51 @@ func MergeAccountPools(providerName string, connections []ConnectionQuota) *Merg
 	return merged
 }
 
+func isBucketAllowed(name string, allowedModels []string) bool {
+	nLower := strings.ToLower(name)
+	if strings.Contains(nLower, "credit") || strings.Contains(nLower, "balance") {
+		return true
+	}
+
+	// Specific variant checks: if bucket names a specific variant, user must have access to it
+	specificVariants := []string{"opus", "sonnet", "haiku", "gpt-oss", "oss", "image"}
+	for _, v := range specificVariants {
+		if strings.Contains(nLower, v) {
+			hasVariant := false
+			for _, am := range allowedModels {
+				if strings.Contains(strings.ToLower(am), v) {
+					hasVariant = true
+					break
+				}
+			}
+			if !hasVariant {
+				return false
+			}
+		}
+	}
+
+	// Family matching: gemini, claude, gpt, deepseek, etc.
+	families := []string{"gemini", "claude", "gpt", "deepseek", "qwen", "mistral", "llama", "codex", "copilot", "kiro"}
+	hasAnyFamilyInBucket := false
+	for _, fam := range families {
+		if strings.Contains(nLower, fam) {
+			hasAnyFamilyInBucket = true
+			for _, am := range allowedModels {
+				if strings.Contains(strings.ToLower(am), fam) {
+					return true
+				}
+			}
+		}
+	}
+
+	if hasAnyFamilyInBucket {
+		return false
+	}
+
+	// Unnamed generic windows (e.g. "5h Session") keep if provider is available
+	return true
+}
+
 // FilterPoolsByModelAccess filters merged pools according to the client key's allowed models.
 func FilterPoolsByModelAccess(pools []MergedPoolQuota, allowedModels []string) []MergedPoolQuota {
 	if len(allowedModels) == 0 {
@@ -136,26 +181,40 @@ func FilterPoolsByModelAccess(pools []MergedPoolQuota, allowedModels []string) [
 
 	filtered := make([]MergedPoolQuota, 0, len(pools))
 	for _, pool := range pools {
-		if len(pool.AllowedModels) == 0 {
-			// If pool doesn't declare model restrictions, keep it
-			filtered = append(filtered, pool)
-			continue
-		}
-
-		matches := false
-		for _, pm := range pool.AllowedModels {
-			for _, am := range allowedModels {
-				if strings.EqualFold(pm, am) || strings.HasPrefix(strings.ToLower(am), strings.ToLower(pm)) {
-					matches = true
+		// 1. If pool specifies AllowedModels, check provider/model level
+		if len(pool.AllowedModels) > 0 {
+			matches := false
+			for _, pm := range pool.AllowedModels {
+				for _, am := range allowedModels {
+					if strings.EqualFold(pm, am) || strings.HasPrefix(strings.ToLower(am), strings.ToLower(pm)) {
+						matches = true
+						break
+					}
+				}
+				if matches {
 					break
 				}
 			}
-			if matches {
-				break
+			if !matches {
+				continue
 			}
 		}
 
-		if matches {
+		// 2. Filter individual buckets inside the pool
+		if len(pool.Buckets) > 0 {
+			var allowedBuckets []QuotaBucket
+			for _, b := range pool.Buckets {
+				if isBucketAllowed(b.Name, allowedModels) {
+					allowedBuckets = append(allowedBuckets, b)
+				}
+			}
+
+			if len(allowedBuckets) > 0 {
+				poolCopy := pool
+				poolCopy.Buckets = allowedBuckets
+				filtered = append(filtered, poolCopy)
+			}
+		} else {
 			filtered = append(filtered, pool)
 		}
 	}

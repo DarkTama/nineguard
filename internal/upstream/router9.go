@@ -224,8 +224,32 @@ func (a *Router9Adapter) fetchConnectionQuota(ctx context.Context, p providers.P
 		cq.ResetExpiresAt = data.ResetCredits.ExpiresAt
 	}
 
+	// Detect if summary quotas exist (e.g. Antigravity summary quotas)
+	hasGeminiSummary := false
+	hasClaudeSummary := false
+	for k := range data.Quotas {
+		kLower := strings.ToLower(k)
+		if strings.Contains(kLower, "gemini_session") || strings.Contains(kLower, "gemini_weekly") {
+			hasGeminiSummary = true
+		}
+		if strings.Contains(kLower, "claude_gpt_session") || strings.Contains(kLower, "claude_gpt_weekly") {
+			hasClaudeSummary = true
+		}
+	}
+
 	// Parse buckets
 	for name, item := range data.Quotas {
+		kLower := strings.ToLower(name)
+		isImage := strings.Contains(kLower, "image")
+
+		// Deduplicate redundant Antigravity sub-model mirrors if summary pools exist
+		if hasGeminiSummary && strings.HasPrefix(kLower, "gemini-") && !isImage {
+			continue
+		}
+		if hasClaudeSummary && (strings.HasPrefix(kLower, "claude-") || strings.HasPrefix(kLower, "gpt-oss")) {
+			continue
+		}
+
 		bucket := QuotaBucket{
 			Name: cleanBucketName(name, item.DisplayName),
 		}

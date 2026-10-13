@@ -74,6 +74,7 @@ export function renderUpstreamQuotas(container) {
 
   function renderConnectionCard(conn, provider) {
     const hasError = conn.status === 'error';
+    const isKeyAllowance = (conn.connection_id || '').includes('allowance');
 
     const resetBtn = conn.reset_credits > 0 ? h('button', {
       class: 'badge badge-btn err',
@@ -105,19 +106,26 @@ export function renderUpstreamQuotas(container) {
       }
     }, icon('refresh'), ` ${conn.reset_credits} Reset`) : null;
 
+    const tierBadge = isKeyAllowance
+      ? h('span', { class: 'badge ok', style: { fontWeight: 'bold', border: '1px solid var(--ok)' } }, '👤 Key Allowance (Admin Limit)')
+      : (provider.quota_type === 'nineguard'
+          ? h('span', { class: 'badge', style: { background: 'var(--hover)', fontWeight: 'bold', border: '1px solid var(--border)' } }, '🌐 Shared Upstream Pool')
+          : null);
+
     return h('div', {
       style: {
-        background: 'var(--panel)',
-        border: '1px solid var(--border)',
+        background: isKeyAllowance ? 'color-mix(in srgb, var(--ok) 5%, var(--panel))' : 'var(--panel)',
+        border: isKeyAllowance ? '1.5px solid var(--ok)' : '1px solid var(--border)',
         borderRadius: '8px',
         padding: '12px 14px',
-        marginBottom: '10px'
+        marginBottom: '12px'
       }
     },
       h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' } },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
-          icon('user'),
-          h('span', { style: { fontWeight: '600', fontSize: '13px' } }, conn.account_label || conn.connection_id),
+          icon(isKeyAllowance ? 'shield' : 'user'),
+          h('span', { style: { fontWeight: '700', fontSize: '13px' } }, conn.account_label || conn.connection_id),
+          tierBadge,
           conn.plan ? h('span', { class: 'badge' }, conn.plan) : null,
           resetBtn
         ),
@@ -130,8 +138,8 @@ export function renderUpstreamQuotas(container) {
         ? h('table', { class: 'table', style: { width: '100%', fontSize: '12px', margin: 0 } },
             h('thead', null,
               h('tr', null,
-                h('th', { style: { width: '35%' } }, 'Window / Bucket'),
-                h('th', { style: { width: '25%' } }, 'Used / Total'),
+                h('th', { style: { width: '35%' } }, isKeyAllowance ? 'Model / Allowance Window' : 'Window / Bucket'),
+                h('th', { style: { width: '25%' } }, isKeyAllowance ? 'Tokens Consumed / Limit' : 'Used / Total'),
                 h('th', { style: { width: '25%' } }, 'Remaining'),
                 h('th', { style: { width: '15%' } }, 'Reset In')
               )

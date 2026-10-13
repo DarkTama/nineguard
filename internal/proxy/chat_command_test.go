@@ -122,11 +122,11 @@ func TestChatCommand_Interception(t *testing.T) {
 	}
 	_ = json.Unmarshal(partsRec.Body.Bytes(), &partsResp)
 	partsContent := partsResp.Choices[0].Message.Content
-	if !strings.Contains(partsContent, "API Key Budget") {
-		t.Fatalf("expected API Key Budget in /quota key output, got: %s", partsContent)
+	if !strings.Contains(partsContent, "Key Allowance (Admin Limit)") {
+		t.Fatalf("expected Key Allowance in /quota key output, got: %s", partsContent)
 	}
-	if strings.Contains(partsContent, "Upstream Model Pools") {
-		t.Fatalf("expected Upstream Model Pools to be omitted when argument is 'key', got: %s", partsContent)
+	if strings.Contains(partsContent, "Upstream Provider Capacity") {
+		t.Fatalf("expected Upstream Provider Capacity to be omitted when argument is 'key', got: %s", partsContent)
 	}
 
 	// 3. Test toggle: disable chat commands

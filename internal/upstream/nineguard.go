@@ -1,0 +1,128 @@
+package upstream
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"nineguard/internal/providers"
+)
+
+// NineGuardAdapter communicates with a cascaded NineGuard instance.
+type NineGuardAdapter struct {
+	client *http.Client
+}
+
+func NewNineGuardAdapter() *NineGuardAdapter {
+	return &NineGuardAdapter{
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+	}
+}
+
+// FetchQuotas calls GET /v1/quota on the upstream NineGuard instance.
+func (a *NineGuardAdapter) FetchQuotas(ctx context.Context, p providers.Provider, force bool) (*ProviderQuotaResult, error) {
+	baseURL := extractBaseURL(p.Route)
+	if baseURL == "" {
+		return nil, fmt.Errorf("empty base URL for provider %s", p.ID)
+	}
+
+	res := &ProviderQuotaResult{
+		ProviderID:   p.ID,
+		ProviderName: p.Name,
+		QuotaType:    "nineguard",
+		Status:       "ok",
+		LastUpdated:  time.Now(),
+		Connections:  make([]ConnectionQuota, 0),
+	}
+
+	reqURL := baseURL + "/v1/quota"
+	if force {
+		reqURL += "?force=1"
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	if err != nil {
+		res.Status = "error"
+		res.ErrorMsg = err.Error()
+		return res, nil
+	}
+	req.Header.Set("Accept", "application/json")
+	if strings.TrimSpace(p.APIKey) != "" {
+		req.Header.Set("Authorization", "Bearer "+p.APIKey)
+	}
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		res.Status = "error"
+		res.ErrorMsg = fmt.Sprintf("failed to contact upstream NineGuard: %v", err)
+		return res, nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		res.Status = "error"
+		res.ErrorMsg = fmt.Sprintf("upstream NineGuard returned HTTP %d: %s", resp.StatusCode, resp.Status)
+		return res, nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		res.Status = "error"
+		res.ErrorMsg = fmt.Sprintf("failed to read response body: %v", err)
+		return res, nil
+	}
+
+	var upstreamData UnifiedQuotaResponse
+	if err := json.Unmarshal(body, &upstreamData); err != nil {
+		res.Status = "error"
+		res.ErrorMsg = fmt.Sprintf("failed to parse upstream NineGuard quota JSON: %v", err)
+		return res, nil
+	}
+
+	// 1. If upstream returns personal KeyQuota, synthesize an account connection for it
+	if upstreamData.KeyQuota != nil {
+		kq := upstreamData.KeyQuota
+		var pct int
+		if kq.Limit > 0 {
+			pct = int((float64(kq.Remaining) / float64(kq.Limit)) * 100)
+		}
+		res.Connections = append(res.Connections, ConnectionQuota{
+			ConnectionID: "company_key_allowance",
+			Provider:     "nineguard",
+			AccountLabel: "Company Key Budget",
+			Status:       "ok",
+			LastUpdated:  time.Now(),
+			Buckets: []QuotaBucket{
+				{
+					Name:                fmt.Sprintf("Key Allowance (%s)", kq.Period),
+					Used:                kq.Used,
+					Total:               kq.Limit,
+					Remaining:           kq.Remaining,
+					RemainingPercentage: pct,
+					ResetAt:             kq.ResetAt,
+					Warning:             kq.Warning,
+				},
+			},
+		})
+	}
+
+	// 2. Include all upstream pools as connections
+	for _, pool := range upstreamData.UpstreamPools {
+		res.Connections = append(res.Connections, ConnectionQuota{
+			ConnectionID: pool.Family,
+			Provider:     pool.Provider,
+			AccountLabel: pool.Family,
+			Status:       pool.Status,
+			LastUpdated:  time.Now(),
+			Buckets:      pool.Buckets,
+		})
+	}
+
+	return res, nil
+}

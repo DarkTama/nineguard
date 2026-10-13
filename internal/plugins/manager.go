@@ -13,6 +13,7 @@ import (
 
 	"nineguard/internal/db"
 	"nineguard/internal/models"
+	"nineguard/internal/vault"
 )
 
 type Manager struct {
@@ -66,6 +67,7 @@ func (m *Manager) ReloadCache() error {
 			return fmt.Errorf("scan plugin error: %w", err)
 		}
 		p.Bypassable = (bInt == 1)
+		p.Secret, _ = vault.Decrypt(p.Secret)
 		pluginsList = append(pluginsList, p)
 	}
 
@@ -194,11 +196,12 @@ func (m *Manager) CreateHTTPPlugin(p *Plugin) (*Plugin, string, error) {
 	_ = tx.QueryRow("SELECT COALESCE(MAX(pipeline_order), 90) FROM plugins").Scan(&maxOrder)
 	newOrder := maxOrder + 10
 
+	encSecret, _ := vault.Encrypt(rawSecret)
 	now := time.Now()
 	_, err = tx.Exec(`
 		INSERT INTO plugins (id, kind, name, description, url, secret, timeout_ms, failure_policy, bypassable, pipeline_order, category, summary, default_settings, created_at, updated_at)
 		VALUES (?, 'http', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, id, name, strings.TrimSpace(p.Description), url, rawSecret, timeoutMs, policy, bInt, newOrder, cat, strings.TrimSpace(p.Summary), defSettings)
+	`, id, name, strings.TrimSpace(p.Description), url, encSecret, timeoutMs, policy, bInt, newOrder, cat, strings.TrimSpace(p.Summary), defSettings)
 	if err != nil {
 		return nil, "", fmt.Errorf("insert plugin failed: %w", err)
 	}
@@ -307,9 +310,10 @@ func (m *Manager) RotateSecret(id string) (string, error) {
 	}
 
 	newSecret := generateID("sec_", 16)
+	encSecret, _ := vault.Encrypt(newSecret)
 	_, err = m.db.Exec(`
 		UPDATE plugins SET secret = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-	`, newSecret, id)
+	`, encSecret, id)
 	if err != nil {
 		return "", fmt.Errorf("failed to rotate secret: %w", err)
 	}

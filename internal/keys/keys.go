@@ -15,6 +15,7 @@ import (
 	"nineguard/internal/models"
 	"nineguard/internal/timeutil"
 	"nineguard/internal/traffic"
+	"nineguard/internal/vault"
 )
 
 type KeyInfo struct {
@@ -255,7 +256,8 @@ func NewManager(database *db.DB, defaultRouterAPIKey string) *Manager {
 	var dbUpstream string
 	err := m.db.QueryRow("SELECT value FROM settings WHERE key = 'router_api_key' LIMIT 1").Scan(&dbUpstream)
 	if err == nil && strings.TrimSpace(dbUpstream) != "" {
-		m.upstreamKey = strings.TrimSpace(dbUpstream)
+		dec, _ := vault.Decrypt(strings.TrimSpace(dbUpstream))
+		m.upstreamKey = dec
 	}
 
 	// 2. Load Model Groups cache
@@ -375,11 +377,15 @@ func (m *Manager) GetUpstreamKey() string {
 
 func (m *Manager) SetUpstreamKey(key string) error {
 	key = strings.TrimSpace(key)
-	_, err := m.db.Exec(`
+	enc, err := vault.Encrypt(key)
+	if err != nil {
+		enc = key
+	}
+	_, err = m.db.Exec(`
 		INSERT INTO settings (key, value, updated_at)
 		VALUES ('router_api_key', ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-	`, key)
+	`, enc)
 	if err == nil {
 		m.mu.Lock()
 		m.upstreamKey = key

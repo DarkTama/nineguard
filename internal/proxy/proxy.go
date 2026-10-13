@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 	"nineguard/internal/plugins"
 	"nineguard/internal/providers"
 	"nineguard/internal/traffic"
+	"nineguard/internal/upstream"
 )
 
 type Proxy struct {
@@ -27,7 +29,17 @@ type Proxy struct {
 	keys       *keys.Manager
 	providers  *providers.Manager
 	plugins    *plugins.Manager
+	upstream   *upstream.Manager
+	instanceID string
 	httpClient *http.Client
+}
+
+func (p *Proxy) SetInstanceID(id string) {
+	p.instanceID = id
+}
+
+func (p *Proxy) SetUpstreamManager(um *upstream.Manager) {
+	p.upstream = um
 }
 
 func NewProxy(mm *models.Manager, tm *traffic.Manager, km *keys.Manager, pm *providers.Manager, plm *plugins.Manager) (*Proxy, error) {
@@ -50,6 +62,7 @@ func NewProxy(mm *models.Manager, tm *traffic.Manager, km *keys.Manager, pm *pro
 		keys:       km,
 		providers:  pm,
 		plugins:    plm,
+		upstream:   upstream.NewManager(),
 		httpClient: client,
 	}, nil
 }
@@ -101,6 +114,25 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	clientIP := r.RemoteAddr
 	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
 		clientIP = strings.Split(forwarded, ",")[0]
+	}
+
+	// 0. Loop Protection (Recursion Guard)
+	traceHeader := r.Header.Get("X-NineGuard-Trace")
+	hopHeader := r.Header.Get("X-NineGuard-Hop")
+	hopCount := 0
+	if hopHeader != "" {
+		if h, err := strconv.Atoi(hopHeader); err == nil {
+			hopCount = h
+		}
+	}
+
+	if (p.instanceID != "" && traceHeader != "" && strings.Contains(traceHeader, p.instanceID)) || hopCount >= 3 {
+		slog.Error("loop detected: recursive request aborted", "instance_id", p.instanceID, "trace", traceHeader, "hop", hopCount)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(508) // 508 Loop Detected
+		errJSON := `{"error":{"message":"Loop detected: request was routed recursively back to the same NineGuard instance or exceeded maximum hop count (3).","type":"routing_error","code":"loop_detected"}}`
+		_, _ = w.Write([]byte(errJSON))
+		return
 	}
 
 	// 1. Strict Gatekeeper: Validate Client NineGuard API Key
@@ -171,6 +203,16 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 2.1 Handle GET /v1/quota: Unified client token budget and upstream capacity
+	if r.Method == http.MethodGet && (r.URL.Path == "/v1/quota" || r.URL.Path == "/quota") {
+		force := r.URL.Query().Get("force") == "1"
+		resp := p.buildUnifiedQuotaResponse(r.Context(), keyInfo, force)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(resp)
+		return
+	}
+
 	// 2.5 Enforce the Key Quota (ADR 0005). Keys in model mode skip it: their Model Quotas
 	// are checked after the model is known (ADR 0007).
 	if p.traffic != nil && keyInfo != nil && !keyInfo.EnforcesModelQuotas() && keyInfo.QuotaLimit > 0 && keyInfo.QuotaPeriod != "" && keyInfo.QuotaPeriod != "none" {
@@ -207,6 +249,41 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(bodyBytes, &req)
 	modelName := strings.TrimSpace(req.Model)
 	hasImages, imageCount := detectImages(req.Messages)
+
+	// Intercept Chat Commands (e.g. /quota, /limits, /usage)
+	isChatPath := (r.Method == http.MethodPost && (strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/chat/completions")))
+	if isChatPath {
+		chatCmdsEnabled := true
+		if p.traffic != nil {
+			chatCmdsEnabled = p.traffic.IsChatCommandsEnabled()
+		}
+		if chatCmdsEnabled {
+			if cmd, arg, isCmd := IsChatCommand(req.Messages); isCmd {
+				slog.Info("chat command intercepted", "command", cmd, "arg", arg, "key", keyName)
+				quotaData := p.buildUnifiedQuotaResponse(r.Context(), keyInfo, false)
+				markdown := FormatQuotaMarkdown(quotaData, arg)
+				WriteChatCommandResponse(w, cmd, markdown, req.Stream)
+
+				if p.traffic != nil {
+					_ = p.traffic.Record(&traffic.LogEntry{
+						APIKey:       maskedKey,
+						APIKeyName:   keyName,
+						APIKeyID:     keyInfo.ID,
+						Model:        "nineguard/system",
+						DurationMs:   int(time.Since(start).Milliseconds()),
+						StatusCode:   http.StatusOK,
+						TotalTokens:      0,
+						PromptTokens:     0,
+						CompletionTokens: 0,
+						ClientIP:         clientIP,
+						Stream:       req.Stream,
+						Level:        "INFO",
+					})
+				}
+				return
+			}
+		}
+	}
 
 	// Check Allowed Models for this API Key
 	if modelName != "" && keyInfo != nil && !keyInfo.IsModelAllowed(modelName) {
@@ -443,6 +520,20 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		outReq.Header.Del("Authorization")
 	}
 
+	// Propagate recursion trace headers
+	newTrace := p.instanceID
+	if traceHeader != "" {
+		if p.instanceID != "" {
+			newTrace = traceHeader + "," + p.instanceID
+		} else {
+			newTrace = traceHeader
+		}
+	}
+	if newTrace != "" {
+		outReq.Header.Set("X-NineGuard-Trace", newTrace)
+	}
+	outReq.Header.Set("X-NineGuard-Hop", strconv.Itoa(hopCount+1))
+
 	client := p.httpClient
 	if client == nil {
 		transport := &http.Transport{
@@ -664,3 +755,114 @@ func formatTokenCount(n int64) string {
 	}
 	return string(out)
 }
+
+func (p *Proxy) buildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.KeyInfo, force bool) *upstream.UnifiedQuotaResponse {
+	if p.upstream == nil {
+		p.upstream = upstream.NewManager()
+	}
+
+	resp := &upstream.UnifiedQuotaResponse{
+		UpstreamPools: make([]upstream.MergedPoolQuota, 0),
+		ModelQuotas:   make([]upstream.ModelQuotaSummary, 0),
+	}
+
+	now := time.Now()
+
+	// 1. Client key budget (Key mode vs Model mode)
+	if keyInfo != nil {
+		if !keyInfo.EnforcesModelQuotas() {
+			if keyInfo.QuotaLimit > 0 && keyInfo.QuotaPeriod != "" && keyInfo.QuotaPeriod != "none" && p.traffic != nil {
+				consumed, resetAt, err := p.traffic.GetQuotaUsage(keyInfo.ID, keyInfo.QuotaPeriod, now)
+				if err == nil {
+					rem := keyInfo.QuotaLimit - consumed
+					if rem < 0 {
+						rem = 0
+					}
+					var resetTime *time.Time
+					if !resetAt.IsZero() {
+						resetTime = &resetAt
+					}
+					resp.KeyQuota = &upstream.ClientKeyBudget{
+						Mode:      "key",
+						Limit:     keyInfo.QuotaLimit,
+						Used:      consumed,
+						Remaining: rem,
+						Period:    keyInfo.QuotaPeriod,
+						ResetAt:   resetTime,
+						Warning:   consumed >= int64(float64(keyInfo.QuotaLimit)*0.8),
+					}
+				}
+			}
+		} else {
+			// Model mode
+			if p.traffic != nil {
+				for _, mq := range keyInfo.ModelQuotas {
+					consumed, resetAt, err := p.traffic.GetModelQuotaUsage(keyInfo.ID, mq.ModelID, mq.QuotaPeriod, now)
+					if err == nil {
+						rem := mq.QuotaLimit - consumed
+						if rem < 0 {
+							rem = 0
+						}
+						var resetTime *time.Time
+						if !resetAt.IsZero() {
+							resetTime = &resetAt
+						}
+						resp.ModelQuotas = append(resp.ModelQuotas, upstream.ModelQuotaSummary{
+							ModelID:   mq.ModelID,
+							Limit:     mq.QuotaLimit,
+							Used:      consumed,
+							Remaining: rem,
+							Period:    mq.QuotaPeriod,
+							ResetAt:   resetTime,
+							Warning:   consumed >= int64(float64(mq.QuotaLimit)*0.8),
+						})
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Upstream provider pools (served instantly from warm memory cache)
+	if p.providers != nil {
+		provList, err := p.providers.ListProviders()
+		if err == nil {
+			for _, prov := range provList {
+				if !prov.IsActive || prov.QuotaType == "disabled" || prov.QuotaType == "" {
+					continue
+				}
+
+				var res *upstream.ProviderQuotaResult
+				if force {
+					res, _ = p.upstream.GetProviderQuotas(ctx, prov, true)
+				} else {
+					res = p.upstream.GetCachedQuota(prov)
+					if res == nil {
+						// Cold start fallback: fetch with 3s timeout so request never hangs
+						fetchCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+						res, _ = p.upstream.GetProviderQuotas(fetchCtx, prov, false)
+						cancel()
+					}
+				}
+
+				if res != nil && len(res.Connections) > 0 {
+					merged := upstream.MergeAccountPools(prov.Name, res.Connections)
+					if merged != nil {
+						resp.UpstreamPools = append(resp.UpstreamPools, *merged)
+					}
+					if resp.LastUpdated == nil || res.LastUpdated.After(*resp.LastUpdated) {
+						tCopy := res.LastUpdated
+						resp.LastUpdated = &tCopy
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Filter pools if key has restricted model access
+	if keyInfo != nil && !keyInfo.IsAllModelsAllowed() {
+		resp.UpstreamPools = upstream.FilterPoolsByModelAccess(resp.UpstreamPools, keyInfo.AllowedModels)
+	}
+
+	return resp
+}
+

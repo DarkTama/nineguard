@@ -766,6 +766,14 @@ func (p *Proxy) buildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.Key
 		ModelQuotas:   make([]upstream.ModelQuotaSummary, 0),
 	}
 
+	syncInterval := upstream.DefaultSyncInterval
+	if p.traffic != nil {
+		if d, err := upstream.ParseSyncInterval(p.traffic.GetUpstreamSyncInterval()); err == nil {
+			syncInterval = d
+		}
+	}
+	resp.SyncInterval = upstream.FormatInterval(syncInterval)
+
 	now := time.Now()
 
 	// 1. Client key budget (Key mode vs Model mode)

@@ -283,6 +283,7 @@ func (d *DB) migrate() error {
 	_, _ = d.Exec("ALTER TABLE providers ADD COLUMN quota_type TEXT DEFAULT 'disabled'")
 	_, _ = d.Exec("ALTER TABLE providers ADD COLUMN quota_auth_secret TEXT DEFAULT ''")
 	_, _ = d.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('chat_commands_enabled', 'true')")
+	_, _ = d.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('upstream_quota_sync_interval', '10m')")
 
 	// Instance ID for loop detection
 	var instID string

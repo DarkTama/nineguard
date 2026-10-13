@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -131,6 +132,102 @@ func (h *Handler) BuildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.K
 
 func (h *Handler) SetUpstreamManager(um *upstream.Manager) {
 	h.upstream = um
+}
+
+// currentSyncInterval reads the stored sync interval, falling back to the default when invalid.
+func (h *Handler) currentSyncInterval() time.Duration {
+	if h.traffic == nil {
+		return upstream.DefaultSyncInterval
+	}
+	d, err := upstream.ParseSyncInterval(h.traffic.GetUpstreamSyncInterval())
+	if err != nil {
+		return upstream.DefaultSyncInterval
+	}
+	return d
+}
+
+// applySyncInterval aligns the shared cache TTL with the sync interval (interval + 5m).
+func (h *Handler) applySyncInterval(d time.Duration) {
+	if h.upstream != nil {
+		h.upstream.SetCacheTTL(upstream.CacheTTLForInterval(d))
+	}
+}
+
+// RunUpstreamQuotaSync is the background worker: warms the cache shortly after startup, then
+// refreshes on the configured interval. Saving a new interval restarts the wait without a restart.
+func (h *Handler) RunUpstreamQuotaSync(ctx context.Context) {
+	select {
+	case <-time.After(2 * time.Second):
+	case <-ctx.Done():
+		return
+	}
+	h.applySyncInterval(h.currentSyncInterval())
+	if n := h.SyncAllUpstreamQuotas(ctx, false); n > 0 {
+		slog.Info("warmed upstream quota cache in background", "providers", n)
+	}
+
+	for {
+		interval := h.currentSyncInterval()
+		h.applySyncInterval(interval)
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-h.syncReset:
+			timer.Stop()
+		case <-timer.C:
+			h.SyncAllUpstreamQuotas(ctx, true)
+		}
+	}
+}
+
+// GetUpstreamSyncSettings returns the current auto-sync interval and the allowed choices (Admin API).
+func (h *Handler) GetUpstreamSyncSettings(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, http.StatusOK, h.syncSettingsPayload())
+}
+
+// SetUpstreamSyncSettings validates and stores the auto-sync interval, then applies it live (Admin API).
+func (h *Handler) SetUpstreamSyncSettings(w http.ResponseWriter, r *http.Request) {
+	if h.traffic == nil {
+		jsonError(w, http.StatusBadRequest, "Traffic manager not available")
+		return
+	}
+	var body struct {
+		Interval string `json:"interval"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid payload")
+		return
+	}
+	d, err := upstream.ParseSyncInterval(body.Interval)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.traffic.SetUpstreamSyncInterval(upstream.FormatInterval(d)); err != nil {
+		slog.Error("failed to save upstream sync interval", "error", err)
+		jsonError(w, http.StatusInternalServerError, "Failed to save sync interval")
+		return
+	}
+	h.applySyncInterval(d)
+	select {
+	case h.syncReset <- struct{}{}:
+	default:
+	}
+	jsonResponse(w, http.StatusOK, h.syncSettingsPayload())
+}
+
+func (h *Handler) syncSettingsPayload() map[string]interface{} {
+	allowed := make([]string, 0, len(upstream.AllowedSyncIntervals))
+	for _, a := range upstream.AllowedSyncIntervals {
+		allowed = append(allowed, upstream.FormatInterval(a))
+	}
+	return map[string]interface{}{
+		"interval": upstream.FormatInterval(h.currentSyncInterval()),
+		"allowed":  allowed,
+		"default":  upstream.FormatInterval(upstream.DefaultSyncInterval),
+	}
 }
 
 // SyncAllUpstreamQuotas refreshes quotas for all active providers in parallel (used by background worker).

@@ -218,7 +218,11 @@ func FormatQuotaMarkdown(resp *upstream.UnifiedQuotaResponse, arg string) string
 	}
 
 	if resp.LastUpdated != nil && !resp.LastUpdated.IsZero() {
-		sb.WriteString(fmt.Sprintf("\n*Upstream pools last checked %s · Auto-refreshes every 5m*\n", formatTimeAgo(resp.LastUpdated)))
+		interval := resp.SyncInterval
+		if interval == "" {
+			interval = upstream.FormatInterval(upstream.DefaultSyncInterval)
+		}
+		sb.WriteString(fmt.Sprintf("\n*Upstream pools last checked %s · Auto-refreshes every %s*\n", formatTimeAgo(resp.LastUpdated), interval))
 	}
 
 	return sb.String()

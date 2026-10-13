@@ -28,6 +28,7 @@ import (
 	"nineguard/internal/traffic"
 	"nineguard/internal/tray"
 	"nineguard/internal/ui"
+	"nineguard/internal/upstream"
 	"nineguard/internal/version"
 	"nineguard/web"
 )
@@ -141,6 +142,10 @@ func main() {
 	// 4. Handlers
 	h := handler.New(authMgr, modelsMgr, trafficMgr, syslogMgr, keysMgr, providersMgr, revProxy, routerTarget)
 	h.SetPlugins(pluginsMgr)
+	// Share one upstream quota manager so the background sync warms the same cache /quota reads.
+	upstreamMgr := upstream.NewManager()
+	revProxy.SetUpstreamManager(upstreamMgr)
+	h.SetUpstreamManager(upstreamMgr)
 	instanceID := database.GetInstanceID()
 	revProxy.SetInstanceID(instanceID)
 	h.SetInstanceID(instanceID)
@@ -161,17 +166,7 @@ func main() {
 	}()
 
 	// Background Auto-Sync: periodically warm and refresh upstream quotas in memory
-	go func() {
-		time.Sleep(2 * time.Second)
-		if n := h.SyncAllUpstreamQuotas(context.Background(), false); n > 0 {
-			slog.Info("warmed upstream quota cache in background", "providers", n)
-		}
-
-		ticker := time.NewTicker(5 * time.Minute)
-		for range ticker.C {
-			h.SyncAllUpstreamQuotas(context.Background(), true)
-		}
-	}()
+	go h.RunUpstreamQuotaSync(context.Background())
 
 	mux := http.NewServeMux()
 
@@ -289,6 +284,8 @@ func main() {
 	mux.HandleFunc("GET /api/v1/keys/{id}", h.GetKey)
 	mux.HandleFunc("GET /api/v1/quotas", h.GetQuotas)
 	mux.HandleFunc("GET /api/v1/upstream-quotas", h.GetUpstreamQuotas)
+	mux.HandleFunc("GET /api/v1/settings/upstream-sync", h.GetUpstreamSyncSettings)
+	mux.HandleFunc("POST /api/v1/settings/upstream-sync", h.SetUpstreamSyncSettings)
 	mux.HandleFunc("POST /api/v1/upstream-quotas/{id}/connections/{connId}/reset", h.ConsumeUpstreamReset)
 
 	mux.HandleFunc("GET /api/v1/providers", h.ListProviders)

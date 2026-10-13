@@ -78,4 +78,6 @@ type UnifiedQuotaResponse struct {
 	ModelQuotas   []ModelQuotaSummary `json:"model_quotas,omitempty"`
 	UpstreamPools []MergedPoolQuota   `json:"upstream_pools"`
 	LastUpdated   *time.Time          `json:"last_updated,omitempty"`
+	// SyncInterval is the background auto-sync interval (e.g. "10m"), shown in the chat command footer.
+	SyncInterval string `json:"sync_interval,omitempty"`
 }

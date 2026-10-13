@@ -169,6 +169,12 @@ export function mount(root) {
         ? h('span', { class: 'badge', style: { background: 'rgba(234, 179, 8, 0.15)', color: '#ca8a04', border: '1px solid #ca8a04' }, title: p.upstream_token_saving_note || 'Upstream applies token saving' }, 'Token Saver Upstream')
         : null;
 
+      const quotaTag = p.quota_type === '9router'
+        ? h('span', { class: 'badge', style: { background: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6', border: '1px solid #3b82f6' } }, '9router Quotas')
+        : p.quota_type === 'nineguard'
+        ? h('span', { class: 'badge', style: { background: 'rgba(168, 85, 247, 0.15)', color: '#a855f7', border: '1px solid #a855f7' } }, 'Cascaded Quotas')
+        : null;
+
       return h('div', { class: 'card', style: { marginBottom: '12px' } },
         h('div', { class: 'card-head', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' } },
           h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
@@ -176,7 +182,8 @@ export function mount(root) {
             h('h2', { style: { margin: 0, fontSize: '14px' } }, p.name),
             prefixTag,
             defaultTag,
-            tokenSavingTag
+            tokenSavingTag,
+            quotaTag
           ),
           h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
             statusBadge,
@@ -252,6 +259,31 @@ export function mount(root) {
       h('span', null, 'Set as Default Provider (fallback for models without prefix)')
     );
 
+    const quotaTypeSelect = h('select', { class: 'select' }, [
+      ['disabled', 'Disabled / Direct LLM (e.g. OpenAI, NanoGPT)'],
+      ['9router', '9router API (tracks rolling session/weekly limits)'],
+      ['nineguard', 'NineGuard Cascaded (upstream NineGuard gateway)'],
+    ].map(([v, l]) => h('option', { value: v, selected: (existing?.quota_type || 'disabled') === v }, l)));
+
+    const quotaSecretField = passwordField({
+      placeholder: existing?.has_quota_auth_secret
+        ? 'Leave blank to keep existing password, or enter new password'
+        : '9router dashboard password (leave empty if login not required)',
+      value: ''
+    });
+
+    const quotaSecretContainer = h('div', { class: 'field', style: { display: (existing?.quota_type === '9router') ? 'block' : 'none' } },
+      h('span', null, '9router Dashboard Password'),
+      quotaSecretField.wrap,
+      h('p', { class: 'muted', style: { fontSize: '11px', margin: '2px 0 0' } },
+        'Required if 9router has password protection enabled. Leave blank if requireLogin is false.'
+      )
+    );
+
+    quotaTypeSelect.addEventListener('change', () => {
+      quotaSecretContainer.style.display = quotaTypeSelect.value === '9router' ? 'block' : 'none';
+    });
+
     const tokenSavingCheck = h('input', {
       type: 'checkbox',
       checked: existing ? Boolean(existing.upstream_token_saving) : false
@@ -315,6 +347,16 @@ export function mount(root) {
             )
           )
         },
+        {
+          node: h('div', { class: 'field' },
+            h('span', null, 'Quota Tracker Protocol'),
+            quotaTypeSelect,
+            h('p', { class: 'muted', style: { fontSize: '11px', margin: '2px 0 0' } },
+              'Enable live capacity and rolling session quota tracking from this upstream provider.'
+            )
+          )
+        },
+        { node: quotaSecretContainer },
         { node: defaultLabel },
         { node: tokenSavingSection }
       ],
@@ -326,6 +368,8 @@ export function mount(root) {
         const isDef = Boolean(defaultCheck.checked);
         const upstream_token_saving = Boolean(tokenSavingCheck.checked);
         const upstream_token_saving_note = tokenSavingNoteInput.value.trim();
+        const quota_type = quotaTypeSelect.value;
+        const quotaSecretVal = quotaSecretField.input.value.trim();
 
         if (!name) throw new Error('Provider name is required');
         if (!route) throw new Error('Route target URL is required');
@@ -333,18 +377,27 @@ export function mount(root) {
         if (isEdit) {
           const payload = {
             name, route, prefix, is_default: isDef, is_active: existing.is_active,
-            upstream_token_saving, upstream_token_saving_note
+            upstream_token_saving, upstream_token_saving_note,
+            quota_type
           };
           if (apiKey !== '') {
             payload.api_key = apiKey;
           }
+          if (quotaSecretVal !== '') {
+            payload.quota_auth_secret = quotaSecretVal;
+          }
           await api.put(`/providers/${existing.id}`, payload);
           toast(`Provider "${name}" updated`, 'ok');
         } else {
-          await api.post('/providers', {
+          const payload = {
             name, route, prefix, api_key: apiKey, is_default: isDef, is_active: true,
-            upstream_token_saving, upstream_token_saving_note
-          });
+            upstream_token_saving, upstream_token_saving_note,
+            quota_type
+          };
+          if (quotaSecretVal !== '') {
+            payload.quota_auth_secret = quotaSecretVal;
+          }
+          await api.post('/providers', payload);
           toast(`Provider "${name}" added`, 'ok');
         }
         await load();

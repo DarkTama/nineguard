@@ -251,17 +251,17 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	hasImages, imageCount := detectImages(req.Messages)
 
 	// Intercept Chat Commands (e.g. /quota, /limits, /usage)
-	isChatPath := (r.Method == http.MethodPost && (r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/chat/completions"))
+	isChatPath := (r.Method == http.MethodPost && (strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/chat/completions")))
 	if isChatPath {
 		chatCmdsEnabled := true
 		if p.traffic != nil {
 			chatCmdsEnabled = p.traffic.IsChatCommandsEnabled()
 		}
 		if chatCmdsEnabled {
-			if cmd, isCmd := IsChatCommand(req.Messages); isCmd {
-				slog.Info("chat command intercepted", "command", cmd, "key", keyName)
+			if cmd, arg, isCmd := IsChatCommand(req.Messages); isCmd {
+				slog.Info("chat command intercepted", "command", cmd, "arg", arg, "key", keyName)
 				quotaData := p.buildUnifiedQuotaResponse(r.Context(), keyInfo, false)
-				markdown := FormatQuotaMarkdown(quotaData)
+				markdown := FormatQuotaMarkdown(quotaData, arg)
 				WriteChatCommandResponse(w, cmd, markdown, req.Stream)
 
 				if p.traffic != nil {

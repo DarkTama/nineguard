@@ -12,21 +12,46 @@ import (
 	"nineguard/internal/upstream"
 )
 
-// IsChatCommand checks if the latest user message in the conversation is an exact slash command.
-func IsChatCommand(messages []chatMessage) (string, bool) {
+func extractMessageText(content interface{}) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []interface{}:
+		var sb strings.Builder
+		for _, item := range v {
+			if m, ok := item.(map[string]interface{}); ok {
+				if text, ok := m["text"].(string); ok {
+					sb.WriteString(text)
+				}
+			}
+		}
+		return sb.String()
+	default:
+		return ""
+	}
+}
+
+// IsChatCommand checks if the latest user message in the conversation is a slash command.
+func IsChatCommand(messages []chatMessage) (command string, arg string, isCmd bool) {
 	for i := len(messages) - 1; i >= 0; i-- {
 		if strings.EqualFold(messages[i].Role, "user") {
-			if text, ok := messages[i].Content.(string); ok {
-				trimmed := strings.ToLower(strings.TrimSpace(text))
-				switch trimmed {
+			rawText := extractMessageText(messages[i].Content)
+			fields := strings.Fields(strings.TrimSpace(rawText))
+			if len(fields) > 0 {
+				cmd := strings.ToLower(fields[0])
+				switch cmd {
 				case "/quota", "/limits", "/usage":
-					return trimmed, true
+					subArg := ""
+					if len(fields) > 1 {
+						subArg = strings.ToLower(fields[1])
+					}
+					return cmd, subArg, true
 				}
 			}
 			break
 		}
 	}
-	return "", false
+	return "", "", false
 }
 
 func formatResetIn(t *time.Time) string {
@@ -52,52 +77,89 @@ func formatResetIn(t *time.Time) string {
 }
 
 // FormatQuotaMarkdown builds a human-readable Markdown response from quota data.
-func FormatQuotaMarkdown(resp *upstream.UnifiedQuotaResponse) string {
+func FormatQuotaMarkdown(resp *upstream.UnifiedQuotaResponse, arg string) string {
 	var sb strings.Builder
 	sb.WriteString("📊 **NineGuard Quota Report**\n\n")
 
+	showKey := arg == "" || arg == "key"
+	showUpstream := arg == "" || arg != "key"
+	filterStr := ""
+	if arg != "" && arg != "key" && arg != "upstream" {
+		filterStr = strings.ToLower(arg)
+	}
+
 	// 1. Client key budget
-	if resp.KeyQuota != nil {
-		kq := resp.KeyQuota
-		warnIcon := ""
-		if kq.Warning {
-			warnIcon = "⚠️ "
-		}
-		sb.WriteString(fmt.Sprintf("**API Key Budget:** %s%s / %s tokens remaining (%s",
-			warnIcon,
-			formatTokenCount(kq.Remaining),
-			formatTokenCount(kq.Limit),
-			kq.Period,
-		))
-		if kq.ResetAt != nil {
-			sb.WriteString(fmt.Sprintf(", resets %s", formatResetIn(kq.ResetAt)))
-		}
-		sb.WriteString(")\n\n")
-	} else if len(resp.ModelQuotas) > 0 {
-		sb.WriteString("**API Key Model Quotas:**\n\n")
-		sb.WriteString("| Model | Limit | Used | Remaining | Period | Reset |\n")
-		sb.WriteString("|---|---|---|---|---|---|\n")
-		for _, mq := range resp.ModelQuotas {
+	if showKey {
+		if resp.KeyQuota != nil {
+			kq := resp.KeyQuota
 			warnIcon := ""
-			if mq.Warning {
+			if kq.Warning {
 				warnIcon = "⚠️ "
 			}
-			sb.WriteString(fmt.Sprintf("| `%s` | %s | %s | %s%s | %s | %s |\n",
-				mq.ModelID,
-				formatTokenCount(mq.Limit),
-				formatTokenCount(mq.Used),
+			sb.WriteString(fmt.Sprintf("**API Key Budget:** %s%s / %s tokens remaining (%s",
 				warnIcon,
-				formatTokenCount(mq.Remaining),
-				mq.Period,
-				formatResetIn(mq.ResetAt),
+				formatTokenCount(kq.Remaining),
+				formatTokenCount(kq.Limit),
+				kq.Period,
 			))
+			if kq.ResetAt != nil {
+				sb.WriteString(fmt.Sprintf(", resets %s", formatResetIn(kq.ResetAt)))
+			}
+			sb.WriteString(")\n\n")
+		} else if len(resp.ModelQuotas) > 0 {
+			sb.WriteString("**API Key Model Quotas:**\n\n")
+			sb.WriteString("| Model | Limit | Used | Remaining | Period | Reset |\n")
+			sb.WriteString("|---|---|---|---|---|---|\n")
+			for _, mq := range resp.ModelQuotas {
+				warnIcon := ""
+				if mq.Warning {
+					warnIcon = "⚠️ "
+				}
+				sb.WriteString(fmt.Sprintf("| `%s` | %s | %s | %s%s | %s | %s |\n",
+					mq.ModelID,
+					formatTokenCount(mq.Limit),
+					formatTokenCount(mq.Used),
+					warnIcon,
+					formatTokenCount(mq.Remaining),
+					mq.Period,
+					formatResetIn(mq.ResetAt),
+				))
+			}
+			sb.WriteString("\n")
 		}
-		sb.WriteString("\n")
+	}
+
+	if !showUpstream {
+		return sb.String()
 	}
 
 	// 2. Upstream provider pools
-	if len(resp.UpstreamPools) == 0 {
-		sb.WriteString("*No active upstream quota trackers configured.*\n")
+	var matchingPools []upstream.MergedPoolQuota
+	for _, pool := range resp.UpstreamPools {
+		if filterStr != "" {
+			matches := strings.Contains(strings.ToLower(pool.Provider), filterStr) ||
+				strings.Contains(strings.ToLower(pool.Family), filterStr)
+			if !matches {
+				for _, b := range pool.Buckets {
+					if strings.Contains(strings.ToLower(b.Name), filterStr) {
+						matches = true
+						break
+					}
+				}
+			}
+			if !matches {
+				continue
+			}
+		}
+		matchingPools = append(matchingPools, pool)
+	}
+
+	if len(matchingPools) == 0 {
+		if filterStr != "" {
+			sb.WriteString(fmt.Sprintf("*No upstream pools matching '%s'.*\n", filterStr))
+		} else {
+			sb.WriteString("*No active upstream quota trackers configured.*\n")
+		}
 		return sb.String()
 	}
 
@@ -105,8 +167,14 @@ func FormatQuotaMarkdown(resp *upstream.UnifiedQuotaResponse) string {
 	sb.WriteString("| Provider / Family | Window | Used / Total | Remaining | Next Reset |\n")
 	sb.WriteString("|---|---|---|---|---|\n")
 
-	for _, pool := range resp.UpstreamPools {
+	for _, pool := range matchingPools {
 		for _, b := range pool.Buckets {
+			if filterStr != "" && !strings.Contains(strings.ToLower(pool.Provider), filterStr) &&
+				!strings.Contains(strings.ToLower(pool.Family), filterStr) &&
+				!strings.Contains(strings.ToLower(b.Name), filterStr) {
+				continue
+			}
+
 			warnIcon := ""
 			if b.Warning {
 				warnIcon = "⚠️ "

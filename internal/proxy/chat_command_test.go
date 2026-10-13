@@ -102,6 +102,33 @@ func TestChatCommand_Interception(t *testing.T) {
 		t.Fatalf("expected markdown in stream chunk, got: %s", streamOutput)
 	}
 
+	// 2.5 Test content parts array (Pi/Monocode format) and arguments: /quota key
+	partsBodyJSON := `{"model":"gpt-4o","stream":false,"messages":[{"role":"user","content":[{"type":"text","text":"/quota key"}]}]}`
+	partsReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(partsBodyJSON))
+	partsReq.Header.Set("Authorization", "Bearer "+k.RawKey)
+	partsRec := httptest.NewRecorder()
+
+	p.ServeHTTP(partsRec, partsReq)
+
+	if partsRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for content parts, got %d: %s", partsRec.Code, partsRec.Body.String())
+	}
+	var partsResp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	_ = json.Unmarshal(partsRec.Body.Bytes(), &partsResp)
+	partsContent := partsResp.Choices[0].Message.Content
+	if !strings.Contains(partsContent, "API Key Budget") {
+		t.Fatalf("expected API Key Budget in /quota key output, got: %s", partsContent)
+	}
+	if strings.Contains(partsContent, "Upstream Model Pools") {
+		t.Fatalf("expected Upstream Model Pools to be omitted when argument is 'key', got: %s", partsContent)
+	}
+
 	// 3. Test toggle: disable chat commands
 	_ = tm.SetChatCommandsEnabled(false)
 

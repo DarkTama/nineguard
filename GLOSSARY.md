@@ -121,3 +121,20 @@ A Key Quota or Model Quota whose usage in the current Quota Period has reached t
 **Heavy Request**
 A request whose total tokens meet or exceed the system-wide `heavy_token_threshold`, triggering an advisory warning badge and system log alert without blocking traffic.
 
+## Upstream Quotas
+
+**Upstream Quota** (Provider Limit)
+An external resource limit reported by an upstream provider (such as 9router rolling 5-hour sessions, weekly allowances, or credit balances). Distinct from NineGuard's internal Key Quota and Model Quota.
+
+**Provider Quota Type**
+The integration protocol used to fetch quota status from an upstream provider: `disabled` (standard LLM / NanoGPT), `9router` (direct 9router instance), or `nineguard` (cascaded NineGuard instance).
+
+**Cascaded Quota**
+An Upstream Quota fetched from another NineGuard instance higher in the routing chain via its client API key. Reports both the issuing instance's Key Quota allowance and its upstream model pool capacity.
+
+**Merged Account Pool**
+A client-facing aggregation of multiple upstream accounts from the same provider into a single quota row, summing consumed and total capacity while hiding underlying account counts and email identities.
+
+**Chat Command Interceptor**
+A proxy pipeline hook that intercepts exact slash prompts (such as `/quota`, `/limits`, `/usage`) in `/v1/chat/completions`, short-circuiting the request to return formatted diagnostic markdown at zero token cost.
+

@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -280,7 +281,42 @@ func (a *Router9Adapter) fetchConnectionQuota(ctx context.Context, p providers.P
 		})
 	}
 
+	sortBuckets(cq.Buckets)
+
 	return cq, nil
+}
+
+func bucketRank(b QuotaBucket) int {
+	if b.IsCreditBalance {
+		return 5
+	}
+	if b.Warning {
+		return 1
+	}
+	nameLower := strings.ToLower(b.Name)
+	if strings.Contains(nameLower, "5h") || strings.Contains(nameLower, "session") {
+		return 2
+	}
+	if strings.Contains(nameLower, "weekly") || strings.Contains(nameLower, "7d") {
+		return 3
+	}
+	return 4
+}
+
+func sortBuckets(buckets []QuotaBucket) {
+	sort.SliceStable(buckets, func(i, j int) bool {
+		rI := bucketRank(buckets[i])
+		rJ := bucketRank(buckets[j])
+		if rI != rJ {
+			return rI < rJ
+		}
+		if rI == 1 {
+			if buckets[i].RemainingPercentage != buckets[j].RemainingPercentage {
+				return buckets[i].RemainingPercentage < buckets[j].RemainingPercentage
+			}
+		}
+		return buckets[i].Name < buckets[j].Name
+	})
 }
 
 func cleanBucketName(key, displayName string) string {

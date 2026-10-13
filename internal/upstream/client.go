@@ -9,7 +9,10 @@ import (
 	"nineguard/internal/providers"
 )
 
-const DefaultCacheTTL = 60 * time.Second
+const (
+	DefaultCacheTTL      = 60 * time.Second
+	DefaultForceCooldown = 30 * time.Second
+)
 
 type cachedQuota struct {
 	result    *ProviderQuotaResult
@@ -18,9 +21,11 @@ type cachedQuota struct {
 
 // Manager orchestrates quota fetches across various upstream provider protocols.
 type Manager struct {
-	router9    *Router9Adapter
-	nineguard  *NineGuardAdapter
-	instanceID string
+	router9       *Router9Adapter
+	nineguard     *NineGuardAdapter
+	instanceID    string
+	lastForce     map[string]time.Time
+	forceCooldown time.Duration
 
 	cacheMu sync.RWMutex
 	cache   map[string]cachedQuota // providerID -> cachedQuota
@@ -29,11 +34,20 @@ type Manager struct {
 
 func NewManager() *Manager {
 	return &Manager{
-		router9:   NewRouter9Adapter(),
-		nineguard: NewNineGuardAdapter(),
-		cache:     make(map[string]cachedQuota),
-		ttl:       DefaultCacheTTL,
+		router9:       NewRouter9Adapter(),
+		nineguard:     NewNineGuardAdapter(),
+		lastForce:     make(map[string]time.Time),
+		forceCooldown: DefaultForceCooldown,
+		cache:         make(map[string]cachedQuota),
+		ttl:           DefaultCacheTTL,
 	}
+}
+
+// SetForceCooldown allows overriding the cooldown for tests.
+func (m *Manager) SetForceCooldown(d time.Duration) {
+	m.cacheMu.Lock()
+	defer m.cacheMu.Unlock()
+	m.forceCooldown = d
 }
 
 // SetInstanceID configures instance UUID for loop protection.
@@ -72,13 +86,20 @@ func (m *Manager) GetProviderQuotas(ctx context.Context, p providers.Provider, f
 	}
 
 	// Check cache
-	if !force {
-		m.cacheMu.RLock()
-		cached, ok := m.cache[p.ID]
-		m.cacheMu.RUnlock()
-		if ok && time.Now().Before(cached.expiresAt) {
+	m.cacheMu.RLock()
+	cached, hasCache := m.cache[p.ID]
+	lastForceTime := m.lastForce[p.ID]
+	m.cacheMu.RUnlock()
+
+	// If force requested but 30s cooldown hasn't passed, serve valid cache silently
+	if force && hasCache && time.Since(lastForceTime) < m.forceCooldown {
+		if time.Now().Before(cached.expiresAt) {
 			return cached.result, nil
 		}
+	}
+
+	if !force && hasCache && time.Now().Before(cached.expiresAt) {
+		return cached.result, nil
 	}
 
 	var res *ProviderQuotaResult
@@ -111,6 +132,9 @@ func (m *Manager) GetProviderQuotas(ctx context.Context, p providers.Provider, f
 		m.cache[p.ID] = cachedQuota{
 			result:    res,
 			expiresAt: time.Now().Add(m.ttl),
+		}
+		if force {
+			m.lastForce[p.ID] = time.Now()
 		}
 		m.cacheMu.Unlock()
 	}

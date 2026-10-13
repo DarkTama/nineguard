@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"nineguard/internal/providers"
 	"nineguard/internal/upstream"
@@ -137,6 +138,17 @@ func TestRouter9Adapter_SuccessAndAuth(t *testing.T) {
 		t.Fatalf("expected session bucket to not have warning: %+v", sessionBucket)
 	}
 
+	// Test deterministic bucket sorting: Warning first, then Session, then model
+	if conn.Buckets[0].Name != "Weekly Limit" || !conn.Buckets[0].Warning {
+		t.Fatalf("expected warning bucket 'Weekly Limit' ranked first, got %q", conn.Buckets[0].Name)
+	}
+	if conn.Buckets[1].Name != "5h Session" {
+		t.Fatalf("expected '5h Session' ranked second, got %q", conn.Buckets[1].Name)
+	}
+	if conn.Buckets[2].Name != "Gemini 3.1 Flash Image" {
+		t.Fatalf("expected 'Gemini 3.1 Flash Image' ranked third, got %q", conn.Buckets[2].Name)
+	}
+
 	// Test caching: repeat call should not hit server again
 	initialCalls := callCount.Load()
 	cachedRes, err := mgr.GetProviderQuotas(context.Background(), prov, false)
@@ -147,13 +159,25 @@ func TestRouter9Adapter_SuccessAndAuth(t *testing.T) {
 		t.Fatalf("expected cached response without server hit, got calls %d vs %d", callCount.Load(), initialCalls)
 	}
 
-	// Test force bypass
+	// Test force bypass with 0s cooldown
+	mgr.SetForceCooldown(0)
 	_, err = mgr.GetProviderQuotas(context.Background(), prov, true)
 	if err != nil {
 		t.Fatalf("force call failed: %v", err)
 	}
 	if callCount.Load() <= initialCalls {
-		t.Fatalf("expected new calls after force=true")
+		t.Fatalf("expected new calls after force=true with 0s cooldown")
+	}
+
+	// Test 30s cooldown prevents immediate second force call
+	afterForceCalls := callCount.Load()
+	mgr.SetForceCooldown(30 * time.Second)
+	_, err = mgr.GetProviderQuotas(context.Background(), prov, true)
+	if err != nil {
+		t.Fatalf("second force call failed: %v", err)
+	}
+	if callCount.Load() != afterForceCalls {
+		t.Fatalf("expected cooldown to prevent network call on immediate second force call, got %d calls vs %d", callCount.Load(), afterForceCalls)
 	}
 }
 

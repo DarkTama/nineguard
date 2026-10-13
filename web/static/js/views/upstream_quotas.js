@@ -1,6 +1,6 @@
 // Upstream Quotas view: Live visibility into upstream provider capacity, rolling limits, and credit balances.
 import { api } from '../api.js';
-import { h, icon, toast, emptyState, fmtNum } from '../ui.js';
+import { h, icon, toast, emptyState, fmtNum, confirmDialog } from '../ui.js';
 import { formatResetIn } from '../modelquotas.js';
 import { formatTokensCompact } from '../quotahelpers.js';
 
@@ -72,8 +72,38 @@ export function renderUpstreamQuotas(container) {
     );
   }
 
-  function renderConnectionCard(conn) {
+  function renderConnectionCard(conn, provider) {
     const hasError = conn.status === 'error';
+
+    const resetBtn = conn.reset_credits > 0 ? h('button', {
+      class: 'badge badge-btn err',
+      style: { display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontWeight: 'bold' },
+      type: 'button',
+      title: `Use 1 reset now (${conn.reset_credits} available)`,
+      onclick: async () => {
+        const ok = await confirmDialog({
+          title: 'Spend Upstream Quota Reset?',
+          body: `Spend 1 irreversible reset grant for "${conn.account_label || conn.connection_id}"? This will refill session and weekly limits on ${provider.provider_name}. (${conn.reset_credits} resets available)`,
+          danger: true,
+          okText: 'Confirm & Reset'
+        });
+        if (!ok) return;
+        try {
+          resetBtn.disabled = true;
+          resetBtn.textContent = 'Resetting...';
+          const res = await api.post(`/upstream-quotas/${provider.provider_id}/connections/${conn.connection_id}/reset`, {
+            provider: conn.provider,
+            grant_id: conn.next_grant_id || ''
+          });
+          toast(res.message || 'Reset applied successfully', 'ok');
+          await load(true);
+        } catch (e) {
+          toast(`Reset failed: ${e.message}`, 'error');
+        } finally {
+          resetBtn.disabled = false;
+        }
+      }
+    }, icon('refresh'), ` ${conn.reset_credits} Reset`) : null;
 
     return h('div', {
       style: {
@@ -85,10 +115,11 @@ export function renderUpstreamQuotas(container) {
       }
     },
       h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' } },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
           icon('user'),
           h('span', { style: { fontWeight: '600', fontSize: '13px' } }, conn.account_label || conn.connection_id),
-          conn.plan ? h('span', { class: 'badge' }, conn.plan) : null
+          conn.plan ? h('span', { class: 'badge' }, conn.plan) : null,
+          resetBtn
         ),
         h('span', { class: `badge ${conn.status === 'ok' ? 'ok' : 'err'}` }, conn.status)
       ),
@@ -142,11 +173,26 @@ export function renderUpstreamQuotas(container) {
           refreshBtn.disabled = true;
           await load(true);
           toast(`Refreshed quotas for ${p.provider_name}`, 'ok');
+
+          // 30-second cooldown timer
+          let cooldown = 30;
+          refreshBtn.disabled = true;
+          refreshBtn.replaceChildren(icon('refresh'), ` Cooldown (${cooldown}s)`);
+          const timer = setInterval(() => {
+            cooldown--;
+            if (cooldown <= 0 || !alive) {
+              clearInterval(timer);
+              refreshBtn.disabled = false;
+              refreshBtn.replaceChildren(icon('refresh'), 'Refresh');
+            } else {
+              refreshBtn.replaceChildren(icon('refresh'), ` Cooldown (${cooldown}s)`);
+            }
+          }, 1000);
         }
       }, icon('refresh'), 'Refresh');
 
       const protocolLabel = p.quota_type === '9router'
-        ? '9router API'
+        ? 'Router Protocol'
         : p.quota_type === 'nineguard'
         ? 'NineGuard Cascaded'
         : 'Direct LLM (No Tracker)';
@@ -170,7 +216,7 @@ export function renderUpstreamQuotas(container) {
                 'This provider connects directly to an LLM without upstream limit telemetry. Switch protocol in Providers menu to enable.'
               )
             : p.connections && p.connections.length > 0
-            ? h('div', null, ...p.connections.map(renderConnectionCard))
+            ? h('div', null, ...p.connections.map((c) => renderConnectionCard(c, p)))
             : h('p', { class: 'muted', style: { margin: 0, fontSize: '12px' } }, 'No account connections found on upstream.')
         )
       );

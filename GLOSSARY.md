@@ -138,3 +138,12 @@ A client-facing aggregation of multiple upstream accounts from the same provider
 **Chat Command Interceptor**
 A proxy pipeline hook that intercepts exact slash prompts (such as `/quota`, `/limits`, `/usage`) in `/v1/chat/completions`, short-circuiting the request to return formatted diagnostic markdown at zero token cost.
 
+## Security & Encryption
+
+**Secret Vault** (Encryption-at-Rest)
+The cryptographic layer protecting reversible upstream credentials (`api_key`, `quota_auth_secret`, `router_api_key`, plugin `secret`) stored in SQLite using authenticated AES-256-GCM encryption (`enc:v1:...`).
+
+**Master Encryption Key**
+The 32-byte secret key used to encrypt and decrypt stored credentials. Sourced from the `NINEGUARD_ENCRYPTION_KEY` environment variable if present, or automatically generated and stored in a restricted key file (`data/.master.key`, mode `0600`).
+
+

@@ -20,6 +20,7 @@ import (
 	"nineguard/internal/syslog"
 	"nineguard/internal/timeutil"
 	"nineguard/internal/traffic"
+	"nineguard/internal/upstream"
 	"nineguard/internal/version"
 )
 
@@ -32,6 +33,7 @@ type Handler struct {
 	providers    *providers.Manager
 	plugins      *plugins.Manager
 	proxy        *proxy.Proxy
+	upstream     *upstream.Manager
 	routerTarget string
 }
 
@@ -48,6 +50,7 @@ func New(am *auth.Manager, mm *models.Manager, tm *traffic.Manager, sm *syslog.M
 		keys:         km,
 		providers:    pm,
 		proxy:        pr,
+		upstream:     upstream.NewManager(),
 		routerTarget: target,
 	}
 }
@@ -1435,21 +1438,34 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name                    string `json:"name"`
-		Route                   string `json:"route"`
-		APIKey                  string `json:"api_key"`
-		Prefix                  string `json:"prefix"`
-		IsDefault               bool   `json:"is_default"`
-		IsActive                bool   `json:"is_active"`
-		UpstreamTokenSaving     bool   `json:"upstream_token_saving"`
-		UpstreamTokenSavingNote string `json:"upstream_token_saving_note"`
+		Name                    string  `json:"name"`
+		Route                   string  `json:"route"`
+		APIKey                  string  `json:"api_key"`
+		Prefix                  string  `json:"prefix"`
+		IsDefault               bool    `json:"is_default"`
+		IsActive                bool    `json:"is_active"`
+		UpstreamTokenSaving     bool    `json:"upstream_token_saving"`
+		UpstreamTokenSavingNote string  `json:"upstream_token_saving_note"`
+		QuotaType               string  `json:"quota_type"`
+		QuotaAuthSecret         *string `json:"quota_auth_secret"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid payload")
 		return
 	}
 
-	p, err := h.providers.CreateProviderWithTokenSaving(body.Name, body.Route, body.APIKey, body.Prefix, body.IsDefault, body.IsActive, body.UpstreamTokenSaving, body.UpstreamTokenSavingNote)
+	p, err := h.providers.CreateProviderWithOptions(providers.ProviderOptions{
+		Name:                    body.Name,
+		Route:                   body.Route,
+		APIKey:                  body.APIKey,
+		Prefix:                  body.Prefix,
+		IsDefault:               body.IsDefault,
+		IsActive:                body.IsActive,
+		UpstreamTokenSaving:     body.UpstreamTokenSaving,
+		UpstreamTokenSavingNote: body.UpstreamTokenSavingNote,
+		QuotaType:               body.QuotaType,
+		QuotaAuthSecret:         body.QuotaAuthSecret,
+	})
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1479,6 +1495,8 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 		IsActive                bool    `json:"is_active"`
 		UpstreamTokenSaving     bool    `json:"upstream_token_saving"`
 		UpstreamTokenSavingNote string  `json:"upstream_token_saving_note"`
+		QuotaType               string  `json:"quota_type"`
+		QuotaAuthSecret         *string `json:"quota_auth_secret"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid payload")
@@ -1492,7 +1510,18 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 		apiKey = existing.APIKey
 	}
 
-	p, err := h.providers.UpdateProviderWithTokenSaving(id, body.Name, body.Route, apiKey, body.Prefix, body.IsDefault, body.IsActive, body.UpstreamTokenSaving, body.UpstreamTokenSavingNote)
+	p, err := h.providers.UpdateProviderWithOptions(id, providers.ProviderOptions{
+		Name:                    body.Name,
+		Route:                   body.Route,
+		APIKey:                  apiKey,
+		Prefix:                  body.Prefix,
+		IsDefault:               body.IsDefault,
+		IsActive:                body.IsActive,
+		UpstreamTokenSaving:     body.UpstreamTokenSaving,
+		UpstreamTokenSavingNote: body.UpstreamTokenSavingNote,
+		QuotaType:               body.QuotaType,
+		QuotaAuthSecret:         body.QuotaAuthSecret,
+	})
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return

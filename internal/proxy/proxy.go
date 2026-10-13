@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 	"nineguard/internal/plugins"
 	"nineguard/internal/providers"
 	"nineguard/internal/traffic"
+	"nineguard/internal/upstream"
 )
 
 type Proxy struct {
@@ -27,7 +29,12 @@ type Proxy struct {
 	keys       *keys.Manager
 	providers  *providers.Manager
 	plugins    *plugins.Manager
+	upstream   *upstream.Manager
 	httpClient *http.Client
+}
+
+func (p *Proxy) SetUpstreamManager(um *upstream.Manager) {
+	p.upstream = um
 }
 
 func NewProxy(mm *models.Manager, tm *traffic.Manager, km *keys.Manager, pm *providers.Manager, plm *plugins.Manager) (*Proxy, error) {
@@ -50,6 +57,7 @@ func NewProxy(mm *models.Manager, tm *traffic.Manager, km *keys.Manager, pm *pro
 		keys:       km,
 		providers:  pm,
 		plugins:    plm,
+		upstream:   upstream.NewManager(),
 		httpClient: client,
 	}, nil
 }
@@ -169,6 +177,16 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+
+	// 2.1 Handle GET /v1/quota: Unified client token budget and upstream capacity
+	if r.Method == http.MethodGet && (r.URL.Path == "/v1/quota" || r.URL.Path == "/quota") {
+		force := r.URL.Query().Get("force") == "1"
+		resp := p.buildUnifiedQuotaResponse(r.Context(), keyInfo, force)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(resp)
+		return
 	}
 
 	// 2.5 Enforce the Key Quota (ADR 0005). Keys in model mode skip it: their Model Quotas
@@ -664,3 +682,98 @@ func formatTokenCount(n int64) string {
 	}
 	return string(out)
 }
+
+func (p *Proxy) buildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.KeyInfo, force bool) *upstream.UnifiedQuotaResponse {
+	if p.upstream == nil {
+		p.upstream = upstream.NewManager()
+	}
+
+	resp := &upstream.UnifiedQuotaResponse{
+		UpstreamPools: make([]upstream.MergedPoolQuota, 0),
+		ModelQuotas:   make([]upstream.ModelQuotaSummary, 0),
+	}
+
+	now := time.Now()
+
+	// 1. Client key budget (Key mode vs Model mode)
+	if keyInfo != nil {
+		if !keyInfo.EnforcesModelQuotas() {
+			if keyInfo.QuotaLimit > 0 && keyInfo.QuotaPeriod != "" && keyInfo.QuotaPeriod != "none" && p.traffic != nil {
+				consumed, resetAt, err := p.traffic.GetQuotaUsage(keyInfo.ID, keyInfo.QuotaPeriod, now)
+				if err == nil {
+					rem := keyInfo.QuotaLimit - consumed
+					if rem < 0 {
+						rem = 0
+					}
+					var resetTime *time.Time
+					if !resetAt.IsZero() {
+						resetTime = &resetAt
+					}
+					resp.KeyQuota = &upstream.ClientKeyBudget{
+						Mode:      "key",
+						Limit:     keyInfo.QuotaLimit,
+						Used:      consumed,
+						Remaining: rem,
+						Period:    keyInfo.QuotaPeriod,
+						ResetAt:   resetTime,
+						Warning:   consumed >= int64(float64(keyInfo.QuotaLimit)*0.8),
+					}
+				}
+			}
+		} else {
+			// Model mode
+			if p.traffic != nil {
+				for _, mq := range keyInfo.ModelQuotas {
+					consumed, resetAt, err := p.traffic.GetModelQuotaUsage(keyInfo.ID, mq.ModelID, mq.QuotaPeriod, now)
+					if err == nil {
+						rem := mq.QuotaLimit - consumed
+						if rem < 0 {
+							rem = 0
+						}
+						var resetTime *time.Time
+						if !resetAt.IsZero() {
+							resetTime = &resetAt
+						}
+						resp.ModelQuotas = append(resp.ModelQuotas, upstream.ModelQuotaSummary{
+							ModelID:   mq.ModelID,
+							Limit:     mq.QuotaLimit,
+							Used:      consumed,
+							Remaining: rem,
+							Period:    mq.QuotaPeriod,
+							ResetAt:   resetTime,
+							Warning:   consumed >= int64(float64(mq.QuotaLimit)*0.8),
+						})
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Upstream provider pools
+	if p.providers != nil {
+		provList, err := p.providers.ListProviders()
+		if err == nil {
+			for _, prov := range provList {
+				if !prov.IsActive || prov.QuotaType == "disabled" || prov.QuotaType == "" {
+					continue
+				}
+
+				res, fetchErr := p.upstream.GetProviderQuotas(ctx, prov, force)
+				if fetchErr == nil && res != nil && len(res.Connections) > 0 {
+					merged := upstream.MergeAccountPools(prov.Name, res.Connections)
+					if merged != nil {
+						resp.UpstreamPools = append(resp.UpstreamPools, *merged)
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Filter pools if key has restricted model access
+	if keyInfo != nil && !keyInfo.IsAllModelsAllowed() {
+		resp.UpstreamPools = upstream.FilterPoolsByModelAccess(resp.UpstreamPools, keyInfo.AllowedModels)
+	}
+
+	return resp
+}
+

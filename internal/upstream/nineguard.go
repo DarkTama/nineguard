@@ -154,10 +154,27 @@ func (a *NineGuardAdapter) FetchQuotas(ctx context.Context, p providers.Provider
 		buckets := make([]QuotaBucket, len(pool.Buckets))
 		copy(buckets, pool.Buckets)
 		sortBuckets(buckets)
+
+		sub := pool.SubProvider
+		if sub == "" && strings.Contains(pool.Family, " · ") {
+			parts := strings.Split(pool.Family, " · ")
+			if len(parts) > 1 {
+				sub = strings.TrimSpace(parts[len(parts)-1])
+			}
+		}
+		if sub == "" {
+			sub = pool.Provider
+		}
+
+		connLabel := pool.Family
+		if connLabel == "" {
+			connLabel = pool.Provider
+		}
+
 		res.Connections = append(res.Connections, ConnectionQuota{
 			ConnectionID: pool.Family,
-			Provider:     pool.Provider,
-			AccountLabel: pool.Family,
+			Provider:     sub,
+			AccountLabel: connLabel,
 			Plan:         "Shared Upstream Pool",
 			Status:       pool.Status,
 			LastUpdated:  time.Now(),

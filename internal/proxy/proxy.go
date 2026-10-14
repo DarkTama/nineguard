@@ -853,10 +853,8 @@ func (p *Proxy) buildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.Key
 				}
 
 				if res != nil && len(res.Connections) > 0 {
-					merged := upstream.MergeAccountPools(prov.Name, res.Connections)
-					if merged != nil {
-						resp.UpstreamPools = append(resp.UpstreamPools, *merged)
-					}
+					mergedPools := upstream.MergeAccountPools(prov.Name, res.Connections)
+					resp.UpstreamPools = append(resp.UpstreamPools, mergedPools...)
 					if resp.LastUpdated == nil || res.LastUpdated.After(*resp.LastUpdated) {
 						tCopy := res.LastUpdated
 						resp.LastUpdated = &tCopy

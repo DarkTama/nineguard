@@ -27,7 +27,49 @@ export function renderUpstreamQuotas(container) {
   const content = h('div', { class: 'mt' },
     h('div', { class: 'skel', style: { height: '140px', borderRadius: '8px' } })
   );
-  container.replaceChildren(content);
+
+  // Auto-sync interval setting (global, applies to all providers)
+  const intervalSel = h('select', { class: 'select', disabled: true });
+  const intervalBar = h('div', {
+    style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }
+  },
+    icon('refresh'),
+    h('span', { style: { fontSize: '12.5px', fontWeight: '600' } }, 'Auto-sync every'),
+    intervalSel,
+    h('span', { class: 'muted', style: { fontSize: '11.5px' } }, 'Applies to the dashboard and the agent /quota command.')
+  );
+  container.replaceChildren(intervalBar, content);
+
+  async function loadSyncSettings() {
+    try {
+      const s = await api.get('/settings/upstream-sync');
+      if (!alive) return;
+      intervalSel.replaceChildren(...(s.allowed || []).map((v) =>
+        h('option', { value: v, selected: v === s.interval }, v)
+      ));
+      intervalSel.value = s.interval;
+      intervalSel.disabled = false;
+    } catch (err) {
+      if (!alive) return;
+      intervalBar.replaceChildren(
+        h('span', { class: 'muted', style: { fontSize: '12px' } }, `Sync interval unavailable: ${err.message}`)
+      );
+    }
+  }
+
+  intervalSel.addEventListener('change', async () => {
+    intervalSel.disabled = true;
+    try {
+      const s = await api.post('/settings/upstream-sync', { interval: intervalSel.value });
+      toast(`Auto-sync interval set to ${s.interval}`, 'ok');
+      intervalSel.value = s.interval;
+    } catch (err) {
+      toast(`Failed to save interval: ${err.message}`, 'error');
+      await loadSyncSettings();
+    } finally {
+      intervalSel.disabled = false;
+    }
+  });
 
   async function load(force = false) {
     if (loading) return;
@@ -247,6 +289,7 @@ export function renderUpstreamQuotas(container) {
     content.replaceChildren(...providerCards);
   }
 
+  loadSyncSettings();
   load(false);
 
   return () => {

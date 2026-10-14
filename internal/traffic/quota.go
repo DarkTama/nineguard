@@ -108,6 +108,32 @@ func (m *Manager) SetChatCommandsEnabled(enabled bool) error {
 	return err
 }
 
+// GetUpstreamSyncInterval returns the stored upstream quota sync interval string (default "10m").
+// Validation lives in the upstream package; callers parse the value there.
+func (m *Manager) GetUpstreamSyncInterval() string {
+	if m == nil || m.db == nil {
+		return "10m"
+	}
+	var val string
+	if err := m.db.QueryRow("SELECT value FROM settings WHERE key = 'upstream_quota_sync_interval' LIMIT 1").Scan(&val); err != nil || strings.TrimSpace(val) == "" {
+		return "10m"
+	}
+	return strings.TrimSpace(val)
+}
+
+// SetUpstreamSyncInterval stores an already validated interval string.
+func (m *Manager) SetUpstreamSyncInterval(val string) error {
+	if m == nil || m.db == nil {
+		return nil
+	}
+	_, err := m.db.Exec(`
+		INSERT INTO settings (key, value, updated_at)
+		VALUES ('upstream_quota_sync_interval', ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+	`, val)
+	return err
+}
+
 
 // GetQuotaUsage queries cumulative tokens consumed by apiKeyID within its active quota window.
 func GetQuotaUsage(d *db.DB, apiKeyID string, period string, now time.Time) (int64, time.Time, error) {

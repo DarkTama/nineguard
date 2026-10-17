@@ -279,6 +279,11 @@ func (d *DB) migrate() error {
 	_, _ = d.Exec("CREATE INDEX IF NOT EXISTS idx_traffic_key_model_ts ON traffic_logs(api_key_id, model_id, timestamp)")
 	_, _ = d.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('quota_warn_percent', '80')")
 
+	// Quota reset schedule (ADR 0010): the key's own schedule (JSON, NULL = follow the global
+	// schedule) and its Transitional Windows (JSON by Quota Period, NULL = none).
+	_, _ = d.Exec("ALTER TABLE api_keys ADD COLUMN quota_reset_schedule TEXT")
+	_, _ = d.Exec("ALTER TABLE api_keys ADD COLUMN quota_window_pins TEXT")
+
 	// Upstream quotas (ADR 0009)
 	_, _ = d.Exec("ALTER TABLE providers ADD COLUMN quota_type TEXT DEFAULT 'disabled'")
 	_, _ = d.Exec("ALTER TABLE providers ADD COLUMN quota_auth_secret TEXT DEFAULT ''")

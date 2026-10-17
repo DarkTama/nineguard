@@ -216,10 +216,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 2.5 Enforce the Key Quota (ADR 0005). Keys in model mode skip it: their Model Quotas
 	// are checked after the model is known (ADR 0007).
 	if p.traffic != nil && keyInfo != nil && !keyInfo.EnforcesModelQuotas() && keyInfo.QuotaLimit > 0 && keyInfo.QuotaPeriod != "" && keyInfo.QuotaPeriod != "none" {
-		consumed, resetAt, err := p.traffic.GetQuotaUsage(keyInfo.ID, keyInfo.QuotaPeriod, time.Now())
+		consumed, resetAt, err := p.traffic.GetQuotaUsage(keyInfo.ID, keyInfo.QuotaPeriod, keyInfo.ResetRule, time.Now())
 		if err == nil && consumed >= keyInfo.QuotaLimit {
 			slog.Warn("quota exceeded for api key", "key", keyInfo.Name, "consumed", consumed, "limit", keyInfo.QuotaLimit, "period", keyInfo.QuotaPeriod)
-			writeQuotaExceeded(w, "", consumed, keyInfo.QuotaLimit, keyInfo.QuotaPeriod, resetAt)
+			writeQuotaExceeded(w, "", consumed, keyInfo.QuotaLimit, keyInfo.QuotaPeriod, keyInfo.ResetRule, resetAt)
 
 			errMsg := fmt.Sprintf("quota exceeded (%d/%d tokens %s)", consumed, keyInfo.QuotaLimit, keyInfo.QuotaPeriod)
 			_ = p.traffic.Record(&traffic.LogEntry{
@@ -408,10 +408,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// disabled checks, so a bare "opus" counts against the quota of "9router/opus".
 	if keyInfo.EnforcesModelQuotas() && modelID != "" && p.traffic != nil {
 		if mq := keyInfo.ModelQuotaFor(modelID); mq != nil {
-			consumed, resetAt, qerr := p.traffic.GetModelQuotaUsage(keyInfo.ID, modelID, mq.QuotaPeriod, time.Now())
+			consumed, resetAt, qerr := p.traffic.GetModelQuotaUsage(keyInfo.ID, modelID, mq.QuotaPeriod, keyInfo.ResetRule, time.Now())
 			if qerr == nil && consumed >= mq.QuotaLimit {
 				slog.Warn("model quota exceeded", "key", keyInfo.Name, "model", modelID, "consumed", consumed, "limit", mq.QuotaLimit, "period", mq.QuotaPeriod)
-				writeQuotaExceeded(w, modelID, consumed, mq.QuotaLimit, mq.QuotaPeriod, resetAt)
+				writeQuotaExceeded(w, modelID, consumed, mq.QuotaLimit, mq.QuotaPeriod, keyInfo.ResetRule, resetAt)
 
 				errMsg := fmt.Sprintf("model quota exceeded (%d/%d tokens %s) for %s", consumed, mq.QuotaLimit, mq.QuotaPeriod, modelID)
 				_ = p.traffic.Record(&traffic.LogEntry{
@@ -821,7 +821,7 @@ func (p *Proxy) buildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.Key
 	if keyInfo != nil {
 		if !keyInfo.EnforcesModelQuotas() {
 			if keyInfo.QuotaLimit > 0 && keyInfo.QuotaPeriod != "" && keyInfo.QuotaPeriod != "none" && p.traffic != nil {
-				consumed, resetAt, err := p.traffic.GetQuotaUsage(keyInfo.ID, keyInfo.QuotaPeriod, now)
+				consumed, resetAt, err := p.traffic.GetQuotaUsage(keyInfo.ID, keyInfo.QuotaPeriod, keyInfo.ResetRule, now)
 				if err == nil {
 					rem := keyInfo.QuotaLimit - consumed
 					if rem < 0 {
@@ -846,7 +846,7 @@ func (p *Proxy) buildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.Key
 			// Model mode
 			if p.traffic != nil {
 				for _, mq := range keyInfo.ModelQuotas {
-					consumed, resetAt, err := p.traffic.GetModelQuotaUsage(keyInfo.ID, mq.ModelID, mq.QuotaPeriod, now)
+					consumed, resetAt, err := p.traffic.GetModelQuotaUsage(keyInfo.ID, mq.ModelID, mq.QuotaPeriod, keyInfo.ResetRule, now)
 					if err == nil {
 						rem := mq.QuotaLimit - consumed
 						if rem < 0 {

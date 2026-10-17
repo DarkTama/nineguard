@@ -11,8 +11,18 @@ import (
 	"nineguard/internal/timeutil"
 )
 
-// CalcQuotaWindow returns the UTC start instant and the next reset instant for a given quota period.
-func CalcQuotaWindow(period string, now time.Time) (start time.Time, resetAt time.Time) {
+// CalcQuotaWindow returns the start of the current Quota Window and the next reset instant,
+// both absolute instants. An active Transitional Window for the period wins; otherwise the
+// window comes from the rule's schedule, and the zero ResetRule keeps the ADR 0005 UTC calendar.
+func CalcQuotaWindow(period string, rule ResetRule, now time.Time) (start time.Time, resetAt time.Time) {
+	if pin, ok := rule.Pins[period]; ok && !now.Before(pin.Start) && now.Before(pin.Until) {
+		return pin.Start.UTC(), pin.Until.UTC()
+	}
+	return scheduleWindow(period, rule.Schedule, now)
+}
+
+// defaultWindow is the ADR 0005 behaviour: UTC calendar boundaries.
+func defaultWindow(period string, now time.Time) (start time.Time, resetAt time.Time) {
 	now = now.UTC()
 	switch period {
 	case "daily":
@@ -40,11 +50,11 @@ func CalcQuotaWindow(period string, now time.Time) (start time.Time, resetAt tim
 }
 
 // GetQuotaUsage queries cumulative tokens consumed by apiKeyID within its active quota window.
-func (m *Manager) GetQuotaUsage(apiKeyID string, period string, now time.Time) (int64, time.Time, error) {
+func (m *Manager) GetQuotaUsage(apiKeyID string, period string, rule ResetRule, now time.Time) (int64, time.Time, error) {
 	if m == nil || m.db == nil {
 		return 0, time.Time{}, nil
 	}
-	return GetQuotaUsage(m.db, apiKeyID, period, now)
+	return GetQuotaUsage(m.db, apiKeyID, period, rule, now)
 }
 
 // GetHeavyTokenThreshold reads the configured heavy token threshold from settings (default 8000).
@@ -136,12 +146,12 @@ func (m *Manager) SetUpstreamSyncInterval(val string) error {
 
 
 // GetQuotaUsage queries cumulative tokens consumed by apiKeyID within its active quota window.
-func GetQuotaUsage(d *db.DB, apiKeyID string, period string, now time.Time) (int64, time.Time, error) {
+func GetQuotaUsage(d *db.DB, apiKeyID string, period string, rule ResetRule, now time.Time) (int64, time.Time, error) {
 	if period == "none" || period == "" {
 		return 0, time.Time{}, nil
 	}
-	start, resetAt := CalcQuotaWindow(period, now)
-	startStr := start.Format(timeutil.SQLiteLayout)
+	start, resetAt := CalcQuotaWindow(period, rule, now)
+	startStr := start.UTC().Format(timeutil.SQLiteLayout)
 
 	query := `SELECT COALESCE(SUM(total_tokens), 0) FROM traffic_logs WHERE api_key_id = ? AND timestamp >= ?`
 	var consumed int64

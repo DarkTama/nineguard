@@ -1222,11 +1222,17 @@ func (h *Handler) CreateKey(w http.ResponseWriter, r *http.Request) {
 		QuotaPeriod     string            `json:"quota_period"`
 		QuotaMode       string            `json:"quota_mode"`
 		ModelQuotas     []keys.ModelQuota `json:"model_quotas"`
+		ResetSchedule   json.RawMessage   `json:"quota_reset_schedule"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
 	if body.QuotaLimit < 0 {
 		jsonError(w, http.StatusBadRequest, "Quota limit cannot be negative")
+		return
+	}
+	resetSched, serr := parseOptSchedule(body.ResetSchedule)
+	if serr != nil {
+		jsonError(w, http.StatusBadRequest, serr.Error())
 		return
 	}
 	body.QuotaPeriod = strings.ToLower(strings.TrimSpace(body.QuotaPeriod))
@@ -1257,6 +1263,7 @@ func (h *Handler) CreateKey(w http.ResponseWriter, r *http.Request) {
 		QuotaPeriod:     body.QuotaPeriod,
 		QuotaMode:       quotaMode,
 		ModelQuotas:     modelQuotas,
+		ResetSchedule:   resetSched.Value, // nil (absent or null) = follow the global schedule
 	})
 	if err != nil {
 		slog.Error("failed to create key", "error", err)
@@ -1288,9 +1295,15 @@ func (h *Handler) UpdateKey(w http.ResponseWriter, r *http.Request) {
 		QuotaPeriod     *string            `json:"quota_period"`
 		QuotaMode       *string            `json:"quota_mode"`
 		ModelQuotas     *[]keys.ModelQuota `json:"model_quotas"`
+		ResetSchedule   json.RawMessage    `json:"quota_reset_schedule"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid payload")
+		return
+	}
+	resetSched, serr := parseOptSchedule(body.ResetSchedule)
+	if serr != nil {
+		jsonError(w, http.StatusBadRequest, serr.Error())
 		return
 	}
 
@@ -1321,6 +1334,7 @@ func (h *Handler) UpdateKey(w http.ResponseWriter, r *http.Request) {
 	upd := keys.KeyUpdate{
 		Name: body.Name, ModelAccessMode: body.ModelAccessMode, ModelGroupIDs: body.ModelGroupIDs, AllowedModels: body.AllowedModels,
 		QuotaLimit: body.QuotaLimit, QuotaPeriod: body.QuotaPeriod, QuotaMode: body.QuotaMode,
+		ResetSchedule: resetSched.scheduleChange(),
 	}
 	if body.ModelQuotas != nil {
 		// Rows already saved on this key are accepted as they are (they may be inactive now).

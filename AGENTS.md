@@ -58,7 +58,7 @@ Before a feature is finished, check and update:
 
 - **SQLite has one open connection** (`SetMaxOpenConns(1)`). Never start a query while another `rows` is open, and inside a transaction use only the `tx` handle, or the process deadlocks. Read, close, then query.
 - **Migrations are idempotent** in `internal/db/db.go` `migrate()`: `CREATE … IF NOT EXISTS`, ignored `ALTER … ADD COLUMN`, guarded backfills. Existing databases must keep working.
-- **Soft Post-Facto quota enforcement (ADR 0005):** block only when usage already meets the limit; admitted requests finish. Quota windows are UTC-anchored.
+- **Soft Post-Facto quota enforcement (ADR 0005):** block only when usage already meets the limit; admitted requests finish. Quota windows are UTC-anchored unless an Effective Reset Schedule applies (ADR 0010); a schedule edit never recounts usage (Transitional Window), so write new window math with `traffic.CalcQuotaWindow(period, key.ResetRule, now)` and never compute a window start yourself.
 - **Model names:** `traffic_logs.model` is what the client sent; `model_id` is the resolved canonical id (ADR 0008). Compare model ids case-insensitively.
 - **Don't change access/disabled checks as a side effect** of unrelated work; note issues as follow-ups instead.
 - **Line endings:** the repo uses CRLF working files (`autocrlf=true`). Don't reformat whole files; keep diffs minimal.

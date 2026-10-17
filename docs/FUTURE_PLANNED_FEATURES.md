@@ -69,6 +69,12 @@ Enforce daily, weekly, monthly, or lifetime token budgets per client API key wit
   - Endpoints table: quota consumption progress bar (e.g. `340k / 500k (68%)`). Red highlight when quota exhausted.
   - Reset times rendered in viewer's local timezone (e.g. WIB) using browser context.
 
+### Extension: Quota Reset Schedule (see ADR-0010)
+
+- The UTC boundaries above are the default. An admin can set a **Quota Reset Schedule** (timezone, time of day, weekday, day of month) globally (Quotas page) and override it per key (key modal). Resolution: key schedule, else global, else the UTC default; the global schedule is unset by default, so existing keys do not change.
+- Editing a schedule never recounts usage: the running window keeps its start and ends at the first reset of the new schedule (a Transitional Window, `api_keys.quota_window_pins`).
+- The 429 message names the key's timezone (`at 14:00 WIB`); `Retry-After` follows the schedule.
+
 ### Extension: Model Quotas (see ADR-0007, ADR-0008)
 
 - Each key has a **Quota Mode**: `key` (the Key Quota above, total across models) or `model` (separate limits per exact Model). Exclusive: the inactive mode's settings are kept.

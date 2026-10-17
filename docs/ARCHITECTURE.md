@@ -73,6 +73,26 @@ NineGuard dirancang berdasarkan prinsip:
    * Bertindak sebagai firewall model. Model yang dinonaktifkan langsung dicegat sebelum menyentuh upstream.
 5. **`internal/traffic`:**
    * Mengagregasi metrik analitik: data time-series, p95 latensi, token mix, dan laporan penggunaan per key.
+   * Menghitung jendela kuota (`CalcQuotaWindow`) dari Quota Reset Schedule milik key. Lihat bagian 3.1.
+
+### 3.1 Jendela Kuota & Quota Reset Schedule
+
+Kuota (Key Quota maupun Model Quota) dihitung dari token yang terpakai di dalam **jendela** berjalan. Kapan jendela itu reset ditentukan oleh **Quota Reset Schedule**: timezone (nama IANA), jam (HH:MM), hari dalam minggu (untuk `weekly`), dan tanggal (untuk `monthly`). Lihat ADR 0010.
+
+**Jadwal yang berlaku** untuk sebuah key dicari berurutan:
+1. jadwal milik key itu sendiri (override),
+2. jadwal global (diatur di halaman Quotas, tombol *Reset schedule*),
+3. bawaan lama: 00:00 UTC, Senin untuk weekly, tanggal 1 untuk monthly.
+
+Jadwal global kosong secara bawaan, jadi key yang sudah ada tidak berubah perilakunya sampai admin mengaturnya.
+
+**Cara jendela dihitung.** Tidak ada penghitung atau cron reset. Awal jendela dihitung ulang setiap pengecekan dari jadwal dan jam sekarang, lalu token dijumlahkan dari `traffic_logs` sejak awal jendela itu (`SELECT SUM(total_tokens) ... WHERE timestamp >= awal_jendela`). Awal dan akhir tiap jendela berasal dari satu fungsi yang sama, sehingga jendela berurutan tidak pernah tumpang tindih atau berlubang. Waktu dibentuk dari tanggal lokal (`time.Date`), bukan penambahan 24 jam, jadi tidak bergeser satu jam saat daylight saving berganti. Tanggal 29-31 di bulan yang lebih pendek berarti hari terakhir bulan itu.
+
+**Mengubah jadwal tidak menghitung ulang pemakaian.** Saat jadwal efektif sebuah key berubah (edit jadwal key, edit jadwal global, atau menghapus override), jendela yang sedang berjalan disimpan sebagai **Transitional Window**: awalnya tetap, dan berakhir di reset pertama dari jadwal baru. Setelah itu jendela kembali dihitung normal. Satu jendela itu bisa lebih pendek atau lebih panjang dari biasanya. Ini disimpan di kolom `api_keys.quota_window_pins` (JSON per periode, berisi `start` dan `until`) dan kedaluwarsa sendiri, tanpa job pembersih. Contoh: reset bulanan tanggal 1 diganti ke tanggal 20 pada 17 Okt, maka jendela menjadi 1 Okt sampai 20 Okt, lalu 20 Okt sampai 20 Nov. Pemakaian 4,1M tetap 4,1M, sehingga key yang sedang diblokir tidak terbuka dan key yang aman tidak mendadak terblokir.
+
+**Penyimpanan:** `api_keys.quota_reset_schedule` (JSON, NULL berarti mengikuti jadwal global), `api_keys.quota_window_pins` (JSON), dan baris `settings` bernama `quota_reset_schedule` untuk jadwal global.
+
+**Pesan 429** menampilkan jam reset dalam timezone jadwal efektif key (mis. `at 14:00 WIB`), atau `UTC` bila memakai bawaan. `Retry-After` dalam detik sampai reset berikutnya, atau sampai akhir Transitional Window.
 
 ---
 

@@ -110,7 +110,25 @@ A Model Quota whose Model the API Key can currently no longer use (access lost, 
 Which kind of quota an API Key enforces: `key` (a single Key Quota) or `model` (Model Quotas). Exactly one mode is enforced at a time. Settings of the inactive mode are kept, not deleted, and take effect again if the mode is switched back.
 
 **Quota Period**
-The fixed time cycle for resetting a Key Quota or Model Quota: `daily`, `weekly`, `monthly`, or `total` (all-time). Unlike reporting periods, Quota Periods always anchor to UTC midnight (ISO Monday 00:00 UTC for weekly; 1st of month 00:00 UTC for monthly).
+The fixed time cycle for resetting a Key Quota or Model Quota: `daily`, `weekly`, `monthly`, or `total` (all-time). Says how often usage resets, not when; see Quota Reset Schedule. Unlike reporting periods, it never follows the viewer's timezone.
+
+**Quota Reset Schedule**
+When Quota Periods reset: a named timezone (so daylight saving is followed), a time of day to the minute, a weekday (weekly) and a day of month (monthly). It applies to an API Key's Key Quota and all its Model Quotas alike. Fields the Quota Period does not use are kept, not discarded. A day of month past the end of a short month means that month's last day. Can be set globally and per API Key (see Global Reset Schedule, Key Reset Schedule).
+
+**Global Reset Schedule**
+The Quota Reset Schedule that applies to every API Key without a Key Reset Schedule. Unset by default.
+
+**Key Reset Schedule**
+A Quota Reset Schedule set on one API Key, overriding the Global Reset Schedule. A key can hold a UTC schedule to stay on UTC while a Global Reset Schedule exists. A key without one follows the global schedule.
+
+**Effective Reset Schedule**
+The schedule an API Key actually uses: its Key Reset Schedule, else the Global Reset Schedule, else the default of 00:00 UTC, ISO Monday for weekly and the 1st for monthly.
+
+**Quota Window**
+The span between two consecutive resets of a Quota Period, within which usage is counted.
+
+**Transitional Window**
+The single Quota Window that follows a change of an API Key's Effective Reset Schedule. It keeps the start of the window that was running, so usage already counted is kept, and ends at the first reset of the new schedule. It can be shorter or longer than a normal window. Changing a schedule never recounts or clears usage.
 
 **Soft Post-Facto Enforcement**
 The mechanism where pre-flight checks block requests only when accumulated tokens already meet or exceed the quota. An admitted request is never truncated mid-flight; final token count is tallied on completion.

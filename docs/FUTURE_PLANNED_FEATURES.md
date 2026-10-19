@@ -149,3 +149,18 @@ Provide granular request/response body visibility for debugging agent tool calls
     - **Copy as cURL**: Generate reproducible cURL command including upstream headers.
     - **Replay Request**: Open a playground modal to resend the payload directly to the original or alternative model and inspect differences.
 
+
+---
+
+## 7. Usage Diagnostics, Estimated Cost & Usage Summary
+
+### Goal
+Explain why Claude feels "dumber" through NineGuard than in Claude Code, price usage in USD or a local currency, and give key holders a history of their own usage.
+
+### Specification & Decisions
+Full design: `docs/superpowers/specs/2026-10-19-usage-diagnostics-cost-summary-design.md`. ADRs 0011 (proxy requests streaming usage), 0012 (cost stored per request), 0013 (Upstream Usage aggregate only).
+
+- **Phase 1, Diagnostics** (`feat/usage-diagnostics`): inject `stream_options.include_usage` and strip the extra chunk for clients that did not ask; parse cache read/write, reasoning tokens, Thinking Requested/Delivered and Served Model on `chat/completions`, `messages`, `responses`; Model Fallback badge, filter and WARN; Estimated Usage flag.
+- **Phase 2, Estimated Cost** (`feat/estimated-cost`): LiteLLM price list (daily, embedded snapshot fallback) matched by normalized family, per-Model overrides; `cost_usd` at record time, admin re-price; Display Currency with Frankfurter (ECB) daily rate and manual override; cost visibility to key holders (global + per key, default on).
+- **Phase 3, Usage Summary** (`feat/usage-summary`): `/usage [7d|30d|all]` (default 30d, no longer an alias of `/quota`), `GET /v1/usage`, admin per-key panel (Overview/Models, heatmap); inferred Sessions (30 min gap); key's reset-schedule timezone; Upstream Usage from a parent NineGuard; book Usage Comparison.
+- **Phase 4, decision gate**: from Phase 1 data, decide on native `/v1/messages` support and/or a force-thinking Built-in Plugin.

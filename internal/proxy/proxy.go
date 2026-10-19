@@ -18,6 +18,7 @@ import (
 	"nineguard/internal/keys"
 	"nineguard/internal/models"
 	"nineguard/internal/plugins"
+	"nineguard/internal/pricing"
 	"nineguard/internal/providers"
 	"nineguard/internal/traffic"
 	"nineguard/internal/upstream"
@@ -32,6 +33,20 @@ type Proxy struct {
 	upstream   *upstream.Manager
 	instanceID string
 	httpClient *http.Client
+	fallbackAlerter *FallbackAlerter
+	pricingResolver *pricing.Resolver
+	pricingManager  *pricing.Manager
+}
+
+func (p *Proxy) SetPricingResolver(r *pricing.Resolver) {
+	p.pricingResolver = r
+}
+
+func (p *Proxy) SetPricing(pm *pricing.Manager) {
+	p.pricingManager = pm
+	if pm != nil {
+		p.pricingResolver = pm.Resolver()
+	}
 }
 
 func (p *Proxy) SetInstanceID(id string) {
@@ -61,9 +76,10 @@ func NewProxy(mm *models.Manager, tm *traffic.Manager, km *keys.Manager, pm *pro
 		traffic:    tm,
 		keys:       km,
 		providers:  pm,
-		plugins:    plm,
-		upstream:   upstream.NewManager(),
-		httpClient: client,
+		plugins:         plm,
+		upstream:        upstream.NewManager(),
+		fallbackAlerter: NewFallbackAlerter(10 * time.Minute),
+		httpClient:      client,
 	}, nil
 }
 
@@ -213,6 +229,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 2.2 Handle GET /v1/usage: Client token and cost usage summary
+	if r.Method == http.MethodGet && (r.URL.Path == "/v1/usage" || r.URL.Path == "/usage") {
+		p.handleGetUsage(w, r, keyInfo, maskedKey, keyName, clientIP, start)
+		return
+	}
+
 	// 2.5 Enforce the Key Quota (ADR 0005). Keys in model mode skip it: their Model Quotas
 	// are checked after the model is known (ADR 0007).
 	if p.traffic != nil && keyInfo != nil && !keyInfo.EnforcesModelQuotas() && keyInfo.QuotaLimit > 0 && keyInfo.QuotaPeriod != "" && keyInfo.QuotaPeriod != "none" {
@@ -250,8 +272,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	modelName := strings.TrimSpace(req.Model)
 	hasImages, imageCount := detectImages(req.Messages)
 
+	apiFormat := DetectAPIFormat(r.URL.Path)
+	thinkingRequested := DetectThinkingRequested(apiFormat, bodyBytes, modelName)
+
 	// Intercept Chat Commands (e.g. /quota, /limits, /usage)
-	isChatPath := (r.Method == http.MethodPost && (strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/chat/completions")))
+	isChatPath := (r.Method == http.MethodPost && apiFormat == "chat")
 	if isChatPath {
 		chatCmdsEnabled := true
 		if p.traffic != nil {
@@ -260,8 +285,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if chatCmdsEnabled {
 			if cmd, arg, isCmd := IsChatCommand(req.Messages); isCmd {
 				slog.Info("chat command intercepted", "command", cmd, "arg", arg, "key", keyName)
-				quotaData := p.buildUnifiedQuotaResponse(r.Context(), keyInfo, false)
-				markdown := FormatQuotaMarkdown(quotaData, arg)
+				var markdown string
+				if cmd == "/usage" {
+					markdown = p.buildUsageMarkdown(r.Context(), keyInfo, arg)
+				} else {
+					quotaData := p.buildUnifiedQuotaResponse(r.Context(), keyInfo, false)
+					markdown = FormatQuotaMarkdown(quotaData, arg)
+				}
 				WriteChatCommandResponse(w, cmd, markdown, req.Stream)
 
 				if p.traffic != nil {
@@ -524,6 +554,20 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	injectedUsage := false
+	if isChat && req.Stream {
+		streamInjEnabled := true
+		if p.traffic != nil {
+			streamInjEnabled = p.traffic.IsStreamUsageInjectionEnabled()
+		}
+		if streamInjEnabled {
+			if updatedBody, injected, err := InjectStreamUsage(forwardBody); err == nil && injected {
+				forwardBody = updatedBody
+				injectedUsage = true
+			}
+		}
+	}
+
 	// Build target URL
 	targetBase := strings.TrimRight(provider.Route, "/")
 	forwardPath := r.URL.Path
@@ -657,6 +701,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isSSE := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 
 	var promptTokens, completionTokens, totalTokens int
+	var cacheReadTokens, cacheWriteTokens, reasoningTokens int
+	var thinkingDelivered bool
+	var servedModel string
+	var usageEstimated bool
 	var responseErrMsg *string
 	var capturedRespBody []byte
 
@@ -665,57 +713,80 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		flusher, isFlusher := w.(http.Flusher)
 		reader := bufio.NewReader(resp.Body)
 		chunkCount := 0
+		var eventBuf bytes.Buffer
+		diagParser := NewStreamDiagnosticsParser(apiFormat)
 
 		for {
 			line, err := reader.ReadBytes('\n')
 			if len(line) > 0 {
-				_, _ = w.Write(line)
-				if isFlusher {
-					flusher.Flush()
-				}
-				lineStr := string(line)
-				if strings.HasPrefix(lineStr, "data: ") {
-					dataPayload := strings.TrimSpace(lineStr[6:])
-					if dataPayload != "[DONE]" && strings.Contains(dataPayload, `"usage"`) {
-						var chunkData struct {
-							Usage openAIUsage `json:"usage"`
-						}
-						if err := json.Unmarshal([]byte(dataPayload), &chunkData); err == nil && chunkData.Usage.TotalTokens > 0 {
-							promptTokens = chunkData.Usage.PromptTokens
-							completionTokens = chunkData.Usage.CompletionTokens
-							totalTokens = chunkData.Usage.TotalTokens
+				eventBuf.Write(line)
+				trimmed := bytes.TrimRight(line, "\r\n")
+				if len(trimmed) == 0 {
+					// Blank line completes an SSE event
+					rawEvent := eventBuf.Bytes()
+					isUsageOnly, dataPayload := IsUsageOnlySSEEvent(rawEvent)
+
+					// Drop injected usage-only event from client stream (ADR 0011)
+					if !(injectedUsage && isUsageOnly) {
+						_, _ = w.Write(rawEvent)
+						if isFlusher {
+							flusher.Flush()
 						}
 					}
-					chunkCount++
+
+					diagParser.FeedSSEEvent(rawEvent, dataPayload)
+					if len(dataPayload) > 0 && string(dataPayload) != "[DONE]" {
+						chunkCount++
+					}
+					eventBuf.Reset()
 				}
 			}
 			if err != nil {
+				if eventBuf.Len() > 0 {
+					rawEvent := eventBuf.Bytes()
+					isUsageOnly, dataPayload := IsUsageOnlySSEEvent(rawEvent)
+					if !(injectedUsage && isUsageOnly) {
+						_, _ = w.Write(rawEvent)
+						if isFlusher {
+							flusher.Flush()
+						}
+					}
+					diagParser.FeedSSEEvent(rawEvent, dataPayload)
+				}
 				break
 			}
 		}
 
-		if totalTokens == 0 && chunkCount > 0 {
-			completionTokens = chunkCount
-			if completionTokens < 1 {
-				completionTokens = 1
-			}
-			promptTokens = len(bodyBytes) / 4
-			totalTokens = promptTokens + completionTokens
-		}
+		diag := diagParser.Finalize(chunkCount, len(bodyBytes), resp.StatusCode)
+		promptTokens = diag.PromptTokens
+		completionTokens = diag.CompletionTokens
+		totalTokens = diag.TotalTokens
+		cacheReadTokens = diag.CacheReadTokens
+		cacheWriteTokens = diag.CacheWriteTokens
+		reasoningTokens = diag.ReasoningTokens
+		thinkingDelivered = diag.ThinkingDelivered
+		servedModel = diag.ServedModel
+		usageEstimated = diag.UsageEstimated
 	} else {
 		respBody, err := io.ReadAll(resp.Body)
 		if err == nil {
 			capturedRespBody = respBody
 			_, _ = w.Write(respBody)
 
-			var chatResp chatResponse
-			if err := json.Unmarshal(respBody, &chatResp); err == nil {
-				promptTokens = chatResp.Usage.PromptTokens
-				completionTokens = chatResp.Usage.CompletionTokens
-				totalTokens = chatResp.Usage.TotalTokens
-				if chatResp.Error != nil && chatResp.Error.Message != "" {
-					responseErrMsg = &chatResp.Error.Message
-				}
+			diag := ParseNonStreamDiagnostics(apiFormat, respBody)
+			promptTokens = diag.PromptTokens
+			completionTokens = diag.CompletionTokens
+			totalTokens = diag.TotalTokens
+			cacheReadTokens = diag.CacheReadTokens
+			cacheWriteTokens = diag.CacheWriteTokens
+			reasoningTokens = diag.ReasoningTokens
+			thinkingDelivered = diag.ThinkingDelivered
+			servedModel = diag.ServedModel
+			if resp.StatusCode < 400 && totalTokens == 0 {
+				usageEstimated = true
+			}
+			if diag.ErrorMessage != nil {
+				responseErrMsg = diag.ErrorMessage
 			}
 		}
 	}
@@ -723,30 +794,48 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		durMs := int(time.Since(start).Milliseconds())
 		logEntry := &traffic.LogEntry{
-			APIKey:           maskedKey,
-			APIKeyName:       keyName,
-			APIKeyID:         keyInfo.ID,
-			ProviderID:       provider.ID,
-			Model:            modelName,
-			ModelID:          modelID,
-			PromptTokens:     promptTokens,
-			CompletionTokens: completionTokens,
-			TotalTokens:      totalTokens,
-			DurationMs:       durMs,
-			StatusCode:       resp.StatusCode,
-			ClientIP:         clientIP,
-			Stream:           isSSE || req.Stream,
-			ErrorMessage:     responseErrMsg,
-			PluginsApplied:   pluginsApplied,
-			PluginsSkipped:   pluginsSkipped,
-			TokensSaved:      tokensSaved,
-			TokensOverhead:   tokensOverhead,
-			PluginErrors:     pluginErrors,
-			PluginMs:         pluginMs,
-			HasImages:        hasImages,
-			ImageCount:       imageCount,
+			APIKey:            maskedKey,
+			APIKeyName:        keyName,
+			APIKeyID:          keyInfo.ID,
+			ProviderID:        provider.ID,
+			Model:             modelName,
+			ModelID:           modelID,
+			PromptTokens:      promptTokens,
+			CompletionTokens:  completionTokens,
+			TotalTokens:       totalTokens,
+			DurationMs:        durMs,
+			StatusCode:        resp.StatusCode,
+			ClientIP:          clientIP,
+			Stream:            isSSE || req.Stream,
+			ErrorMessage:      responseErrMsg,
+			PluginsApplied:    pluginsApplied,
+			PluginsSkipped:    pluginsSkipped,
+			TokensSaved:       tokensSaved,
+			TokensOverhead:    tokensOverhead,
+			PluginErrors:      pluginErrors,
+			PluginMs:          pluginMs,
+			HasImages:         hasImages,
+			ImageCount:        imageCount,
+			ApiFormat:         apiFormat,
+			CacheReadTokens:   cacheReadTokens,
+			CacheWriteTokens:  cacheWriteTokens,
+			ReasoningTokens:   reasoningTokens,
+			ThinkingRequested: thinkingRequested,
+			ThinkingDelivered: thinkingDelivered,
+			ServedModel:       servedModel,
+			ModelFallback:     models.IsModelFallback(modelID, servedModel),
+			UsageEstimated:    usageEstimated,
 		}
+
+		if p.pricingResolver != nil && !usageEstimated && totalTokens > 0 && modelID != "nineguard/system" {
+			logEntry.CostUSD = p.pricingResolver.CalculateCost(modelID, promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens)
+		}
+
 		_ = p.traffic.Record(logEntry)
+
+		if logEntry.ModelFallback && p.fallbackAlerter != nil && keyInfo != nil {
+			p.fallbackAlerter.Alert(keyInfo.ID, keyName, modelID, servedModel, time.Now())
+		}
 
 		if p.traffic != nil {
 			recMode := p.traffic.GetRecordPayloadsSetting()
@@ -911,5 +1000,117 @@ func (p *Proxy) buildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.Key
 	}
 
 	return resp
+}
+
+func (p *Proxy) buildUsageSummaryResponse(ctx context.Context, keyInfo *keys.KeyInfo, rng string) (*traffic.UsageSummary, error) {
+	if p.traffic == nil {
+		return nil, fmt.Errorf("traffic manager not initialized")
+	}
+
+	loc := time.UTC
+	if keyInfo != nil && keyInfo.EffectiveResetSchedule != nil {
+		loc = keyInfo.EffectiveResetSchedule.Location()
+	}
+
+	keyID := ""
+	if keyInfo != nil {
+		keyID = keyInfo.ID
+	}
+
+	summary, err := p.traffic.GetUsageSummary(keyID, rng, loc, time.Now(), p.pricingManager)
+	if err != nil {
+		return nil, err
+	}
+
+	globalCostVisible := true
+	if p.pricingManager != nil {
+		if cs, err := p.pricingManager.GetCostSettings(); err == nil {
+			globalCostVisible = cs.CostVisibleToKeys
+		}
+	}
+
+	var keyCostVis *string
+	if keyInfo != nil {
+		keyCostVis = keyInfo.CostVisibility
+	}
+	showCost := pricing.ShowCost(keyCostVis, globalCostVisible)
+
+	if !showCost {
+		summary.Cost = nil
+		summary.UpstreamUsage = nil
+	} else if p.upstream != nil && p.providers != nil {
+		provList, _ := p.providers.ListProviders()
+		for _, prov := range provList {
+			if prov.IsActive && prov.QuotaType == "nineguard" {
+				upSummary, upErr := p.upstream.FetchUpstreamUsage(ctx, prov.ID, prov.Route, prov.APIKey, rng)
+				entry := traffic.UpstreamUsageEntry{
+					Provider: prov.Name,
+					Summary:  upSummary,
+				}
+				if upErr != nil {
+					entry.Error = upErr.Error()
+				}
+				summary.UpstreamUsage = append(summary.UpstreamUsage, entry)
+			}
+		}
+	}
+
+	return summary, nil
+}
+
+func (p *Proxy) buildUsageMarkdown(ctx context.Context, keyInfo *keys.KeyInfo, arg string) string {
+	rng := "30d"
+	argClean := strings.ToLower(strings.TrimSpace(arg))
+	if argClean == "7d" || argClean == "all" {
+		rng = argClean
+	}
+
+	summary, err := p.buildUsageSummaryResponse(ctx, keyInfo, rng)
+	if err != nil {
+		return fmt.Sprintf("Error generating usage summary: %v", err)
+	}
+
+	showCost := (summary.Cost != nil)
+	return FormatUsageMarkdown(summary, arg, showCost)
+}
+
+func (p *Proxy) handleGetUsage(w http.ResponseWriter, r *http.Request, keyInfo *keys.KeyInfo, maskedKey, keyName, clientIP string, start time.Time) {
+	rng := r.URL.Query().Get("range")
+	if rng == "" {
+		rng = "30d"
+	}
+	rng = strings.ToLower(strings.TrimSpace(rng))
+	if rng != "7d" && rng != "30d" && rng != "all" {
+		http.Error(w, `{"error":{"message":"Invalid range parameter, must be 7d, 30d, or all","type":"invalid_request_error"}}`, http.StatusBadRequest)
+		return
+	}
+
+	summary, err := p.buildUsageSummaryResponse(r.Context(), keyInfo, rng)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q,"type":"internal_server_error"}}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(summary)
+
+	if p.traffic != nil {
+		keyID := ""
+		if keyInfo != nil {
+			keyID = keyInfo.ID
+		}
+		_ = p.traffic.Record(&traffic.LogEntry{
+			APIKey:       maskedKey,
+			APIKeyName:   keyName,
+			APIKeyID:     keyID,
+			Model:        "nineguard/system",
+			DurationMs:   int(time.Since(start).Milliseconds()),
+			StatusCode:   http.StatusOK,
+			ClientIP:     clientIP,
+			Stream:       false,
+			Level:        "INFO",
+		})
+	}
 }
 

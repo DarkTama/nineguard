@@ -191,6 +191,7 @@ type KeyUpdate struct {
 	QuotaMode       *string
 	ModelQuotas     *[]ModelQuota
 	ResetSchedule   *ScheduleChange // nil leaves the key's own schedule and pins alone (ADR 0010)
+	CostVisibility  *string         // nil leaves unchanged; non-nil with "show", "hide", or "" (resets to null)
 }
 
 // UpdateKeyAll saves the key, its Key Quota, mode and Model Quotas in one transaction.
@@ -271,6 +272,16 @@ func (m *Manager) UpdateKeyAll(id string, u KeyUpdate) (*KeyInfo, error) {
 	}
 	if u.ModelQuotas != nil {
 		if err := replaceModelQuotas(tx, id, *u.ModelQuotas); err != nil {
+			return nil, err
+		}
+	}
+	if u.CostVisibility != nil {
+		cv := strings.ToLower(strings.TrimSpace(*u.CostVisibility))
+		var val *string
+		if cv == "show" || cv == "hide" {
+			val = &cv
+		}
+		if _, err := tx.Exec(`UPDATE api_keys SET cost_visibility = ? WHERE id = ?`, val, id); err != nil {
 			return nil, err
 		}
 	}

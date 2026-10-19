@@ -40,6 +40,7 @@ In modern AI engineering ecosystems, teams and developers frequently consume LLM
 * **Pure Dependency-Free Single Binary** — Built with pure Go (`CGO_ENABLED=0`) and a Vanilla JS single-page frontend embedded directly into the binary.
 * **Upstream Quota Tracking & Cascaded Gateways (v1.4.0)** — Live visibility into upstream capacities and rolling limits (e.g. 5-hour rolling windows and weekly allowances in 9router, prepaid balances) as well as cascaded NineGuard gateways (*Office -> VM -> Local*).
 * **Direct Chat Commands (`/quota`, `/limits`, `/usage`)** — Inspect remaining key allowances and upstream capacity directly from within Cursor/Cline/Pi/IDE chat windows without leaving the workspace, consuming 0 upstream tokens.
+* **Developer Self-Service Portal (`/portal`)** — Browser-accessible key portal where developers authenticate with their API key to inspect remaining quotas, reset schedules, activity heatmaps, and allowed models without needing admin credentials.
 * **Secret Vault (AES-256-GCM Encryption-at-Rest)** — All upstream API keys, passwords, and secrets are encrypted at rest in SQLite using authenticated AES-256-GCM.
 * **Anti-Recursion Loop Guard** — `X-NineGuard-Trace` header and hop counters detect and block cyclic loops between cascaded gateways with HTTP 508 Loop Detected.
 
@@ -459,13 +460,21 @@ curl -b cookies.txt -X PUT http://localhost:8080/api/v1/model-groups/GROUP_ID \
 ### OpenAI-Compatible Proxy (Requires NineGuard API Key)
 * `GET /v1/models` — Aggregated list of permitted models across active providers.
 * `GET /v1/quota` — Two-tier summary of key token allowance and upstream shared capacity.
-* `POST /v1/chat/completions` — Chat completions (SSE streaming, token telemetry, and instant 0-token `/quota` interception).
+* `GET /v1/usage?range=7d|30d|all` — Key token, session, cost, and model usage summary.
+* `POST /v1/chat/completions` — Chat completions (SSE streaming, token telemetry, and instant 0-token `/quota` and `/usage` interception).
 * `POST /v1/*` — Transparent pass-through for additional standard OpenAI endpoints.
 
 ### NineGuard Management API (Dashboard & Admin)
 * `GET /healthz` — Health check and readiness probe.
 * `GET /api/v1/upstream-quotas` — Live quota telemetry from all active upstream providers (supports `?force=1` with 30s cooldown).
 * `POST /api/v1/upstream-quotas/{id}/connections/{connId}/reset` — Spend 1 upstream reset credit (Claude limit grant / Codex reset).
+* `GET /api/v1/prices` — List registered models with effective list prices and active overrides.
+* `PUT /api/v1/prices/overrides/{model_id...}` — Set price override for specific model.
+* `DELETE /api/v1/prices/overrides/{model_id...}` — Delete price override for specific model.
+* `POST /api/v1/prices/refresh` — Refresh public LiteLLM price list immediately.
+* `GET /api/v1/settings/cost` — Retrieve cost settings and currency conversion rates.
+* `POST /api/v1/settings/cost` — Update cost settings and manual exchange rate.
+* `POST /api/v1/costs/reprice` — Recompute historical request costs across chosen date/model range.
 * `GET /api/v1/providers` — List registered upstream providers.
 * `POST /api/v1/providers` — Register provider with custom routing prefix.
 * `PUT /api/v1/providers/{id}` — Update provider settings.
@@ -481,6 +490,7 @@ curl -b cookies.txt -X PUT http://localhost:8080/api/v1/model-groups/GROUP_ID \
 * `DELETE /api/v1/keys/{id}` — Revoke / delete API key.
 * `GET /api/v1/keys/{id}/velocity` — Historical token consumption velocity (24h, 7d avg, 30d).
 * `GET /api/v1/keys/{id}/model-velocity?model=<id>` — Historical velocity for specific model under key.
+* `GET /api/v1/keys/{id}/usage?range=7d|30d|all&tz=...` — Comprehensive key usage summary with sessions, heatmap, and model breakdown.
 * `GET /api/v1/quotas` — Summary of Key Quota and Model Quota usage across keys (`ok`, `near`, `exhausted`, `unlimited`).
 * `GET /api/v1/models` — List catalog models and firewall states.
 * `POST /api/v1/models/toggle` — Toggle model active/blocked state.

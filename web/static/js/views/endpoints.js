@@ -10,6 +10,7 @@ import { quotaPercent, formatQuotaUsage, isQuotaExhausted, quotaPeriodLabel, for
 import { quotaStatus, barTone, shortModel } from '../modelquotas.js';
 import { quotaSection, presetButtons } from './keyquota.js';
 import { nextResetText } from '../resetschedule.js';
+import { openKeyUsageModal } from './keyusage.js';
 
 export function mount(root) {
   let alive = true;
@@ -347,6 +348,7 @@ export function mount(root) {
       h('td', { class: 'muted', title: isNaN(created) ? '' : `${fmtDateTime(created)} (${tzLabel()})` }, isNaN(created) ? '-' : fmtDateTime(created).slice(0, 10)),
       h('td', { style: { textAlign: 'right' } },
         h('div', { style: { display: 'inline-flex', gap: '6px' } },
+          h('button', { class: 'btn btn-sm', type: 'button', title: 'View Key Usage Summary & Heatmap', onclick: () => openKeyUsageModal(k) }, icon('activity'), 'Usage'),
           h('a', { class: 'btn btn-sm', href: '#/plugins', title: 'Manage plugins and token savers' }, icon('puzzle'), 'Plugins'),
           h('button', { class: 'btn btn-sm', type: 'button', title: 'Edit Key & Model Access', onclick: () => openKeyModal(k) }, icon('pencil'), 'Edit'),
           h('button', { class: 'btn btn-sm', type: 'button', title: 'Copy NineGuard API Key', onclick: () => copyText(raw, `Key "${k.name}" copied!`) }, icon('copy'), 'Copy Key'),
@@ -978,6 +980,12 @@ export function mount(root) {
       panelCustom.style.display = mode === 'custom' ? 'flex' : 'none';
     }
 
+    const costVisSelect = h('select', { class: 'input' },
+      h('option', { value: '', selected: !existingKey || !existingKey.cost_visibility }, 'Follow global setting'),
+      h('option', { value: 'show', selected: existingKey && existingKey.cost_visibility === 'show' }, 'Always show to key holder'),
+      h('option', { value: 'hide', selected: existingKey && existingKey.cost_visibility === 'hide' }, 'Always hide from key holder')
+    );
+
     formDialog({
       title: isEdit ? `Edit API Key: ${existingKey.name}` : 'Generate New NineGuard API Key',
       submitText: isEdit ? 'Save Changes' : 'Generate Key',
@@ -1006,6 +1014,15 @@ export function mount(root) {
         {
           label: 'Quota (Rate Limiting)',
           node: quotaUI.node
+        },
+        {
+          label: 'Estimated Cost Visibility',
+          node: h('div', null,
+            costVisSelect,
+            h('p', { class: 'muted', style: { fontSize: '11px', margin: '3px 0 0' } },
+              'Controls whether this key can view estimated cost and pricing in /usage and /v1/usage.'
+            )
+          )
         },
         {
           label: 'Plugin Overrides (Optional)',
@@ -1059,6 +1076,7 @@ export function mount(root) {
           allowed_models,
           quota_limit,
           quota_period,
+          cost_visibility: costVisSelect.value || null,
           ...quotaUI.payload()
         };
 

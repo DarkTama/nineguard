@@ -89,6 +89,39 @@ Input tokens a plugin removed from a request, as reported by the plugin itself. 
 **Plugin Overhead**
 Input tokens a plugin added to a request (e.g. an injected prompt).
 
+**Served Model**
+The model the upstream says actually answered a request. Can differ from the Requested Model and the resolved Model.
+
+**Model Fallback**
+A request whose Served Model belongs to a different model family than the Model it resolved to (e.g. Opus requested, Sonnet answered). A difference only in version date or spelling is not a Model Fallback.
+
+**Thinking Requested**
+A request in which the client asked the model to reason before answering.
+
+**Thinking Delivered**
+A request whose upstream response shows the model actually reasoned. Thinking Requested without Thinking Delivered means reasoning was lost somewhere upstream.
+
+**Estimated Cost**
+What a request would cost at the model's public API list price ("API-equivalent"). Never NineGuard's real spend, which subscription pools make unknowable. Kept in USD; a Display Currency only changes how it is shown. A model with no known price has no Estimated Cost, never a zero one.
+
+**Display Currency**
+The currency (e.g. IDR) Estimated Costs are shown in, converted from USD at a rate the admin sets.
+
+**Estimated Usage**
+Token counts NineGuard guessed because the upstream reported none. Never priced and never counted in cost totals.
+
+**Session** (Inferred Session)
+A run of requests from one API Key with no idle gap longer than the session gap setting. Inferred by NineGuard; clients never declare it.
+
+**Usage Summary**
+A per-API-Key overview of past activity: requests, tokens, Estimated Cost, Sessions, active days, peak hour, favorite model and per-model breakdown. Shown to the key holder in their key's reset-schedule timezone, and to admins in the viewer's timezone. Distinct from quota status, which shows remaining budget.
+
+**Upstream Usage**
+The Usage Summary a parent NineGuard reports for the API Key this instance uses to reach it. Covers every user of this instance combined, never one user. Shown beside the local Usage Summary, never merged into it.
+
+**Usage Comparison**
+A playful line in the Usage Summary that restates token usage as a multiple of a well-known book's length. Never compares against other API Keys.
+
 **Failure Policy**
 What happens when a plugin errors or times out. *Fail-open*: forward the request unmodified. *Fail-closed*: reject the request.
 
@@ -154,7 +187,7 @@ An Upstream Quota fetched from another NineGuard instance higher in the routing 
 A client-facing aggregation of multiple upstream accounts from the same provider into a single quota row, summing consumed and total capacity while hiding underlying account counts and email identities.
 
 **Chat Command Interceptor**
-A proxy pipeline hook that intercepts exact slash prompts (such as `/quota`, `/limits`, `/usage`) in `/v1/chat/completions`, short-circuiting the request to return formatted diagnostic markdown at zero token cost.
+A proxy pipeline hook that intercepts exact slash prompts (such as `/quota`, `/limits`, `/usage`) in `/v1/chat/completions`, short-circuiting the request to return formatted diagnostic markdown at zero token cost. `/quota` and `/limits` show quota status; `/usage` shows the Usage Summary.
 
 ## Security & Encryption
 

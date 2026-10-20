@@ -5,6 +5,12 @@
 **API Key** (Client Key)
 A NineGuard-issued credential (`sk-ng-...`) identifying one agent, user, or tool. Never the upstream provider's key.
 
+**Dual-Header Authentication**
+Acceptance of a client API Key (`sk-ng-...`) through either the standard `Authorization: Bearer <key>` header or the Anthropic `x-api-key: <key>` header interchangeably across all endpoints.
+
+**Messages Protocol** (Native Messages API)
+The Anthropic REST endpoint (`/v1/messages`) where requests use top-level `system` prompts and alternating user/assistant message sequences with typed content blocks, processed natively without translation to OpenAI chat completions.
+
 **Model Group**
 A named set of model IDs or patterns. Serves two independent roles:
 1. *Access template* — an API Key in group mode may only use models in its linked groups.
@@ -187,7 +193,7 @@ An Upstream Quota fetched from another NineGuard instance higher in the routing 
 A client-facing aggregation of multiple upstream accounts from the same provider into a single quota row, summing consumed and total capacity while hiding underlying account counts and email identities.
 
 **Chat Command Interceptor**
-A proxy pipeline hook that intercepts exact slash prompts (such as `/quota`, `/limits`, `/usage`) in `/v1/chat/completions`, short-circuiting the request to return formatted diagnostic markdown at zero token cost. `/quota` and `/limits` show quota status; `/usage` shows the Usage Summary.
+A proxy pipeline hook that intercepts exact slash prompts (such as `/quota`, `/limits`, `/usage`) in `/v1/chat/completions` and `/v1/messages`, short-circuiting the request to return formatted diagnostic markdown at zero token cost. `/quota` and `/limits` show quota status; `/usage` shows the Usage Summary.
 
 ## Security & Encryption
 

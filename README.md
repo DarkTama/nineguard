@@ -106,6 +106,7 @@ NineGuard acts as a unified gateway between AI Coding Agents and Upstream Provid
 | Feature | Description |
 |---|---|
 | **Multi-Provider Routing** | Register upstream OpenAI-compatible routes and namespace models with custom prefixes (e.g. `openrouter/model-id`). |
+| **Dual-Header & Anthropic Messages** | Native Anthropic `/v1/messages` protocol support alongside OpenAI `/v1/chat/completions`. Single unified `sk-ng-...` API key works across both `Authorization: Bearer` and Anthropic `x-api-key` headers with zero translation loss for extended thinking and prompt caching. |
 | **Client Key Management** | Issue and revoke scoped NineGuard API keys (`sk-ng-...`) to track consumption per agent. |
 | **Per-Key Model Access Control** | Enforce model permissions per API key (global wildcard `*`, dynamic Model Groups, or manual whitelist). |
 | **Model Groups** | Organize models into reusable groups (e.g. GPT Ecosystem, Claude) with dynamic synchronization to associated keys. |

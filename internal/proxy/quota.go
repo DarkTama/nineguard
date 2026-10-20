@@ -15,6 +15,10 @@ import (
 // the caller must then omit the Retry-After header. The reset time is shown in the timezone
 // of the key's Effective Reset Schedule, UTC when it has none (ADR 0010).
 func quotaExceededBody(modelID string, consumed, limit int64, period string, rule traffic.ResetRule, resetAt, now time.Time) (body []byte, retryAfter int) {
+	return quotaExceededBodyForFormat("", modelID, consumed, limit, period, rule, resetAt, now)
+}
+
+func quotaExceededBodyForFormat(format, modelID string, consumed, limit int64, period string, rule traffic.ResetRule, resetAt, now time.Time) (body []byte, retryAfter int) {
 	prefix := "API key token quota exceeded"
 	code := "quota_exceeded"
 	if modelID != "" {
@@ -34,6 +38,12 @@ func quotaExceededBody(modelID string, consumed, limit int64, period string, rul
 		if retryAfter < 1 {
 			retryAfter = 1
 		}
+	}
+
+	if format == "messages" {
+		errObj := map[string]any{"type": "rate_limit_error", "message": msg}
+		body, _ = json.MarshalIndent(map[string]any{"type": "error", "error": errObj}, "", "\t")
+		return body, retryAfter
 	}
 
 	errObj := map[string]any{"message": msg, "type": "insufficient_quota", "code": code}
@@ -92,8 +102,8 @@ func zoneLabel(t time.Time, ianaName string) string {
 }
 
 // writeQuotaExceeded sends the 429 and returns its message for the traffic log.
-func writeQuotaExceeded(w http.ResponseWriter, modelID string, consumed, limit int64, period string, rule traffic.ResetRule, resetAt time.Time) {
-	body, retryAfter := quotaExceededBody(modelID, consumed, limit, period, rule, resetAt, time.Now())
+func writeQuotaExceeded(w http.ResponseWriter, format, modelID string, consumed, limit int64, period string, rule traffic.ResetRule, resetAt time.Time) {
+	body, retryAfter := quotaExceededBodyForFormat(format, modelID, consumed, limit, period, rule, resetAt, time.Now())
 	w.Header().Set("Content-Type", "application/json")
 	if retryAfter > 0 {
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))

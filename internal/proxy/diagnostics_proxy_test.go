@@ -27,8 +27,15 @@ func TestProxyAnthropicMessagesIntegration(t *testing.T) {
 	modelsMgr := models.NewManager(d)
 	providersMgr := providers.NewManager(d)
 
+	var receivedAuth, receivedXAPIKey, receivedAnthropicVersion, receivedAnthropicBeta string
+
 	// Mock upstream handles /v1/messages streaming
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		receivedXAPIKey = r.Header.Get("x-api-key")
+		receivedAnthropicVersion = r.Header.Get("anthropic-version")
+		receivedAnthropicBeta = r.Header.Get("anthropic-beta")
+
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 
@@ -57,6 +64,7 @@ func TestProxyAnthropicMessagesIntegration(t *testing.T) {
 	reqBody := `{"model":"claude-3-7-sonnet","stream":true,"thinking":{"type":"enabled","budget_tokens":2048},"messages":[{"role":"user","content":"build a feature"}]}`
 	req := httptest.NewRequest("POST", "/v1/messages", bytes.NewBufferString(reqBody))
 	req.Header.Set("Authorization", "Bearer "+clientKey.RawKey)
+	req.Header.Set("anthropic-beta", "prompt-caching-2024-07-31")
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -64,6 +72,19 @@ func TestProxyAnthropicMessagesIntegration(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if receivedAuth != "Bearer sk-test" {
+		t.Errorf("upstream Authorization = %q, expected 'Bearer sk-test'", receivedAuth)
+	}
+	if receivedXAPIKey != "sk-test" {
+		t.Errorf("upstream x-api-key = %q, expected 'sk-test'", receivedXAPIKey)
+	}
+	if receivedAnthropicVersion != "2023-06-01" {
+		t.Errorf("upstream anthropic-version = %q, expected '2023-06-01'", receivedAnthropicVersion)
+	}
+	if receivedAnthropicBeta != "prompt-caching-2024-07-31" {
+		t.Errorf("upstream anthropic-beta = %q, expected 'prompt-caching-2024-07-31'", receivedAnthropicBeta)
 	}
 
 	// Wait briefly for asynchronous traffic logging goroutine

@@ -224,6 +224,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				ClientIP:     clientIP,
 				ErrorMessage: &errMsg,
 				Level:        "WARN",
+				ApiFormat:    DetectAPIFormat(r.URL.Path),
 			})
 		}
 
@@ -299,6 +300,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				ClientIP:     clientIP,
 				ErrorMessage: &errMsg,
 				Level:        "WARN",
+				ApiFormat:    apiFormat,
 			})
 			return
 		}
@@ -385,6 +387,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Stream:       req.Stream,
 			ErrorMessage: &errMsg,
 			Level:        "ERROR",
+			ApiFormat:    apiFormat,
 		})
 		return
 	}
@@ -411,6 +414,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Stream:       req.Stream,
 				ErrorMessage: &errMsg,
 				Level:        "WARN",
+				ApiFormat:    apiFormat,
 			})
 			return
 		}
@@ -433,6 +437,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Stream:       req.Stream,
 			ErrorMessage: &errMsg,
 			Level:        "ERROR",
+			ApiFormat:    apiFormat,
 		})
 		return
 	}
@@ -466,6 +471,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					Stream:       req.Stream,
 					ErrorMessage: &errMsg,
 					Level:        "WARN",
+					ApiFormat:    apiFormat,
 				})
 				return
 			}
@@ -551,6 +557,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						PluginsSkipped: pluginsSkipped,
 						PluginErrors:   pluginErrors,
 						PluginMs:       pluginMs,
+						ApiFormat:      apiFormat,
 					})
 				}
 				return
@@ -574,6 +581,15 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				injectedUsage = true
 			}
 		}
+	}
+
+	offeredTools := ExtractOfferedTools(apiFormat, forwardBody)
+	if len(offeredTools) > 0 {
+		forwardBody = CleanRequestToolHistory(apiFormat, forwardBody, offeredTools)
+	}
+
+	if apiFormat == "chat" && thinkingRequested {
+		forwardBody = PreserveThinkingIntent(forwardBody)
 	}
 
 	// Build target URL
@@ -667,6 +683,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Stream:       req.Stream,
 			ErrorMessage: &errMsg,
 			Level:        "ERROR",
+			ApiFormat:    apiFormat,
 		})
 		return
 	}
@@ -707,9 +724,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-NineGuard-Tokens-Saved", strconv.Itoa(tokensSaved))
 	}
 	w.Header().Add("Access-Control-Expose-Headers", "X-NineGuard-Plugins-Applied, X-NineGuard-Tokens-Saved")
-	w.WriteHeader(resp.StatusCode)
-
 	isSSE := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
+	if !isSSE && len(offeredTools) > 0 {
+		w.Header().Del("Content-Length")
+	}
+	w.WriteHeader(resp.StatusCode)
 
 	var promptTokens, completionTokens, totalTokens int
 	var cacheReadTokens, cacheWriteTokens, reasoningTokens int
@@ -739,6 +758,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 					// Drop injected usage-only event from client stream (ADR 0011)
 					if !(injectedUsage && isUsageOnly) {
+						if len(offeredTools) > 0 {
+							rawEvent = DecloakSSEEvent(apiFormat, rawEvent, dataPayload, offeredTools)
+						}
 						_, _ = w.Write(rawEvent)
 						if isFlusher {
 							flusher.Flush()
@@ -757,6 +779,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					rawEvent := eventBuf.Bytes()
 					isUsageOnly, dataPayload := IsUsageOnlySSEEvent(rawEvent)
 					if !(injectedUsage && isUsageOnly) {
+						if len(offeredTools) > 0 {
+							rawEvent = DecloakSSEEvent(apiFormat, rawEvent, dataPayload, offeredTools)
+						}
 						_, _ = w.Write(rawEvent)
 						if isFlusher {
 							flusher.Flush()
@@ -781,6 +806,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		respBody, err := io.ReadAll(resp.Body)
 		if err == nil {
+			if len(offeredTools) > 0 {
+				respBody = DecloakResponseBody(apiFormat, respBody, offeredTools)
+			}
 			capturedRespBody = respBody
 			_, _ = w.Write(respBody)
 

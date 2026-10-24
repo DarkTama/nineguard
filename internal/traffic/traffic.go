@@ -602,7 +602,7 @@ func (m *Manager) QueryLogs(p FilterParams) ([]LogEntry, int, error) {
 		case "delivered":
 			conditions = append(conditions, "thinking_delivered = 1")
 		case "lost":
-			conditions = append(conditions, "(thinking_requested = 1 AND thinking_delivered = 0)")
+			conditions = append(conditions, "(thinking_requested = 1 AND thinking_delivered = 0 AND NOT (api_format = 'chat' AND LOWER(model) LIKE '%claude%'))")
 		}
 	}
 
@@ -937,7 +937,7 @@ func (m *Manager) GetVolume(p FilterParams, buckets int) (*VolumeResult, error) 
 		case "delivered":
 			conditions = append(conditions, "thinking_delivered = 1")
 		case "lost":
-			conditions = append(conditions, "(thinking_requested = 1 AND thinking_delivered = 0)")
+			conditions = append(conditions, "(thinking_requested = 1 AND thinking_delivered = 0 AND NOT (api_format = 'chat' AND LOWER(model) LIKE '%claude%'))")
 		}
 	}
 	if p.Fallback != nil {

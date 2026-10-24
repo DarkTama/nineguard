@@ -633,11 +633,11 @@ export function mount(root) {
           title: `Multimodal: prompt history contains ${e.image_count || 1} image(s) in conversation context`
         }, `🖼️ ${e.image_count > 1 ? e.image_count + ' imgs' : '1 img'}`) : null,
         (() => {
-          const tb = thinkingBadge(e.thinking_requested, e.thinking_delivered, e.reasoning_tokens);
+          const tb = thinkingBadge(e.thinking_requested, e.thinking_delivered, e.reasoning_tokens, e.api_format, e.model);
           if (!tb) return null;
           const isDelivered = tb.cls === 'thinking-delivered';
           return h('span', {
-            class: 'badge',
+            class: `badge ${tb.cls}`,
             style: {
               fontSize: '9.5px',
               padding: '1px 5px',
@@ -766,9 +766,21 @@ export function mount(root) {
       ['Client Key', e.api_key_name ? `${e.api_key_name} (${e.api_key})` : (e.api_key || '-')],
       ['Target Model', e.model ? (e.model_removed ? `${e.model} (removed from provider)` : e.model) : '-'],
       ['Served Model', e.served_model ? (e.model_fallback ? `${e.served_model} (⚠ Fallback from ${e.model})` : e.served_model) : (e.model || '-')],
-      ['Thinking Status', e.thinking_delivered
-        ? `Delivered (${e.reasoning_tokens > 0 ? fmtNum(e.reasoning_tokens) + ' reasoning tokens' : 'observed in response'})`
-        : (e.thinking_requested ? 'Lost (requested by client, but no reasoning returned upstream)' : 'Not requested')],
+      ['Thinking Status', (() => {
+        if (e.thinking_delivered) {
+          return `Delivered (${e.reasoning_tokens > 0 ? fmtNum(e.reasoning_tokens) + ' reasoning tokens' : 'observed in response'})`;
+        }
+        if (e.thinking_requested) {
+          const isUnverifiable = (e.api_format === 'chat' || (typeof e.api_format === 'string' && e.api_format.toLowerCase() === 'chat')) &&
+            typeof e.model === 'string' &&
+            e.model.toLowerCase().includes('claude');
+          if (isUnverifiable) {
+            return 'Unverifiable (Claude via OpenAI chat format does not expose reasoning text)';
+          }
+          return 'Lost (requested by client, but no reasoning returned upstream)';
+        }
+        return 'Not requested';
+      })()],
       ['Images in Prompt Context', e.has_images ? `${e.image_count || 1} image(s) in conversation history` : 'None (text only)'],
       ['Provider', e.provider_id || '(default upstream)'],
       ['Estimated Cost', e.cost_usd != null ? formatCost(e.cost_usd, costSettings.effective_currency, costSettings.effective_rate, 0) : '— (unpriced or estimated usage)'],

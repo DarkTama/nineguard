@@ -149,3 +149,90 @@ func TestGetUsageSummary(t *testing.T) {
 		t.Fatalf("expected error for invalid range")
 	}
 }
+
+func TestUsageSummaryThinkingLostExcludesUnverifiableClaudeChat(t *testing.T) {
+	d, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("InitDB failed: %v", err)
+	}
+	defer d.Close()
+
+	mgr := traffic.NewManager(d)
+	pricingMgr, err := pricing.NewManager(d)
+	if err != nil {
+		t.Fatalf("NewManager pricing: %v", err)
+	}
+
+	loc := time.UTC
+	refTime := time.Date(2026, 10, 19, 14, 0, 0, 0, loc)
+
+	// 1. Claude chat, requested=1, delivered=0 (unverifiable, excluded from lost)
+	_, _ = d.Exec(`
+		INSERT INTO traffic_logs (
+			timestamp, api_key, api_key_id, model, model_id, api_format, prompt_tokens, completion_tokens, total_tokens,
+			status_code, thinking_requested, thinking_delivered
+		) VALUES (
+			?, 'sk-key1', 'key-test', 'claude-3-7-sonnet', 'claude-3-7-sonnet', 'chat', 100, 50, 150,
+			200, 1, 0
+		)
+	`, "2026-10-19 10:00:00")
+
+	// 2. Claude chat uppercase, requested=1, delivered=0 (unverifiable case-insensitive, excluded from lost)
+	_, _ = d.Exec(`
+		INSERT INTO traffic_logs (
+			timestamp, api_key, api_key_id, model, model_id, api_format, prompt_tokens, completion_tokens, total_tokens,
+			status_code, thinking_requested, thinking_delivered
+		) VALUES (
+			?, 'sk-key1', 'key-test', 'Anthropic/Claude-3-5-Sonnet', 'claude-3-5-sonnet', 'chat', 100, 50, 150,
+			200, 1, 0
+		)
+	`, "2026-10-19 10:05:00")
+
+	// 3. Claude messages format, requested=1, delivered=0 (real loss, included)
+	_, _ = d.Exec(`
+		INSERT INTO traffic_logs (
+			timestamp, api_key, api_key_id, model, model_id, api_format, prompt_tokens, completion_tokens, total_tokens,
+			status_code, thinking_requested, thinking_delivered
+		) VALUES (
+			?, 'sk-key1', 'key-test', 'claude-3-7-sonnet', 'claude-3-7-sonnet', 'messages', 100, 50, 150,
+			200, 1, 0
+		)
+	`, "2026-10-19 10:10:00")
+
+	// 4. Non-Claude chat, requested=1, delivered=0 (real loss, included)
+	_, _ = d.Exec(`
+		INSERT INTO traffic_logs (
+			timestamp, api_key, api_key_id, model, model_id, api_format, prompt_tokens, completion_tokens, total_tokens,
+			status_code, thinking_requested, thinking_delivered
+		) VALUES (
+			?, 'sk-key1', 'key-test', 'gpt-4o', 'gpt-4o', 'chat', 100, 50, 150,
+			200, 1, 0
+		)
+	`, "2026-10-19 10:15:00")
+
+	// 5. Claude chat, requested=1, delivered=1 (delivered, not lost)
+	_, _ = d.Exec(`
+		INSERT INTO traffic_logs (
+			timestamp, api_key, api_key_id, model, model_id, api_format, prompt_tokens, completion_tokens, total_tokens,
+			status_code, thinking_requested, thinking_delivered
+		) VALUES (
+			?, 'sk-key1', 'key-test', 'claude-3-7-sonnet', 'claude-3-7-sonnet', 'chat', 100, 50, 150,
+			200, 1, 1
+		)
+	`, "2026-10-19 10:20:00")
+
+	summary, err := mgr.GetUsageSummary("key-test", "7d", loc, refTime, pricingMgr)
+	if err != nil {
+		t.Fatalf("GetUsageSummary failed: %v", err)
+	}
+
+	if summary.Thinking.Requested != 5 {
+		t.Errorf("expected Thinking.Requested = 5, got %d", summary.Thinking.Requested)
+	}
+	if summary.Thinking.Delivered != 1 {
+		t.Errorf("expected Thinking.Delivered = 1, got %d", summary.Thinking.Delivered)
+	}
+	if summary.Thinking.Lost != 2 {
+		t.Errorf("expected Thinking.Lost = 2 (excluding unverifiable Claude chat), got %d", summary.Thinking.Lost)
+	}
+}

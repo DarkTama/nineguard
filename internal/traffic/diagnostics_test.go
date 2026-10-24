@@ -149,3 +149,61 @@ func TestDiagnosticsQueryFilters(t *testing.T) {
 		t.Errorf("Estimated filter failed: total=%d", total)
 	}
 }
+
+func TestThinkingLostFilterUnverifiableClaudeChat(t *testing.T) {
+	d, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	defer d.Close()
+
+	mgr := traffic.NewManager(d)
+
+	// 1. Claude chat, requested=1, delivered=0 (UNVERIFIABLE -> MUST BE EXCLUDED FROM LOST)
+	_ = mgr.Record(&traffic.LogEntry{
+		APIKey: "sk-1", Model: "claude-3-7-sonnet", StatusCode: 200,
+		ApiFormat: "chat", ThinkingRequested: true, ThinkingDelivered: false,
+	})
+	// 2. Claude chat uppercase, requested=1, delivered=0 (UNVERIFIABLE CASE-INSENSITIVE -> MUST BE EXCLUDED)
+	_ = mgr.Record(&traffic.LogEntry{
+		APIKey: "sk-2", Model: "Anthropic/Claude-3-5-Sonnet", StatusCode: 200,
+		ApiFormat: "chat", ThinkingRequested: true, ThinkingDelivered: false,
+	})
+	// 3. Claude messages format, requested=1, delivered=0 (REAL LOSS -> MUST BE INCLUDED)
+	_ = mgr.Record(&traffic.LogEntry{
+		APIKey: "sk-3", Model: "claude-3-7-sonnet", StatusCode: 200,
+		ApiFormat: "messages", ThinkingRequested: true, ThinkingDelivered: false,
+	})
+	// 4. Non-Claude chat, requested=1, delivered=0 (REAL LOSS -> MUST BE INCLUDED)
+	_ = mgr.Record(&traffic.LogEntry{
+		APIKey: "sk-4", Model: "gpt-4o", StatusCode: 200,
+		ApiFormat: "chat", ThinkingRequested: true, ThinkingDelivered: false,
+	})
+	// 5. Claude chat, requested=1, delivered=1 (DELIVERED -> NOT LOST)
+	_ = mgr.Record(&traffic.LogEntry{
+		APIKey: "sk-5", Model: "claude-3-7-sonnet", StatusCode: 200,
+		ApiFormat: "chat", ThinkingRequested: true, ThinkingDelivered: true,
+	})
+
+	// QueryLogs with Thinking = "lost"
+	logs, total, err := mgr.QueryLogs(traffic.FilterParams{Thinking: "lost"})
+	if err != nil {
+		t.Fatalf("QueryLogs: %v", err)
+	}
+	if total != 2 || len(logs) != 2 {
+		t.Fatalf("expected exactly 2 lost entries, got total=%d len=%d", total, len(logs))
+	}
+	models := map[string]bool{logs[0].Model: true, logs[1].Model: true}
+	if !models["claude-3-7-sonnet"] || !models["gpt-4o"] {
+		t.Errorf("unexpected models returned: %+v", models)
+	}
+
+	// Volume series with Thinking = "lost"
+	vol, err := mgr.GetVolume(traffic.FilterParams{Thinking: "lost", Period: "24h"}, 10)
+	if err != nil {
+		t.Fatalf("GetVolumeSeries: %v", err)
+	}
+	if vol.Totals["2xx"] != 2 {
+		t.Errorf("expected 2 in volume series 2xx totals, got %d", vol.Totals["2xx"])
+	}
+}

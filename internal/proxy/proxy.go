@@ -614,6 +614,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			outReq.Header.Add(k, v)
 		}
 	}
+	RemoveHopByHopHeaders(outReq.Header)
+	outReq.Close = false
 	outReq.Header.Del("X-NineGuard-Plugins") // Never forward bypass header upstream
 	if upstreamAppliedHeader != "" {
 		outReq.Header.Set("X-NineGuard-Plugins-Applied", upstreamAppliedHeader)
@@ -712,6 +714,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Copy response headers
+	RemoveHopByHopHeaders(resp.Header)
 	for k, vv := range resp.Header {
 		for _, v := range vv {
 			w.Header().Add(k, v)

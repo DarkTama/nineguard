@@ -23,7 +23,7 @@ export function formatCacheHitRate(cacheRead, prompt) {
   return `${pct}%`;
 }
 
-export function thinkingBadge(thinkingReq, thinkingDel, reasoningTokens) {
+export function thinkingBadge(thinkingReq, thinkingDel, reasoningTokens, apiFormat, model) {
   if (thinkingDel) {
     const countStr = reasoningTokens > 0 ? ` ${formatTokensCompact(reasoningTokens)}` : '';
     return {
@@ -35,6 +35,16 @@ export function thinkingBadge(thinkingReq, thinkingDel, reasoningTokens) {
     };
   }
   if (thinkingReq) {
+    const isUnverifiable = (apiFormat === 'chat' || (typeof apiFormat === 'string' && apiFormat.toLowerCase() === 'chat')) &&
+      typeof model === 'string' &&
+      model.toLowerCase().includes('claude');
+    if (isUnverifiable) {
+      return {
+        text: '🧠?',
+        cls: 'thinking-unknown',
+        title: 'Thinking was requested. Claude over the OpenAI chat format returns no observable reasoning text, so delivery cannot be verified.',
+      };
+    }
     return {
       text: '🧠✗',
       cls: 'thinking-lost',

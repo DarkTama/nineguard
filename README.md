@@ -40,7 +40,7 @@ In modern AI engineering ecosystems, teams and developers frequently consume LLM
 * **Pure Dependency-Free Single Binary** — Built with pure Go (`CGO_ENABLED=0`) and a Vanilla JS single-page frontend embedded directly into the binary.
 * **Upstream Quota Tracking & Cascaded Gateways (v1.4.0)** — Live visibility into upstream capacities and rolling limits (e.g. 5-hour rolling windows and weekly allowances in 9router, prepaid balances) as well as cascaded NineGuard gateways (*Office -> VM -> Local*).
 * **Direct Chat Commands (`/quota`, `/limits`, `/usage`)** — Inspect remaining key allowances and upstream capacity directly from within Cursor/Cline/Pi/IDE chat windows without leaving the workspace, consuming 0 upstream tokens.
-* **Developer Self-Service Portal (`/portal`)** — Browser-accessible key portal where developers authenticate with their API key to inspect remaining quotas, reset schedules, activity heatmaps, and allowed models without needing admin credentials.
+* **Developer Self-Service Portal (`/portal`)** — Mobile-friendly page where developers sign in with their own API key to see how much token budget is left and when it resets (per key or per model), daily activity and per-model share, shared upstream capacity, copyable OpenAI/Anthropic base URLs, and a searchable list of models they can call, without admin credentials.
 * **Secret Vault (AES-256-GCM Encryption-at-Rest)** — All upstream API keys, passwords, and secrets are encrypted at rest in SQLite using authenticated AES-256-GCM.
 * **Anti-Recursion Loop Guard** — `X-NineGuard-Trace` header and hop counters detect and block cyclic loops between cascaded gateways with HTTP 508 Loop Detected.
 
@@ -126,7 +126,7 @@ NineGuard acts as a unified gateway between AI Coding Agents and Upstream Provid
 | **Traffic Explorer** | High-density real-time request logs with key name, model ID, HTTP status filters, and live tail mode. |
 | **System Log & Audit Explorer** | Monitor internal gateway runtime logs, SQLite rotation, component source filters, and security RBAC audits. |
 | **Interactive TUI & System Tray** | Terminal user interface with live logs and background controls, plus system tray support on Windows/macOS/Linux. |
-| **Agent Setup Guides** | Ready-to-copy setup instructions for Cursor IDE, Cline, Continue.dev, Pi Agent, Python, Node.js, and cURL. |
+| **Agent Setup Guides** | Ready-to-copy setup instructions for Cursor IDE, Cline, Continue.dev, Pi Agent, Claude Code, Anthropic SDK (Python/TypeScript), Python, Node.js, and cURL. |
 
 ---
 
@@ -351,10 +351,42 @@ Navigate to **Gateway $\rightarrow$ Endpoints & Keys**:
 ---
 
 ### 4. Configure Your AI Agent / IDE
+NineGuard speaks two client protocols on the same `sk-ng-...` key. Pick the one that matches your client and model family.
+
+#### 4a. OpenAI-compatible clients (any model)
 Set OpenAI-compatible options in your editor or tool:
 * **Base URL:** `http://localhost:8080/v1`
-* **API Key:** `sk-ng-...` (The key generated in Step 2)
+* **API Key:** `sk-ng-...` (The key generated in Step 2), sent as `Authorization: Bearer`
 * **Model ID:** Prefixed model identifier (e.g. `openrouter/anthropic/claude-3.5-sonnet` or local `local/llama3:8b`).
+
+#### 4b. Claude / Anthropic models: use the native `/v1/messages` endpoint (Recommended)
+For Claude models, prefer the native Anthropic Messages API over `/v1/chat/completions`. NineGuard forwards `POST /v1/messages` to the upstream **as-is, without protocol translation** (ADR 0014), so you keep:
+* **Extended thinking** — `thinking` blocks and their signatures survive multi-turn tool loops. Via chat completions, Claude's adaptive thinking is often invisible (signature-only), so the Traffic Explorer can only mark it `🧠?` (unverifiable), and some upstreams drop `thinking` on tool-result turns.
+* **Prompt caching** — `cache_control` breakpoints reach Anthropic unchanged, including in plugin-injected `system` prompts.
+* **Native tool blocks** — `tool_use` / `tool_result` keep their structure; tool names cloaked by 9router (`bash_ide`, `_cc`) are restored automatically.
+* **Same governance** — key permissions, Key/Model Quotas, plugins (Caveman, Ponytail, SecretGuard; Headroom is skipped on this format), `/quota` and `/usage` chat commands, and errors in the Anthropic envelope (`{"type":"error",...}`).
+
+Settings:
+* **Base URL:** `http://localhost:8080` (**no `/v1`**: Anthropic SDKs and Claude Code append `/v1/messages` themselves)
+* **API Key:** `sk-ng-...`, sent as `x-api-key` (or `Authorization: Bearer`; both work). `anthropic-version: 2023-06-01` is added if the client omits it.
+* **Model ID:** the same prefixed id as in the dashboard (e.g. `9router/cc/claude-sonnet-4-5`).
+* **Upstream requirement:** the provider behind that prefix must serve `POST /v1/messages` (e.g. 9router, Anthropic itself, or another Anthropic-compatible gateway). Providers that only implement OpenAI chat completions will answer `/v1/messages` with 404; use 4a for those.
+
+```bash
+# Claude Code
+export ANTHROPIC_BASE_URL="http://localhost:8080"
+export ANTHROPIC_API_KEY="sk-ng-YOUR_NINEGUARD_KEY"
+claude
+
+# Raw request
+curl http://localhost:8080/v1/messages \
+  -H "x-api-key: sk-ng-YOUR_NINEGUARD_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{"model":"9router/cc/claude-sonnet-4-5","max_tokens":1024,"messages":[{"role":"user","content":"Hello"}]}'
+```
+
+Filter Anthropic traffic in **Traffic Explorer** with the `/v1/messages` protocol chip. More clients (Python/TypeScript SDK) in [docs/AGENTS_SETUP.md](docs/AGENTS_SETUP.md); known 9router quirks in [docs/ANTHROPIC_COMPATIBILITY_REPORT.md](docs/ANTHROPIC_COMPATIBILITY_REPORT.md).
 
 ---
 
@@ -458,12 +490,13 @@ curl -b cookies.txt -X PUT http://localhost:8080/api/v1/model-groups/GROUP_ID \
 
 ## REST API Endpoints
 
-### OpenAI-Compatible Proxy (Requires NineGuard API Key)
+### Client Proxy API (Requires NineGuard API Key: `Authorization: Bearer` or `x-api-key`)
 * `GET /v1/models` — Aggregated list of permitted models across active providers.
 * `GET /v1/quota` — Two-tier summary of key token allowance and upstream shared capacity.
 * `GET /v1/usage?range=7d|30d|all` — Key token, session, cost, and model usage summary.
 * `POST /v1/chat/completions` — Chat completions (SSE streaming, token telemetry, and instant 0-token `/quota` and `/usage` interception).
-* `POST /v1/*` — Transparent pass-through for additional standard OpenAI endpoints.
+* `POST /v1/messages` — Native Anthropic Messages API, forwarded without translation (SSE streaming, extended thinking, prompt caching, tool-name decloaking, Anthropic error envelope, and `/quota` / `/usage` interception). Recommended for Claude models.
+* `POST /v1/*` — Transparent pass-through for additional standard OpenAI endpoints (e.g. `/v1/responses`).
 
 ### NineGuard Management API (Dashboard & Admin)
 * `GET /healthz` — Health check and readiness probe.
@@ -542,6 +575,7 @@ curl -b cookies.txt -X PUT http://localhost:8080/api/v1/model-groups/GROUP_ID \
 * [Architecture & Request Flow](docs/ARCHITECTURE.md)
 * [Multi-Provider & Prefix Routing Guide](docs/PROVIDERS.md)
 * [Connecting Agents & IDEs Guide](docs/AGENTS_SETUP.md)
+* [Anthropic Protocol & 9router Compatibility Report](docs/ANTHROPIC_COMPATIBILITY_REPORT.md)
 * [Domain Glossary](GLOSSARY.md)
 * [Architecture Decision Records (ADRs)](docs/adr/)
 

@@ -4,7 +4,7 @@ import { h, icon, fmtTime, fmtNum, fmtCompact, localDate, tzLabel, msOf, podColo
 import { patchRoute } from '../state.js';
 import { queryParams, rangeControls, searchTerms, highlight, toLocalInput, iso } from '../filters.js';
 import { volumeChart } from '../chart.js';
-import { formatCacheHitRate, thinkingBadge, fallbackBadge } from '../diagnosticshelpers.js';
+import { formatCacheHitRate, thinkingBadge, fallbackBadge, protocolBadge, endpointPathForFormat } from '../diagnosticshelpers.js';
 import { formatCost, costTooltip } from '../costhelpers.js';
 import { openCostSettingsModal } from '../costmodal.js';
 
@@ -211,6 +211,30 @@ export function mount(root) {
     onclick: () => toggleStatus(s.id)
   }, h('i', { class: 'dot' }), s.label));
 
+  const protoMessagesChip = h('button', {
+    class: `chip ${p.api_format === 'messages' ? 'active' : ''}`,
+    type: 'button',
+    title: 'Filter requests using Anthropic Messages API (/v1/messages)',
+    onclick: () => patch({ api_format: p.api_format === 'messages' ? '' : 'messages' }),
+    style: p.api_format === 'messages' ? { background: 'rgba(251, 146, 60, 0.2)', color: '#fb923c', borderColor: '#fb923c' } : {}
+  }, '/v1/messages');
+
+  const protoChatChip = h('button', {
+    class: `chip ${p.api_format === 'chat' ? 'active' : ''}`,
+    type: 'button',
+    title: 'Filter requests using OpenAI Chat Completions API (/v1/chat/completions)',
+    onclick: () => patch({ api_format: p.api_format === 'chat' ? '' : 'chat' }),
+    style: p.api_format === 'chat' ? { background: 'rgba(56, 189, 248, 0.2)', color: '#38bdf8', borderColor: '#38bdf8' } : {}
+  }, '/v1/chat');
+
+  const protoResponsesChip = h('button', {
+    class: `chip ${p.api_format === 'responses' ? 'active' : ''}`,
+    type: 'button',
+    title: 'Filter requests using OpenAI Responses API (/v1/responses)',
+    onclick: () => patch({ api_format: p.api_format === 'responses' ? '' : 'responses' }),
+    style: p.api_format === 'responses' ? { background: 'rgba(52, 211, 153, 0.2)', color: '#34d399', borderColor: '#34d399' } : {}
+  }, '/v1/responses');
+
   const imgChip = h('button', {
     class: `chip ${p.has_images ? 'active' : ''}`,
     type: 'button',
@@ -261,7 +285,7 @@ export function mount(root) {
   root.append(h('div', { class: 'page-fill' },
     h('div', { class: 'toolbar' },
       searchBox, range.el, h('span', { class: 'sep' }), keySel, modelSel, providerSel, clearBtn,
-      h('span', { class: 'spacer' }), h('span', { class: 'chips' }, ...chips, imgChip, fallbackChip, thinkingLostChip, thinkingDeliveredChip), liveBtn, costBtn, alertBtn, exportBtn),
+      h('span', { class: 'spacer' }), h('span', { class: 'chips' }, ...chips, protoMessagesChip, protoChatChip, protoResponsesChip, imgChip, fallbackChip, thinkingLostChip, thinkingDeliveredChip), liveBtn, costBtn, alertBtn, exportBtn),
     chartBox,
     h('div', { class: 'log-table traffic-table' },
       h('div', { class: 'log-head' },
@@ -374,8 +398,50 @@ export function mount(root) {
 
     const set = statusSet();
     chips.forEach((c, i) => c.classList.toggle('active', set.has(TRAFFIC_STATUSES[i].id)));
-    imgChip.classList.toggle('active', !!p.has_images);
-    clearBtn.hidden = !(p.key || p.key_id || p.model || p.provider || p.ip || p.status || p.q || p.has_images);
+
+    const isMsg = p.api_format === 'messages';
+    protoMessagesChip.classList.toggle('active', isMsg);
+    protoMessagesChip.style.background = isMsg ? 'rgba(251, 146, 60, 0.2)' : '';
+    protoMessagesChip.style.color = isMsg ? '#fb923c' : '';
+    protoMessagesChip.style.borderColor = isMsg ? '#fb923c' : '';
+
+    const isChat = p.api_format === 'chat';
+    protoChatChip.classList.toggle('active', isChat);
+    protoChatChip.style.background = isChat ? 'rgba(56, 189, 248, 0.2)' : '';
+    protoChatChip.style.color = isChat ? '#38bdf8' : '';
+    protoChatChip.style.borderColor = isChat ? '#38bdf8' : '';
+
+    const isResp = p.api_format === 'responses';
+    protoResponsesChip.classList.toggle('active', isResp);
+    protoResponsesChip.style.background = isResp ? 'rgba(52, 211, 153, 0.2)' : '';
+    protoResponsesChip.style.color = isResp ? '#34d399' : '';
+    protoResponsesChip.style.borderColor = isResp ? '#34d399' : '';
+
+    const hasTLost = p.thinking === 'lost';
+    thinkingLostChip.classList.toggle('active', hasTLost);
+    thinkingLostChip.style.background = hasTLost ? 'rgba(239, 68, 68, 0.2)' : '';
+    thinkingLostChip.style.color = hasTLost ? 'var(--lv-error)' : '';
+    thinkingLostChip.style.borderColor = hasTLost ? 'var(--lv-error)' : '';
+
+    const hasTDel = p.thinking === 'delivered';
+    thinkingDeliveredChip.classList.toggle('active', hasTDel);
+    thinkingDeliveredChip.style.background = hasTDel ? 'rgba(168, 85, 247, 0.2)' : '';
+    thinkingDeliveredChip.style.color = hasTDel ? '#a855f7' : '';
+    thinkingDeliveredChip.style.borderColor = hasTDel ? '#a855f7' : '';
+
+    const hasFb = p.fallback === '1';
+    fallbackChip.classList.toggle('active', hasFb);
+    fallbackChip.style.background = hasFb ? 'rgba(234, 179, 8, 0.2)' : '';
+    fallbackChip.style.color = hasFb ? 'var(--lv-warn)' : '';
+    fallbackChip.style.borderColor = hasFb ? 'var(--lv-warn)' : '';
+
+    const hasImg = !!p.has_images;
+    imgChip.classList.toggle('active', hasImg);
+    imgChip.style.background = hasImg ? 'rgba(56, 189, 248, 0.2)' : '';
+    imgChip.style.color = hasImg ? '#38bdf8' : '';
+    imgChip.style.borderColor = hasImg ? '#38bdf8' : '';
+
+    clearBtn.hidden = !(p.key || p.key_id || p.model || p.provider || p.ip || p.status || p.q || p.has_images || p.fallback || p.thinking || p.api_format || p.estimated);
 
     liveBtn.classList.toggle('active', !!p.live);
     liveBtn.title = p.live ? 'Stop following new requests' : 'Follow new requests in real time';
@@ -633,6 +699,26 @@ export function mount(root) {
           title: `Multimodal: prompt history contains ${e.image_count || 1} image(s) in conversation context`
         }, `🖼️ ${e.image_count > 1 ? e.image_count + ' imgs' : '1 img'}`) : null,
         (() => {
+          if (e.api_format !== 'messages' && e.api_format !== 'responses') return null;
+          const pb = protocolBadge(e.api_format);
+          if (!pb) return null;
+          const isMsg = pb.cls === 'proto-messages';
+          return h('span', {
+            class: `badge ${pb.cls}`,
+            style: {
+              fontSize: '9.5px',
+              padding: '1px 5px',
+              marginLeft: '4px',
+              background: isMsg ? 'rgba(251, 146, 60, 0.15)' : 'rgba(52, 211, 153, 0.15)',
+              color: isMsg ? '#fb923c' : '#34d399',
+              border: isMsg ? '1px solid rgba(251, 146, 60, 0.35)' : '1px solid rgba(52, 211, 153, 0.35)',
+              fontWeight: '600',
+              whiteSpace: 'nowrap'
+            },
+            title: pb.title
+          }, pb.text);
+        })(),
+        (() => {
           const tb = thinkingBadge(e.thinking_requested, e.thinking_delivered, e.reasoning_tokens, e.api_format, e.model);
           if (!tb) return null;
           const isDelivered = tb.cls === 'thinking-delivered';
@@ -850,7 +936,11 @@ export function mount(root) {
         type: 'button',
         onclick: () => {
           const origin = location.origin || 'http://localhost:8080';
-          const curl = `curl -X POST ${origin}/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer <NINEGUARD_API_KEY>" \\\n  -d '${(pay.request_body || '').replace(/'/g, "'\\''")}'`;
+          const ep = endpointPathForFormat(e.api_format);
+          const anthropicHdr = (e.api_format === 'messages' || (typeof e.api_format === 'string' && e.api_format.trim().toLowerCase() === 'messages'))
+            ? ' \\\n  -H "anthropic-version: 2023-06-01"'
+            : '';
+          const curl = `curl -X POST ${origin}${ep} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer <NINEGUARD_API_KEY>"${anthropicHdr} \\\n  -d '${(pay.request_body || '').replace(/'/g, "'\\''")}'`;
           copy(curl);
         }
       }, icon('copy'), 'Copy as cURL');
@@ -873,6 +963,7 @@ export function mount(root) {
       h('div', { class: 'detail-actions' },
         action('copy', 'Copy message', () => copy(e.message || '')),
         action('copy', 'Copy JSON', () => copy(JSON.stringify(e, null, 2))),
+        e.api_format ? action('filter', 'Filter ' + e.api_format, () => patch({ api_format: e.api_format })) : null,
         e.api_key_name || e.api_key ? action('key', 'Filter key', () => patch(e.api_key_id ? { key_id: e.api_key_id, key: '' } : { key: e.api_key_name || e.api_key, key_id: '' })) : null,
         e.model ? action('box', 'Filter model', () => patch({ model: e.model })) : null,
         e.provider_id ? action('server', 'Filter provider', () => patch({ provider: e.provider_id })) : null,

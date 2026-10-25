@@ -4,6 +4,8 @@ import {
   formatCacheHitRate,
   thinkingBadge,
   fallbackBadge,
+  protocolBadge,
+  endpointPathForFormat,
 } from '../static/js/diagnosticshelpers.js';
 
 test('formatCacheHitRate formats percentage correctly', () => {
@@ -71,4 +73,55 @@ test('fallbackBadge returns badge descriptor or null', () => {
 
   const f2 = fallbackBadge(false, '9router/claude-opus-4.5', 'claude-opus-4-5-20251101');
   assert.equal(f2, null);
+});
+
+test('protocolBadge returns badge descriptor or null', () => {
+  // messages
+  const b1 = protocolBadge('messages');
+  assert.deepEqual(b1, {
+    text: 'messages',
+    cls: 'proto-messages',
+    title: 'Anthropic Messages API (/v1/messages)',
+  });
+
+  // responses
+  const b2 = protocolBadge('responses');
+  assert.deepEqual(b2, {
+    text: 'responses',
+    cls: 'proto-responses',
+    title: 'OpenAI Responses API (/v1/responses)',
+  });
+
+  // chat
+  const b3 = protocolBadge('chat');
+  assert.deepEqual(b3, {
+    text: 'chat',
+    cls: 'proto-chat',
+    title: 'OpenAI Chat Completions API (/v1/chat/completions)',
+  });
+
+  // case and whitespace normalization
+  assert.equal(protocolBadge('  MESSAGES  ')?.cls, 'proto-messages');
+  assert.equal(protocolBadge(' Chat ')?.cls, 'proto-chat');
+  assert.equal(protocolBadge('Responses')?.cls, 'proto-responses');
+
+  // fallback to null for other formats / empty / null
+  assert.equal(protocolBadge(''), null);
+  assert.equal(protocolBadge('   '), null);
+  assert.equal(protocolBadge('other'), null);
+  assert.equal(protocolBadge('completions'), null);
+  assert.equal(protocolBadge(null), null);
+  assert.equal(protocolBadge(undefined), null);
+});
+
+test('endpointPathForFormat maps formats to endpoints with fallback', () => {
+  assert.equal(endpointPathForFormat('messages'), '/v1/messages');
+  assert.equal(endpointPathForFormat(' Messages '), '/v1/messages');
+  assert.equal(endpointPathForFormat('responses'), '/v1/responses');
+  assert.equal(endpointPathForFormat(' Responses '), '/v1/responses');
+  assert.equal(endpointPathForFormat('chat'), '/v1/chat/completions');
+  assert.equal(endpointPathForFormat(''), '/v1/chat/completions');
+  assert.equal(endpointPathForFormat('other'), '/v1/chat/completions');
+  assert.equal(endpointPathForFormat(null), '/v1/chat/completions');
+  assert.equal(endpointPathForFormat(undefined), '/v1/chat/completions');
 });

@@ -824,3 +824,115 @@ func TestProxyDecloakAndThinkingIntegration(t *testing.T) {
 		}
 	})
 }
+
+func TestProxyDecloakTelemetry(t *testing.T) {
+	d, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	defer d.Close()
+
+	keyMgr := keys.NewManager(d, "")
+	trafficMgr := traffic.NewManager(d)
+	modelsMgr := models.NewManager(d)
+	providersMgr := providers.NewManager(d)
+
+	mockUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+
+		if strings.Contains(string(body), "trigger_cloaked_response") {
+			// Upstream returns cloaked tool name read_ide
+			_, _ = w.Write([]byte(`{
+				"id": "chatcmpl-decloak",
+				"choices": [{
+					"message": {
+						"role": "assistant",
+						"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "read_ide", "arguments": "{}"}}]
+					}
+				}],
+				"usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20}
+			}`))
+			return
+		}
+
+		// Normal clean response
+		_, _ = w.Write([]byte(`{
+			"id": "chatcmpl-clean",
+			"choices": [{
+				"message": {
+					"role": "assistant",
+					"content": "clean reply"
+				}
+			}],
+			"usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20}
+		}`))
+	}))
+	defer mockUpstream.Close()
+
+	_, err = providersMgr.CreateProvider("Mock Provider", mockUpstream.URL, "mock-upstream-key", "mock", true, true)
+	if err != nil {
+		t.Fatalf("CreateProvider: %v", err)
+	}
+
+	clientKey, err := keyMgr.CreateKey("Test Client", "all", nil, nil)
+	if err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+
+	p, err := proxy.NewProxy(modelsMgr, trafficMgr, keyMgr, providersMgr, nil)
+	if err != nil {
+		t.Fatalf("NewProxy: %v", err)
+	}
+
+	t.Run("decloak recorded in pluginsApplied when cloaked tool is decloaked", func(t *testing.T) {
+		reqBody := `{
+			"model": "mock/gpt-4o",
+			"messages": [{"role": "user", "content": "trigger_cloaked_response"}],
+			"tools": [{"type": "function", "function": {"name": "read"}}]
+		}`
+		r := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+		r.Header.Set("Authorization", "Bearer "+clientKey.RawKey)
+		w := httptest.NewRecorder()
+
+		p.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+		}
+
+		time.Sleep(50 * time.Millisecond)
+		logs, _, err := trafficMgr.QueryLogs(traffic.FilterParams{Limit: 1})
+		if err != nil || len(logs) == 0 {
+			t.Fatalf("failed to query traffic logs")
+		}
+		if !strings.Contains(logs[0].PluginsApplied, "decloak") {
+			t.Errorf("expected PluginsApplied to contain 'decloak', got: %q", logs[0].PluginsApplied)
+		}
+	})
+
+	t.Run("decloak NOT in pluginsApplied when no cloaking is present", func(t *testing.T) {
+		reqBody := `{
+			"model": "mock/gpt-4o",
+			"messages": [{"role": "user", "content": "hello clean"}],
+			"tools": [{"type": "function", "function": {"name": "read"}}]
+		}`
+		r := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+		r.Header.Set("Authorization", "Bearer "+clientKey.RawKey)
+		w := httptest.NewRecorder()
+
+		p.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+		}
+
+		time.Sleep(50 * time.Millisecond)
+		logs, _, err := trafficMgr.QueryLogs(traffic.FilterParams{Limit: 1})
+		if err != nil || len(logs) == 0 {
+			t.Fatalf("failed to query traffic logs")
+		}
+		if strings.Contains(logs[0].PluginsApplied, "decloak") {
+			t.Errorf("expected PluginsApplied NOT to contain 'decloak', got: %q", logs[0].PluginsApplied)
+		}
+	})
+}

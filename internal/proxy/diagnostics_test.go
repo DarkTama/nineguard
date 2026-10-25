@@ -1,6 +1,7 @@
 package proxy_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"nineguard/internal/proxy"
@@ -356,6 +357,172 @@ func TestParseDiagnosticsStream(t *testing.T) {
 		// Prompt = 400/4 = 100, completion = max(1, 10) = 10, total = 110
 		if diag.PromptTokens != 100 || diag.CompletionTokens != 10 || diag.TotalTokens != 110 {
 			t.Errorf("estimated tokens = %d/%d/%d; expected 100/10/110", diag.PromptTokens, diag.CompletionTokens, diag.TotalTokens)
+		}
+	})
+}
+
+func TestBuildStreamSummary(t *testing.T) {
+	t.Run("Anthropic messages stream summary reconstruction", func(t *testing.T) {
+		parser := proxy.NewStreamDiagnosticsParser("messages")
+
+		// 1. message_start
+		parser.FeedSSEEvent(nil, []byte(`{"type":"message_start","message":{"model":"claude-3-5-sonnet","usage":{"input_tokens":100,"cache_read_input_tokens":20,"cache_creation_input_tokens":10}}}`))
+
+		// 2. content_block_start (thinking)
+		parser.FeedSSEEvent(nil, []byte(`{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}`))
+
+		// 3. content_block_delta (thinking)
+		parser.FeedSSEEvent(nil, []byte(`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Plan: check the weather."}}`))
+
+		// 4. content_block_start (tool_use)
+		parser.FeedSSEEvent(nil, []byte(`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_123","name":"get_weather"}}`))
+
+		// 5. content_block_delta (input_json_delta chunk 1)
+		parser.FeedSSEEvent(nil, []byte(`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"location\":"}}`))
+
+		// 6. content_block_delta (input_json_delta chunk 2)
+		parser.FeedSSEEvent(nil, []byte(`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"Paris\"}"}}`))
+
+		// 7. content_block_start (text)
+		parser.FeedSSEEvent(nil, []byte(`{"type":"content_block_start","index":2,"content_block":{"type":"text"}}`))
+
+		// 8. content_block_delta (text)
+		parser.FeedSSEEvent(nil, []byte(`{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Checking weather for Paris..."}}`))
+
+		// 9. message_delta
+		parser.FeedSSEEvent(nil, []byte(`{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":45}}`))
+
+		diag := parser.Finalize(9, 500, 200)
+		summaryBytes := parser.BuildStreamSummary(9, diag)
+
+		var summary proxy.StreamSummary
+		if err := json.Unmarshal(summaryBytes, &summary); err != nil {
+			t.Fatalf("failed to unmarshal summary JSON: %v", err)
+		}
+
+		if !summary.StreamReconstructed {
+			t.Errorf("expected StreamReconstructed=true")
+		}
+		if summary.APIFormat != "messages" {
+			t.Errorf("expected APIFormat='messages', got %q", summary.APIFormat)
+		}
+		if summary.ServedModel != "claude-3-5-sonnet" {
+			t.Errorf("expected ServedModel='claude-3-5-sonnet', got %q", summary.ServedModel)
+		}
+		if summary.Chunks != 9 {
+			t.Errorf("expected Chunks=9, got %d", summary.Chunks)
+		}
+		if summary.StopReason != "tool_use" {
+			t.Errorf("expected StopReason='tool_use', got %q", summary.StopReason)
+		}
+		if !summary.ThinkingDelivered {
+			t.Errorf("expected ThinkingDelivered=true")
+		}
+		if summary.Thinking != "Plan: check the weather." {
+			t.Errorf("expected Thinking='Plan: check the weather.', got %q", summary.Thinking)
+		}
+		if summary.Content != "Checking weather for Paris..." {
+			t.Errorf("expected Content='Checking weather for Paris...', got %q", summary.Content)
+		}
+		if len(summary.ToolCalls) != 1 {
+			t.Fatalf("expected 1 tool call, got %d", len(summary.ToolCalls))
+		}
+		if summary.ToolCalls[0].ID != "toolu_123" || summary.ToolCalls[0].Name != "get_weather" || summary.ToolCalls[0].Arguments != `{"location":"Paris"}` {
+			t.Errorf("unexpected tool call: %+v", summary.ToolCalls[0])
+		}
+		if summary.Usage.PromptTokens != 130 || summary.Usage.CompletionTokens != 45 || summary.Usage.TotalTokens != 175 {
+			t.Errorf("unexpected usage: %+v", summary.Usage)
+		}
+	})
+
+	t.Run("OpenAI chat stream summary reconstruction", func(t *testing.T) {
+		parser := proxy.NewStreamDiagnosticsParser("chat")
+
+		// 1. Role and model
+		parser.FeedSSEEvent(nil, []byte(`{"id":"chatcmpl-abc","model":"gpt-4o-mini","choices":[{"index":0,"delta":{"role":"assistant"}}]}`))
+
+		// 2. Reasoning chunk
+		parser.FeedSSEEvent(nil, []byte(`{"id":"chatcmpl-abc","choices":[{"index":0,"delta":{"reasoning_content":"Step 1: compute answer."}}]}`))
+
+		// 3. Content chunk 1
+		parser.FeedSSEEvent(nil, []byte(`{"id":"chatcmpl-abc","choices":[{"index":0,"delta":{"content":"The answer "}}]}`))
+
+		// 4. Content chunk 2
+		parser.FeedSSEEvent(nil, []byte(`{"id":"chatcmpl-abc","choices":[{"index":0,"delta":{"content":"is 42."}}]}`))
+
+		// 5. Tool call start
+		parser.FeedSSEEvent(nil, []byte(`{"id":"chatcmpl-abc","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_99","type":"function","function":{"name":"calc","arguments":"{\"expr\":"}}]}}]}`))
+
+		// 6. Tool call arg continuation
+		parser.FeedSSEEvent(nil, []byte(`{"id":"chatcmpl-abc","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"6*7\"}"}}]}}]}`))
+
+		// 7. Finish reason & usage
+		parser.FeedSSEEvent(nil, []byte(`{"id":"chatcmpl-abc","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":50,"completion_tokens":25,"total_tokens":75,"prompt_tokens_details":{"cached_tokens":10},"completion_tokens_details":{"reasoning_tokens":15}}}`))
+
+		diag := parser.Finalize(7, 300, 200)
+		summaryBytes := parser.BuildStreamSummary(7, diag)
+
+		var summary proxy.StreamSummary
+		if err := json.Unmarshal(summaryBytes, &summary); err != nil {
+			t.Fatalf("failed to unmarshal summary JSON: %v", err)
+		}
+
+		if !summary.StreamReconstructed {
+			t.Errorf("expected StreamReconstructed=true")
+		}
+		if summary.APIFormat != "chat" {
+			t.Errorf("expected APIFormat='chat', got %q", summary.APIFormat)
+		}
+		if summary.ServedModel != "gpt-4o-mini" {
+			t.Errorf("expected ServedModel='gpt-4o-mini', got %q", summary.ServedModel)
+		}
+		if summary.Chunks != 7 {
+			t.Errorf("expected Chunks=7, got %d", summary.Chunks)
+		}
+		if summary.StopReason != "tool_calls" {
+			t.Errorf("expected StopReason='tool_calls', got %q", summary.StopReason)
+		}
+		if !summary.ThinkingDelivered {
+			t.Errorf("expected ThinkingDelivered=true")
+		}
+		if summary.Thinking != "Step 1: compute answer." {
+			t.Errorf("expected Thinking='Step 1: compute answer.', got %q", summary.Thinking)
+		}
+		if summary.Content != "The answer is 42." {
+			t.Errorf("expected Content='The answer is 42.', got %q", summary.Content)
+		}
+		if len(summary.ToolCalls) != 1 {
+			t.Fatalf("expected 1 tool call, got %d", len(summary.ToolCalls))
+		}
+		if summary.ToolCalls[0].ID != "call_99" || summary.ToolCalls[0].Name != "calc" || summary.ToolCalls[0].Arguments != `{"expr":"6*7"}` {
+			t.Errorf("unexpected tool call: %+v", summary.ToolCalls[0])
+		}
+		if summary.Usage.PromptTokens != 50 || summary.Usage.CompletionTokens != 25 || summary.Usage.TotalTokens != 75 {
+			t.Errorf("unexpected usage: %+v", summary.Usage)
+		}
+		if summary.Usage.CacheReadTokens != 10 || summary.Usage.ReasoningTokens != 15 {
+			t.Errorf("unexpected cache/reasoning usage: %+v", summary.Usage)
+		}
+	})
+
+	t.Run("Omit empty thinking and tool calls", func(t *testing.T) {
+		parser := proxy.NewStreamDiagnosticsParser("chat")
+		parser.FeedSSEEvent(nil, []byte(`{"id":"chatcmpl-1","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hi!","role":"assistant"},"finish_reason":"stop"}]}`))
+
+		diag := parser.Finalize(1, 100, 200)
+		summaryBytes := parser.BuildStreamSummary(1, diag)
+
+		var raw map[string]interface{}
+		_ = json.Unmarshal(summaryBytes, &raw)
+
+		if _, hasThinking := raw["thinking"]; hasThinking {
+			t.Errorf("expected 'thinking' to be omitted when empty")
+		}
+		if _, hasToolCalls := raw["tool_calls"]; hasToolCalls {
+			t.Errorf("expected 'tool_calls' to be omitted when empty")
+		}
+		if raw["content"] != "Hi!" {
+			t.Errorf("expected content 'Hi!', got %v", raw["content"])
 		}
 	})
 }

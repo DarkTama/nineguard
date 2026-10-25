@@ -583,9 +583,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	decloaked := false
 	offeredTools := ExtractOfferedTools(apiFormat, forwardBody)
 	if len(offeredTools) > 0 {
-		forwardBody = CleanRequestToolHistory(apiFormat, forwardBody, offeredTools)
+		cleaned := CleanRequestToolHistory(apiFormat, forwardBody, offeredTools)
+		if !bytes.Equal(cleaned, forwardBody) {
+			decloaked = true
+			forwardBody = cleaned
+		}
 	}
 
 	if apiFormat == "chat" && thinkingRequested {
@@ -720,6 +725,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Add(k, v)
 		}
 	}
+	if decloaked {
+		pluginsApplied = appendPlugin(pluginsApplied, "decloak")
+	}
 	if pluginsApplied != "" {
 		w.Header().Set("X-NineGuard-Plugins-Applied", pluginsApplied)
 	}
@@ -762,7 +770,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					// Drop injected usage-only event from client stream (ADR 0011)
 					if !(injectedUsage && isUsageOnly) {
 						if len(offeredTools) > 0 {
-							rawEvent = DecloakSSEEvent(apiFormat, rawEvent, dataPayload, offeredTools)
+							decloakedEvent := DecloakSSEEvent(apiFormat, rawEvent, dataPayload, offeredTools)
+							if !bytes.Equal(decloakedEvent, rawEvent) {
+								decloaked = true
+							}
+							rawEvent = decloakedEvent
 						}
 						_, _ = w.Write(rawEvent)
 						if isFlusher {
@@ -783,7 +795,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					isUsageOnly, dataPayload := IsUsageOnlySSEEvent(rawEvent)
 					if !(injectedUsage && isUsageOnly) {
 						if len(offeredTools) > 0 {
-							rawEvent = DecloakSSEEvent(apiFormat, rawEvent, dataPayload, offeredTools)
+							decloakedEvent := DecloakSSEEvent(apiFormat, rawEvent, dataPayload, offeredTools)
+							if !bytes.Equal(decloakedEvent, rawEvent) {
+								decloaked = true
+							}
+							rawEvent = decloakedEvent
 						}
 						_, _ = w.Write(rawEvent)
 						if isFlusher {
@@ -806,11 +822,16 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		thinkingDelivered = diag.ThinkingDelivered
 		servedModel = diag.ServedModel
 		usageEstimated = diag.UsageEstimated
+		capturedRespBody = diagParser.BuildStreamSummary(chunkCount, diag)
 	} else {
 		respBody, err := io.ReadAll(resp.Body)
 		if err == nil {
 			if len(offeredTools) > 0 {
-				respBody = DecloakResponseBody(apiFormat, respBody, offeredTools)
+				decloakedResp := DecloakResponseBody(apiFormat, respBody, offeredTools)
+				if !bytes.Equal(decloakedResp, respBody) {
+					decloaked = true
+				}
+				respBody = decloakedResp
 			}
 			capturedRespBody = respBody
 			_, _ = w.Write(respBody)
@@ -834,6 +855,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
+		if decloaked {
+			pluginsApplied = appendPlugin(pluginsApplied, "decloak")
+		}
 		durMs := int(time.Since(start).Milliseconds())
 		logEntry := &traffic.LogEntry{
 			APIKey:            maskedKey,
@@ -905,6 +929,19 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("token_spike: heavy token usage detected", "source", "traffic", "key_id", keyInfo.ID, "key_name", keyInfo.Name, "tokens", totalTokens, "threshold", heavyThreshold)
 		}
 	}()
+}
+
+func appendPlugin(existing, name string) string {
+	if existing == "" {
+		return name
+	}
+	parts := strings.Split(existing, ",")
+	for _, p := range parts {
+		if strings.TrimSpace(p) == name {
+			return existing
+		}
+	}
+	return existing + "," + name
 }
 
 func truncateForLog(b []byte) string {

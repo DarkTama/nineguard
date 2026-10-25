@@ -62,3 +62,25 @@ export function fallbackBadge(modelFallback, requestedModel, servedModel) {
     title: `Model fallback detected: requested ${requestedModel || '-'} → served ${servedModel || '-'}`,
   };
 }
+
+export function protocolBadge(apiFormat) {
+  const fmt = typeof apiFormat === 'string' ? apiFormat.trim().toLowerCase() : '';
+  if (fmt === 'messages') {
+    return { text: 'messages', cls: 'proto-messages', title: 'Anthropic Messages API (/v1/messages)' };
+  }
+  if (fmt === 'responses') {
+    return { text: 'responses', cls: 'proto-responses', title: 'OpenAI Responses API (/v1/responses)' };
+  }
+  if (fmt === 'chat') {
+    return { text: 'chat', cls: 'proto-chat', title: 'OpenAI Chat Completions API (/v1/chat/completions)' };
+  }
+  return null;
+}
+
+export function endpointPathForFormat(apiFormat) {
+  const fmt = typeof apiFormat === 'string' ? apiFormat.trim().toLowerCase() : '';
+  if (fmt === 'messages') return '/v1/messages';
+  if (fmt === 'responses') return '/v1/responses';
+  return '/v1/chat/completions';
+}
+

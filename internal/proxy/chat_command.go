@@ -126,6 +126,9 @@ func FormatQuotaMarkdown(resp *upstream.UnifiedQuotaResponse, arg string) string
 			sb.WriteString("| Model | Limit | Used | Remaining | Period | Reset |\n")
 			sb.WriteString("|---|---|---|---|---|---|\n")
 			for _, mq := range resp.ModelQuotas {
+				if mq.Inactive {
+					continue // not enforced (model removed, disabled or no longer allowed)
+				}
 				warnIcon := ""
 				if mq.Warning {
 					warnIcon = "⚠️ "

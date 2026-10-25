@@ -63,18 +63,23 @@ type ClientKeyBudget struct {
 }
 
 // ModelQuotaSummary represents the calling key's per-model token budget in model mode.
+// Inactive rows (model removed, disabled, or no longer allowed) are not enforced.
 type ModelQuotaSummary struct {
-	ModelID   string     `json:"model_id"`
-	Limit     int64      `json:"limit"`
-	Used      int64      `json:"used"`
-	Remaining int64      `json:"remaining"`
-	Period    string     `json:"period"`
-	ResetAt   *time.Time `json:"reset_at,omitempty"`
-	Warning   bool       `json:"warning"`
+	ModelID        string     `json:"model_id"`
+	Limit          int64      `json:"limit"`
+	Used           int64      `json:"used"`
+	Remaining      int64      `json:"remaining"`
+	Period         string     `json:"period"`
+	ResetAt        *time.Time `json:"reset_at,omitempty"`
+	Warning        bool       `json:"warning"`
+	Inactive       bool       `json:"inactive,omitempty"`
+	InactiveReason string     `json:"inactive_reason,omitempty"`
 }
 
 // UnifiedQuotaResponse is the response payload for GET /v1/quota and the chat command.
 type UnifiedQuotaResponse struct {
+	// KeyName is the calling key's display name, so self-service clients (the portal) can label it.
+	KeyName       string              `json:"key_name,omitempty"`
 	KeyQuota      *ClientKeyBudget    `json:"key_quota,omitempty"`
 	ModelQuotas   []ModelQuotaSummary `json:"model_quotas,omitempty"`
 	UpstreamPools []MergedPoolQuota   `json:"upstream_pools"`

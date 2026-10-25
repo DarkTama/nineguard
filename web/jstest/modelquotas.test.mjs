@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   quotaStatus, barTone, shortModel, formatResetIn, matchModelPattern, isModelAllowed, isCanonicalModelId,
   pickableModels, pickerSections, validateModelQuotaRows, quotaFiltersFromParams, quotaParamsFromFilters,
-  filterQuotaKeys, nearLimitRows, velocityPresets,
+  filterQuotaKeys, nearLimitRows, velocityPresets, aggregateModelQuotas,
 } from '../static/js/modelquotas.js';
 
 const providers = [
@@ -143,4 +143,29 @@ test('velocityPresets is empty without history or for lifetime/none/unknown peri
   assert.deepEqual(velocityPresets(1000, 'total'), []);
   assert.deepEqual(velocityPresets(1000, 'none'), []);
   assert.deepEqual(velocityPresets(1000, 'yearly'), []);
+});
+
+test('aggregateModelQuotas sums active rows only and reports mixed periods', () => {
+  const a = aggregateModelQuotas([
+    { model_id: 'cc/opus', usage: 272_700_000, quota_limit: 374_000_000, quota_period: 'weekly', status: 'ok', reset_at: '2026-10-26T00:00:00Z' },
+    { model_id: 'cc/sonnet', usage: 31_400_000, quota_limit: 180_000_000, quota_period: 'weekly', status: 'ok', reset_at: '2026-10-25T20:00:00Z' },
+    { model_id: 'cc/old', usage: 9e9, quota_limit: 1, quota_period: 'daily', inactive: true },
+  ], 80);
+  assert.equal(a.active, 2);
+  assert.equal(a.used, 304_100_000);
+  assert.equal(a.limit, 554_000_000);
+  assert.equal(a.percent, 55);
+  assert.equal(a.status, 'ok');
+  assert.equal(a.period, 'weekly');
+  assert.equal(a.resetAt, '2026-10-25T20:00:00Z');
+
+  const mixed = aggregateModelQuotas([
+    { usage: 90, quota_limit: 100, quota_period: 'daily', status: 'near' },
+    { usage: 0, quota_limit: 900, quota_period: 'weekly', status: 'ok' },
+  ], 80);
+  assert.equal(mixed.period, 'mixed');
+  assert.equal(mixed.percent, 9);
+  assert.equal(mixed.near, 1);
+
+  assert.equal(aggregateModelQuotas([{ inactive: true, usage: 1, quota_limit: 2 }], 80).active, 0);
 });

@@ -292,11 +292,11 @@ func (m *Manager) UpdateKeyAll(id string, u KeyUpdate) (*KeyInfo, error) {
 	return m.GetKey(id)
 }
 
-// inactiveReason says why a stored Model Quota cannot currently apply, or "" when it can.
+// InactiveReason says why a stored Model Quota cannot currently apply, or "" when it can.
 // Order is removed, disabled, no_access: the effective allow-list of group/custom keys already
 // drops Removed Models, so checking access first would mislabel them. Read-only lookups only
-// (models.IsModelEnabled would auto-register unknown ids).
-func (m *Manager) inactiveReason(ki *KeyInfo, modelID string) string {
+// (models.IsModelEnabled would auto-register unknown ids). The Quotas page and /v1/quota share it.
+func (m *Manager) InactiveReason(ki *KeyInfo, modelID string) string {
 	found, enabled, removed := models.LookupStatus(m.db, modelID)
 	if !found || removed {
 		return "removed"
@@ -337,7 +337,7 @@ func (m *Manager) AnnotateModelQuotas(ki *KeyInfo, warn int, now time.Time) {
 		mq.Usage = usage[strings.ToLower(mq.ModelID)]
 		mq.Percent = QuotaPercent(mq.Usage, mq.QuotaLimit)
 		mq.ResetAt = resetAtString(mq.QuotaPeriod, resetAt)
-		mq.InactiveReason = m.inactiveReason(ki, mq.ModelID)
+		mq.InactiveReason = m.InactiveReason(ki, mq.ModelID)
 		mq.Inactive = mq.InactiveReason != ""
 		if mq.Inactive {
 			mq.Status = "inactive"

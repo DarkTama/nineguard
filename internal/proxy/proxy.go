@@ -987,6 +987,7 @@ func (p *Proxy) buildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.Key
 
 	// 1. Client key budget (Key mode vs Model mode)
 	if keyInfo != nil {
+		resp.KeyName = keyInfo.Name
 		if !keyInfo.EnforcesModelQuotas() {
 			if keyInfo.QuotaLimit > 0 && keyInfo.QuotaPeriod != "" && keyInfo.QuotaPeriod != "none" && p.traffic != nil {
 				consumed, resetAt, err := p.traffic.GetQuotaUsage(keyInfo.ID, keyInfo.QuotaPeriod, keyInfo.ResetRule, now)
@@ -1024,14 +1025,20 @@ func (p *Proxy) buildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.Key
 						if !resetAt.IsZero() {
 							resetTime = &resetAt
 						}
+						reason := ""
+						if p.keys != nil {
+							reason = p.keys.InactiveReason(keyInfo, mq.ModelID)
+						}
 						resp.ModelQuotas = append(resp.ModelQuotas, upstream.ModelQuotaSummary{
-							ModelID:   mq.ModelID,
-							Limit:     mq.QuotaLimit,
-							Used:      consumed,
-							Remaining: rem,
-							Period:    mq.QuotaPeriod,
-							ResetAt:   resetTime,
-							Warning:   consumed >= int64(float64(mq.QuotaLimit)*0.8),
+							ModelID:        mq.ModelID,
+							Limit:          mq.QuotaLimit,
+							Used:           consumed,
+							Remaining:      rem,
+							Period:         mq.QuotaPeriod,
+							ResetAt:        resetTime,
+							Warning:        reason == "" && consumed >= int64(float64(mq.QuotaLimit)*0.8),
+							Inactive:       reason != "",
+							InactiveReason: reason,
 						})
 					}
 				}

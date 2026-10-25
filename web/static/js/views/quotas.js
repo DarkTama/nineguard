@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { h, icon, emptyState, fmtNum, debounce } from '../ui.js';
 import { patchRoute, getRoute } from '../state.js';
 import { formatTokensCompact } from '../quotahelpers.js';
-import { barTone, formatResetIn, filterQuotaKeys, quotaFiltersFromParams } from '../modelquotas.js';
+import { barTone, formatResetIn, filterQuotaKeys, quotaFiltersFromParams, aggregateModelQuotas } from '../modelquotas.js';
 import { renderUpstreamQuotas } from './upstream_quotas.js';
 import { openGlobalScheduleDialog } from './globalschedule.js';
 import { nextResetText } from '../resetschedule.js';
@@ -132,15 +132,26 @@ export function mount(root, initialParams) {
 
     if (k.quota_mode === 'model') {
       const rows = k.model_quotas || [];
-      const head = h('tr', null,
+      const agg = aggregateModelQuotas(rows, data.warn_percent);
+      const inactiveCount = rows.length - agg.active;
+      const countText = `· ${agg.active} active` + (inactiveCount ? `, ${inactiveCount} off` : '');
+      // The head is the key's combined allowance; per-model bars live in the breakdown. A model
+      // that crossed its own line is named here, since the combined bar can look healthy.
+      const flag = agg.exhausted
+        ? h('span', { class: 'badge err', style: { marginLeft: '6px' } }, `${agg.exhausted} exhausted`)
+        : agg.near ? h('span', { class: 'badge warn', style: { marginLeft: '6px' } }, `${agg.near} near limit`) : null;
+      const head = h('tr', { class: 'qrow-head' },
         h('td', null,
-          h('button', { class: 'btn btn-sm', type: 'button', 'aria-expanded': String(open), style: { marginRight: '6px' }, onclick: () => { toggled.set(k.id, !open); render(); } },
+          h('button', { class: 'btn btn-sm', type: 'button', 'aria-expanded': String(open), 'aria-label': open ? 'Hide per-model limits' : 'Show per-model limits', style: { marginRight: '6px' }, onclick: () => { toggled.set(k.id, !open); render(); } },
             icon(open ? 'chevron-down' : 'chevron-right')),
-          nameLink, disabled, h('span', { class: 'muted', style: { marginLeft: '6px' } }, `· ${rows.length} limit${rows.length === 1 ? '' : 's'}`)),
+          nameLink, disabled, h('span', { class: 'muted', style: { marginLeft: '6px' } }, countText), flag),
         h('td', null, h('span', { class: 'badge' }, 'per model')),
-        h('td', { class: 'muted' }, k.status === 'unlimited' ? 'nothing enforced' : 'highest of active'),
-        h('td', null, k.status === 'unlimited' ? '' : bar(k.status, k.top_percent)),
-        h('td'), h('td'));
+        agg.active
+          ? h('td', { title: 'Sum of the active per-model limits' }, `${formatTokensCompact(agg.used)} / ${formatTokensCompact(agg.limit)}`)
+          : h('td', { class: 'muted' }, 'nothing enforced'),
+        h('td', null, agg.active ? bar(agg.status, agg.percent) : ''),
+        h('td', { class: 'muted' }, agg.period === 'mixed' ? 'mixed' : (PERIOD_LABEL[agg.period] || agg.period)),
+        agg.resetAt ? resetCell({ reset_at: agg.resetAt }, keyTz(k)) : h('td'));
       return [head, ...(open ? rows.map((r) => modelRow(r, keyTz(k))) : [])];
     }
     const q = k.key_quota;

@@ -205,3 +205,36 @@ export function nearLimitRows(keys, max = 5) {
   out.sort((a, b) => (a.status === 'exhausted') !== (b.status === 'exhausted') ? (a.status === 'exhausted' ? -1 : 1) : b.percent - a.percent);
   return out.slice(0, max);
 }
+
+// Collapsed head of a per-model key on the Quotas page: the sum over ACTIVE Model Quotas (inactive
+// ones are not enforced). percent = total used / total limit; near/exhausted count the rows that
+// crossed. period is 'mixed' when the active rows reset on different periods; resetAt is the soonest.
+export function aggregateModelQuotas(rows, warn) {
+  const active = (rows || []).filter((r) => !r.inactive && r.quota_limit > 0);
+  let used = 0;
+  let limit = 0;
+  let near = 0;
+  let exhausted = 0;
+  let resetAt = null;
+  const periods = new Set();
+  for (const r of active) {
+    used += Math.max(0, r.usage || 0);
+    limit += r.quota_limit;
+    periods.add(r.quota_period);
+    if (r.status === 'exhausted') exhausted++;
+    else if (r.status === 'near') near++;
+    if (r.reset_at && (!resetAt || Date.parse(r.reset_at) < Date.parse(resetAt))) resetAt = r.reset_at;
+  }
+  const percent = limit > 0 ? Math.round((used / limit) * 100) : 0;
+  return {
+    active: active.length,
+    used,
+    limit,
+    percent,
+    status: quotaStatus(percent, warn),
+    near,
+    exhausted,
+    period: periods.size === 1 ? [...periods][0] : (periods.size ? 'mixed' : ''),
+    resetAt,
+  };
+}

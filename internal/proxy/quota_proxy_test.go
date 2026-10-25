@@ -1,6 +1,7 @@
 package proxy_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -132,3 +133,79 @@ func TestProxyQuotaUnderLimitProceeds(t *testing.T) {
 	}
 }
 
+func TestUnifiedQuotaIncludesKeyName(t *testing.T) {
+	d, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	defer d.Close()
+
+	keyMgr := keys.NewManager(d, "")
+	trafficMgr := traffic.NewManager(d)
+	p, err := proxy.NewProxy(models.NewManager(d), trafficMgr, keyMgr, providers.NewManager(d), nil)
+	if err != nil {
+		t.Fatalf("NewProxy: %v", err)
+	}
+	k, err := keyMgr.CreateKeyWithOptions("Cursor Laptop", keys.CreateKeyOptions{})
+	if err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/v1/quota", nil)
+	req.Header.Set("Authorization", "Bearer "+k.RawKey)
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"key_name":"Cursor Laptop"`) {
+		t.Fatalf("expected key_name in /v1/quota body, got %s", w.Body.String())
+	}
+}
+
+func TestUnifiedQuotaFlagsInactiveModelQuotas(t *testing.T) {
+	d, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	defer d.Close()
+	if _, err := d.Exec(`INSERT INTO models (id,name,provider_id,enabled) VALUES ('p/on','p/on','p',1),('p/off','p/off','p',0)`); err != nil {
+		t.Fatal(err)
+	}
+
+	keyMgr := keys.NewManager(d, "")
+	p, err := proxy.NewProxy(models.NewManager(d), traffic.NewManager(d), keyMgr, providers.NewManager(d), nil)
+	if err != nil {
+		t.Fatalf("NewProxy: %v", err)
+	}
+	k, err := keyMgr.CreateKeyWithOptions("team", keys.CreateKeyOptions{QuotaMode: "model", ModelQuotas: []keys.ModelQuota{
+		{ModelID: "p/on", QuotaLimit: 1000, QuotaPeriod: "daily"},
+		{ModelID: "p/off", QuotaLimit: 1000, QuotaPeriod: "daily"},
+	}})
+	if err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/v1/quota", nil)
+	req.Header.Set("Authorization", "Bearer "+k.RawKey)
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, req)
+
+	var resp struct {
+		ModelQuotas []struct {
+			ModelID  string `json:"model_id"`
+			Inactive bool   `json:"inactive"`
+		} `json:"model_quotas"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v: %s", err, w.Body.String())
+	}
+	got := map[string]bool{}
+	for _, r := range resp.ModelQuotas {
+		got[r.ModelID] = r.Inactive
+	}
+	if len(got) != 2 || got["p/on"] || !got["p/off"] {
+		t.Fatalf("expected p/off inactive and p/on active, got %v (%s)", got, w.Body.String())
+	}
+}

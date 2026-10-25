@@ -1,40 +1,38 @@
-// NineGuard Client Key Self-Service Portal
-import { h, icon, emptyState, toast, fmtNum, fmtCompact, timeZone } from './ui.js';
+// NineGuard Client Key Self-Service Portal.
+// Answers, in order: can I keep working (budget), what did I use (activity), how do I connect, what can I call.
+import { h, icon, toast, fmtNum, fmtCompact, fmtClock, timeZone, tzLabel, copy } from './ui.js';
 import {
   getStoredPortalKey,
   setStoredPortalKey,
   clearStoredPortalKey,
   isValidKeyFormat,
   maskKey,
-  buildHeaders
+  buildHeaders,
+  budgetSummary,
+  periodWord
 } from './portalhelpers.js';
 import { formatCost } from './costhelpers.js';
-import { quotaPercent, formatTokensCompact } from './quotahelpers.js';
-import { quotaStatus, barTone, formatResetIn } from './modelquotas.js';
-import { groupDailyIntoWeeks, heatmapIntensity } from './views/keyusage.js';
-import { upstreamBarTone } from './views/upstream_quotas.js';
+import { formatTokensCompact } from './quotahelpers.js';
+import { formatResetIn, shortModel } from './modelquotas.js';
 
 const root = document.getElementById('portal-app');
 
+const RANGES = [['7d', '7 days'], ['30d', '30 days'], ['all', 'All time']];
+const MODEL_LIST_PREVIEW = 12;
+
 let activeKey = getStoredPortalKey();
-let activeRange = '30d'; // '7d' | '30d' | 'all'
+let activeRange = '30d';
 let quotaData = null;
 let usageData = null;
 let modelsData = null;
 let loading = false;
 let errorMsg = '';
+let modelFilter = '';
+let showAllModels = false;
 
 async function fetchJSON(url, key) {
-  const resp = await fetch(url, {
-    headers: {
-      ...buildHeaders(key),
-      'Accept': 'application/json'
-    }
-  });
-
-  if (resp.status === 401) {
-    throw new Error('UNAUTHORIZED');
-  }
+  const resp = await fetch(url, { headers: { ...buildHeaders(key), 'Accept': 'application/json' } });
+  if (resp.status === 401) throw new Error('UNAUTHORIZED');
 
   const text = await resp.text();
   let data = null;
@@ -44,35 +42,29 @@ async function fetchJSON(url, key) {
 
   if (!resp.ok) {
     let msg = `HTTP ${resp.status}`;
-    if (data && data.error) {
-      msg = typeof data.error === 'string' ? data.error : (data.error.message || msg);
-    }
+    if (data && data.error) msg = typeof data.error === 'string' ? data.error : (data.error.message || msg);
     throw new Error(msg);
   }
-
   return data;
-}
-
-function initTheme() {
-  const cur = document.documentElement.dataset.theme || 'dark';
-  document.documentElement.dataset.theme = cur;
 }
 
 function toggleTheme() {
   const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
-  try {
-    localStorage.setItem('nineguard_theme', next);
-  } catch {}
+  try { localStorage.setItem('nineguard_theme', next); } catch { /* storage unavailable */ }
+}
+
+function themeButton(cls) {
+  const btn = h('button', { class: cls, type: 'button', title: 'Switch light / dark theme', 'aria-label': 'Switch light / dark theme' });
+  const paint = () => btn.replaceChildren(icon(document.documentElement.dataset.theme === 'dark' ? 'sun' : 'moon'));
+  btn.addEventListener('click', () => { toggleTheme(); paint(); });
+  paint();
+  return btn;
 }
 
 async function validateAndSaveKey(rawKey) {
   const key = rawKey.trim();
-  if (!isValidKeyFormat(key)) {
-    throw new Error('Key must start with sk- (e.g. sk-ng-...)');
-  }
-
-  // Probe with GET /v1/quota
+  if (!isValidKeyFormat(key)) throw new Error('Keys start with sk- (for example sk-ng-...).');
   await fetchJSON('/v1/quota', key);
   setStoredPortalKey(key);
   activeKey = key;
@@ -85,32 +77,27 @@ async function loadPortalData() {
   render();
 
   const tz = timeZone() || 'UTC';
+  const soft = (fallback) => (err) => {
+    if (err.message === 'UNAUTHORIZED') throw err;
+    return fallback;
+  };
   try {
     const [qRes, uRes, mRes] = await Promise.all([
-      fetchJSON('/v1/quota', activeKey).catch(err => {
-        if (err.message === 'UNAUTHORIZED') throw err;
-        return null;
-      }),
-      fetchJSON(`/v1/usage?range=${activeRange}&tz=${encodeURIComponent(tz)}`, activeKey).catch(err => {
-        if (err.message === 'UNAUTHORIZED') throw err;
-        return null;
-      }),
-      fetchJSON('/v1/models', activeKey).catch(err => {
-        if (err.message === 'UNAUTHORIZED') throw err;
-        return { data: [] };
-      })
+      fetchJSON('/v1/quota', activeKey).catch(soft(null)),
+      fetchJSON(`/v1/usage?range=${activeRange}&tz=${encodeURIComponent(tz)}`, activeKey).catch(soft(null)),
+      fetchJSON('/v1/models', activeKey).catch(soft({ data: [] })),
     ]);
-
     quotaData = qRes;
     usageData = uRes;
     modelsData = (mRes && Array.isArray(mRes.data)) ? mRes.data : [];
+    if (!qRes && !uRes) errorMsg = 'NineGuard did not answer the quota or usage request.';
   } catch (err) {
     if (err.message === 'UNAUTHORIZED') {
       clearStoredPortalKey();
       activeKey = '';
-      toast('API key was revoked or invalid. Please reconnect.', 'error');
+      toast('This key was revoked or disabled. Enter a current key.', 'error');
     } else {
-      errorMsg = err.message || 'Failed to load usage data';
+      errorMsg = err.message || 'Could not load usage data.';
     }
   } finally {
     loading = false;
@@ -118,655 +105,448 @@ async function loadPortalData() {
   }
 }
 
-// ── Render Views ──
+function disconnect() {
+  clearStoredPortalKey();
+  activeKey = '';
+  quotaData = usageData = modelsData = null;
+  render();
+}
+
+// ── Sign-in ──
 
 function renderLoginView() {
   let showKey = false;
-
-  const themeBtn = h('button', {
-    class: 'icon-btn auth-theme',
-    type: 'button',
-    title: 'Toggle theme',
-    onclick: () => {
-      toggleTheme();
-      updateThemeBtn();
-    }
-  });
-
-  function updateThemeBtn() {
-    const isDark = document.documentElement.dataset.theme === 'dark';
-    themeBtn.replaceChildren(icon(isDark ? 'sun' : 'moon'));
-  }
-  updateThemeBtn();
-
   const keyInput = h('input', {
-    class: 'input',
+    class: 'input pt-key-input',
     type: 'password',
     placeholder: 'sk-ng-...',
-    style: { fontSize: '14px', padding: '10px 12px' },
+    autocomplete: 'off',
+    spellcheck: 'false',
+    'aria-label': 'NineGuard API key',
     autofocus: true
   });
-
-  const toggleEyeBtn = h('button', {
-    class: 'btn btn-sm',
-    type: 'button',
-    style: { minWidth: '40px' },
+  const eyeBtn = h('button', {
+    class: 'btn', type: 'button', 'aria-label': 'Show key',
     onclick: () => {
       showKey = !showKey;
       keyInput.type = showKey ? 'text' : 'password';
-      toggleEyeBtn.replaceChildren(icon(showKey ? 'eye-off' : 'eye'));
+      eyeBtn.setAttribute('aria-label', showKey ? 'Hide key' : 'Show key');
+      eyeBtn.replaceChildren(icon(showKey ? 'eye-off' : 'eye'));
     }
   }, icon('eye'));
-
-  const submitBtn = h('button', {
-    class: 'btn btn-primary btn-block',
-    type: 'submit',
-    style: { marginTop: '16px', padding: '10px', fontSize: '14px', fontWeight: 'bold' }
-  }, icon('key'), ' Access Developer Portal');
-
-  const errBox = h('div', { class: 'note err mt-sm', style: { display: 'none' } });
+  const submitBtn = h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, icon('key'), 'Open my usage');
+  const errBox = h('p', { class: 'note err', role: 'alert', hidden: true });
 
   const form = h('form', {
     class: 'auth-form',
     onsubmit: async (e) => {
       e.preventDefault();
-      const raw = keyInput.value;
-      if (!raw.trim()) return;
-
+      if (!keyInput.value.trim()) return;
       submitBtn.disabled = true;
-      submitBtn.replaceChildren(icon('refresh'), ' Verifying Key...');
-      errBox.style.display = 'none';
-
+      submitBtn.replaceChildren(icon('refresh'), 'Checking key...');
+      errBox.hidden = true;
       try {
-        await validateAndSaveKey(raw);
+        await validateAndSaveKey(keyInput.value);
         await loadPortalData();
       } catch (err) {
-        errBox.textContent = err.message || 'Invalid API key or revoked access';
-        errBox.style.display = 'block';
+        errBox.textContent = err.message === 'UNAUTHORIZED'
+          ? 'NineGuard does not recognise this key, or it is disabled.'
+          : (err.message || 'Could not check this key.');
+        errBox.hidden = false;
       } finally {
         submitBtn.disabled = false;
-        submitBtn.replaceChildren(icon('key'), ' Access Developer Portal');
+        submitBtn.replaceChildren(icon('key'), 'Open my usage');
       }
     }
   },
-    h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
-      keyInput,
-      toggleEyeBtn
-    ),
+    h('div', { class: 'pt-key-row' }, keyInput, eyeBtn),
     errBox,
-    submitBtn
+    submitBtn,
+    h('p', { class: 'pt-fine' }, 'The key stays in this browser only. It is sent to this NineGuard server, nowhere else.')
   );
 
-  const card = h('div', { class: 'auth-card' },
-    h('div', { class: 'auth-brand' },
-      h('img', { src: '/appicon.png', width: '34', height: '34', alt: 'NineGuard' }),
-      h('span', null, 'NineGuard')
-    ),
-    h('div', { class: 'auth-title' },
-      h('h1', null, 'Developer Portal'),
-      h('p', null, 'Enter your assigned NineGuard API key to inspect your token allowances, reset schedule, and activity history.')
-    ),
-    form
-  );
-
-  const authPage = h('div', { class: 'auth-page' },
-    themeBtn,
-    h('main', { class: 'auth-main' }, card),
-    h('footer', { class: 'auth-footer' },
-      h('span', null, 'NineGuard'),
-      h('span', null, 'Client Key Self-Service Portal')
+  root.replaceChildren(h('div', { class: 'auth-page' },
+    themeButton('icon-btn auth-theme'),
+    h('main', { class: 'auth-main' },
+      h('div', { class: 'auth-card' },
+        h('div', { class: 'auth-brand' }, h('img', { src: '/appicon.png', width: '34', height: '34', alt: '' }), h('span', null, 'NineGuard')),
+        h('div', { class: 'auth-title' },
+          h('h1', null, 'Check your key'),
+          h('p', null, 'See how much of your token budget is left, when it resets, and which models you can call.')
+        ),
+        form
+      )
     )
-  );
-
-  root.replaceChildren(authPage);
+  ));
 }
 
+// ── Dashboard ──
+
 function renderDashboardView() {
-  // 1. Top Navbar
-  const maskedToken = maskKey(activeKey);
-  const keyName = (quotaData && quotaData.key_quota && quotaData.key_quota.key_name) || (usageData && usageData.key_name) || 'Agent Key';
-  const tzName = (usageData && usageData.timezone) || timeZone() || 'UTC';
+  const keyName = (quotaData && quotaData.key_name) || 'Your key';
 
-  const range7d = h('button', {
-    class: `btn btn-sm ${activeRange === '7d' ? 'btn-primary' : ''}`,
-    type: 'button',
-    onclick: () => { activeRange = '7d'; loadPortalData(); }
-  }, '7 Days');
-  const range30d = h('button', {
-    class: `btn btn-sm ${activeRange === '30d' ? 'btn-primary' : ''}`,
-    type: 'button',
-    onclick: () => { activeRange = '30d'; loadPortalData(); }
-  }, '30 Days');
-  const rangeAll = h('button', {
-    class: `btn btn-sm ${activeRange === 'all' ? 'btn-primary' : ''}`,
-    type: 'button',
-    onclick: () => { activeRange = 'all'; loadPortalData(); }
-  }, 'All Time');
-
-  const rangeGroup = h('div', { style: { display: 'flex', gap: '4px' } }, range7d, range30d, rangeAll);
-
-  const refreshBtn = h('button', {
-    class: 'btn btn-sm',
-    type: 'button',
-    title: 'Refresh Data',
-    onclick: () => loadPortalData()
-  }, icon('refresh'));
-
-  const themeBtn = h('button', {
-    class: 'btn btn-sm',
-    type: 'button',
-    title: 'Toggle Dark / Light Theme',
-    onclick: () => toggleTheme()
-  }, icon('sun'));
-
-  const logoutBtn = h('button', {
-    class: 'btn btn-sm btn-danger',
-    type: 'button',
-    title: 'Forget this API Key',
-    onclick: () => {
-      clearStoredPortalKey();
-      activeKey = '';
-      quotaData = null;
-      usageData = null;
-      modelsData = null;
-      render();
-    }
-  }, icon('logout'), ' Disconnect');
-
-  const header = h('header', {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      padding: '12px 20px',
-      borderBottom: '1px solid var(--border)',
-      background: 'var(--panel)',
-      flexWrap: 'wrap',
-      gap: '12px'
-    }
-  },
-    h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
-      h('img', { src: '/appicon.png', width: '28', height: '28', alt: 'NineGuard' }),
-      h('span', { class: 'strong', style: { fontSize: '15px' } }, 'NineGuard Portal'),
-      h('span', { class: 'badge', style: { fontSize: '11px', background: 'var(--hover)' } },
-        icon('key'), ' ', keyName, ' (', maskedToken, ')'
-      ),
-      h('span', { class: 'badge muted', style: { fontSize: '10.5px' } }, tzName)
+  const header = h('header', { class: 'pt-top' },
+    h('div', { class: 'pt-brand' },
+      h('img', { src: '/appicon.png', width: '26', height: '26', alt: 'NineGuard' }),
+      h('div', { class: 'pt-who' },
+        h('strong', null, keyName),
+        h('code', null, maskKey(activeKey))
+      )
     ),
-    h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-      rangeGroup,
-      refreshBtn,
-      themeBtn,
-      logoutBtn
+    h('div', { class: 'pt-top-actions' },
+      h('button', { class: 'icon-btn', type: 'button', title: 'Reload', 'aria-label': 'Reload', disabled: loading, onclick: () => loadPortalData() }, icon('refresh')),
+      themeButton('icon-btn'),
+      h('button', { class: 'btn btn-sm', type: 'button', title: 'Forget this key in this browser', onclick: disconnect }, icon('logout'), h('span', { class: 'pt-hide-sm' }, 'Sign out'))
     )
   );
 
-  const container = h('div', {
-    style: { maxWidth: '1100px', margin: '20px auto', padding: '0 16px', display: 'flex', flexDirection: 'column', gap: '16px' }
-  });
+  const main = h('main', { class: 'pt-main' });
 
-  if (loading) {
-    container.append(
-      h('div', { class: 'skel', style: { height: '100px' } }),
-      h('div', { class: 'skel', style: { height: '140px' } }),
-      h('div', { class: 'skel', style: { height: '260px' } })
-    );
-    root.replaceChildren(header, container);
+  if (loading && !quotaData && !usageData) {
+    main.append(h('div', { class: 'pt-grid' },
+      h('div', { class: 'pt-col' }, h('div', { class: 'skel', style: { height: '170px' } }), h('div', { class: 'skel', style: { height: '260px' } })),
+      h('div', { class: 'pt-col' }, h('div', { class: 'skel', style: { height: '200px' } }))
+    ));
+    root.replaceChildren(header, main);
     return;
   }
 
   if (errorMsg) {
-    container.append(emptyState('alert', 'Could Not Load Usage Data', errorMsg));
-    root.replaceChildren(header, container);
+    main.append(h('section', { class: 'pt-panel pt-error' },
+      icon('alert'),
+      h('div', null,
+        h('h2', null, 'Usage data did not load'),
+        h('p', null, errorMsg),
+        h('button', { class: 'btn btn-sm', type: 'button', onclick: () => loadPortalData() }, icon('refresh'), 'Try again')
+      )
+    ));
+    root.replaceChildren(header, main);
     return;
   }
 
-  // ── Section 1: Quota Allowance Card ──
-  container.append(renderQuotaCard());
-
-  // ── Section 2: Upstream Shared Capacity Pools ──
-  if (quotaData && quotaData.upstream_pools && quotaData.upstream_pools.length) {
-    container.append(renderUpstreamPoolsSection());
-  }
-
-  // ── Section 3: Usage KPI Overview ──
-  if (usageData) {
-    container.append(renderUsageKPICards());
-    container.append(renderHeatmapCard());
-    container.append(renderModelsBreakdownCard());
-  }
-
-  // ── Section 4: Allowed Models Catalog ──
-  container.append(renderAllowedModelsCard());
-
-  // ── Section 5: Upstream Shared Capacity Context ──
-  if (usageData && usageData.upstream_usage && usageData.upstream_usage.length) {
-    container.append(renderContextFooter());
-  }
-
-  root.replaceChildren(header, container);
-}
-
-function renderQuotaCard() {
-  const q = quotaData;
-  if (!q || (!q.key_quota && (!q.model_quotas || !q.model_quotas.length))) {
-    return h('div', { class: 'card', style: { padding: '16px 20px', background: 'var(--panel)' } },
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-        icon('sparkles'),
-        h('b', { style: { fontSize: '14px' } }, 'Token Budget: Unlimited'),
-        h('span', { class: 'badge ok', style: { fontSize: '10.5px' } }, 'No limit enforced')
-      )
-    );
-  }
-
-  // Model Quotas mode
-  if (q.model_quotas && q.model_quotas.length) {
-    const rows = q.model_quotas.map(mq => {
-      const pct = quotaPercent(mq.used, mq.limit);
-      const tone = barTone(quotaStatus(pct, 80, mq.warning));
-      const resetStr = mq.reset_at ? `in ${formatResetIn(mq.reset_at)}` : (mq.period || '-');
-
-      return h('tr', null,
-        h('td', { style: { fontWeight: '500' } },
-          mq.warning ? h('span', { title: 'Depletion warning (>=80% used)', style: { marginRight: '6px' } }, '⚠️') : null,
-          mq.model_id
-        ),
-        h('td', { class: 'muted num', style: { fontSize: '12px' } }, `${formatTokensCompact(mq.used)} / ${formatTokensCompact(mq.limit)}`),
-        h('td', null,
-          h('span', { style: { display: 'inline-flex', alignItems: 'center' } },
-            h('span', { class: `qbar ${tone}`, style: { width: '80px', display: 'inline-block' } },
-              h('i', { style: { width: `${Math.min(100, Math.max(1, pct))}%` } })
-            ),
-            h('span', { class: `qpct ${tone}`, style: { marginLeft: '8px', fontSize: '11px', fontWeight: 'bold' } }, `${pct}%`)
-          )
-        ),
-        h('td', { class: 'muted', style: { fontSize: '12px' } }, resetStr)
-      );
-    });
-
-    return h('div', {
-      class: 'card',
-      style: {
-        background: 'color-mix(in srgb, var(--ok) 5%, var(--panel))',
-        border: '1.5px solid var(--ok)',
-        borderRadius: '8px',
-        padding: '14px 18px',
-      }
-    },
-      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' } },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
-          icon('shield'),
-          h('b', { style: { fontSize: '14px' } }, 'Key Allowance (Token Budget)'),
-          h('span', { class: 'badge ok', style: { fontWeight: 'bold', border: '1px solid var(--ok)' } }, '👤 Key Allowance (Admin Limit)'),
-          h('span', { class: 'badge', style: { background: 'var(--hover)', fontSize: '11px' } }, 'Per-Model Quotas')
-        ),
-        h('span', { class: 'badge ok' }, 'active')
-      ),
-      h('div', { class: 'table-wrap' },
-        h('table', { class: 'table', style: { width: '100%', fontSize: '12px', margin: 0 } },
-          h('thead', null,
-            h('tr', null,
-              h('th', { style: { width: '38%' } }, 'Model / Allowance Window'),
-              h('th', { class: 'num', style: { width: '22%' } }, 'Tokens Consumed / Limit'),
-              h('th', { style: { width: '25%' } }, 'Remaining'),
-              h('th', { style: { width: '15%' } }, 'Reset In')
-            )
-          ),
-          h('tbody', null, ...rows)
-        )
-      )
-    );
-  }
-
-  // Single Key Quota mode
-  if (q.key_quota) {
-    const kq = q.key_quota;
-    const limit = kq.limit || 0;
-    const used = kq.used || 0;
-    const pct = quotaPercent(used, limit);
-    const tone = barTone(quotaStatus(pct, 80, kq.warning));
-    const resetStr = kq.reset_at ? `in ${formatResetIn(kq.reset_at)}` : (kq.period || '-');
-
-    const row = h('tr', null,
-      h('td', { style: { fontWeight: '500' } },
-        kq.warning ? h('span', { title: 'Depletion warning (>=80% used)', style: { marginRight: '6px' } }, '⚠️') : null,
-        `Global Token Budget (${kq.period || 'total'})`
-      ),
-      h('td', { class: 'muted num', style: { fontSize: '12px' } }, `${formatTokensCompact(used)} / ${formatTokensCompact(limit)}`),
-      h('td', null,
-        h('span', { style: { display: 'inline-flex', alignItems: 'center' } },
-          h('span', { class: `qbar ${tone}`, style: { width: '80px', display: 'inline-block' } },
-            h('i', { style: { width: `${Math.min(100, Math.max(1, pct))}%` } })
-          ),
-          h('span', { class: `qpct ${tone}`, style: { marginLeft: '8px', fontSize: '11px', fontWeight: 'bold' } }, `${pct}%`)
-        )
-      ),
-      h('td', { class: 'muted', style: { fontSize: '12px' } }, resetStr)
-    );
-
-    return h('div', {
-      class: 'card',
-      style: {
-        background: 'color-mix(in srgb, var(--ok) 5%, var(--panel))',
-        border: '1.5px solid var(--ok)',
-        borderRadius: '8px',
-        padding: '14px 18px',
-      }
-    },
-      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' } },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
-          icon('shield'),
-          h('b', { style: { fontSize: '14px' } }, 'Key Allowance (Token Budget)'),
-          h('span', { class: 'badge ok', style: { fontWeight: 'bold', border: '1px solid var(--ok)' } }, '👤 Key Allowance (Admin Limit)'),
-          h('span', { class: 'badge', style: { background: 'var(--hover)', fontSize: '11px' } }, kq.period || 'none')
-        ),
-        h('span', { class: 'badge ok' }, 'active')
-      ),
-      h('div', { class: 'table-wrap' },
-        h('table', { class: 'table', style: { width: '100%', fontSize: '12px', margin: 0 } },
-          h('thead', null,
-            h('tr', null,
-              h('th', { style: { width: '38%' } }, 'Allowance Window'),
-              h('th', { class: 'num', style: { width: '22%' } }, 'Tokens Consumed / Limit'),
-              h('th', { style: { width: '25%' } }, 'Remaining'),
-              h('th', { style: { width: '15%' } }, 'Reset In')
-            )
-          ),
-          h('tbody', null, row)
-        )
-      )
-    );
-  }
-
-  return h('div');
-}
-
-function renderUpstreamPoolsSection() {
-  const pools = (quotaData && quotaData.upstream_pools) || [];
-  if (!pools.length) return h('div');
-
-  const poolCards = pools.map(pool => {
-    const statusTone = pool.status === 'ok' ? 'ok' : (pool.status === 'degraded' ? 'warn' : 'err');
-
-    const bucketRows = (pool.buckets || []).map(b => {
-      const rawTone = upstreamBarTone(b.remaining_percentage);
-      const tone = rawTone === 'danger' ? 'err' : rawTone;
-      const pct = Math.max(0, Math.min(100, b.remaining_percentage || 0));
-
-      let usedTotalStr = `${formatTokensCompact(b.used)} / ${formatTokensCompact(b.total)}`;
-      if (b.is_credit_balance) {
-        usedTotalStr = `$${(b.remaining / 100).toFixed(2)}`;
-      } else if (b.total <= 0) {
-        usedTotalStr = '-';
-      }
-
-      const resetStr = b.reset_at ? `in ${formatResetIn(b.reset_at)}` : '-';
-
-      return h('tr', null,
-        h('td', { style: { fontWeight: '500' } },
-          b.warning ? h('span', { title: 'Depletion warning (<25%)', style: { marginRight: '6px' } }, '⚠️') : null,
-          b.name
-        ),
-        h('td', { class: 'muted num', style: { fontSize: '12px' } }, usedTotalStr),
-        h('td', null,
-          b.is_credit_balance
-            ? h('span', { class: 'badge ok' }, 'Active')
-            : h('span', { style: { display: 'inline-flex', alignItems: 'center' } },
-                h('span', { class: `qbar ${tone}`, style: { width: '80px', display: 'inline-block' } },
-                  h('i', { style: { width: `${pct}%` } })
-                ),
-                h('span', { class: `qpct ${tone}`, style: { marginLeft: '8px', fontSize: '11px', fontWeight: 'bold' } }, `${pct}%`)
-              )
-        ),
-        h('td', { class: 'muted', style: { fontSize: '12px' } }, resetStr)
-      );
-    });
-
-    return h('div', {
-      style: {
-        background: 'var(--panel)',
-        border: '1px solid var(--border)',
-        borderRadius: '8px',
-        padding: '12px 16px',
-        marginBottom: '10px'
-      }
-    },
-      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' } },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
-          icon('server'),
-          h('span', { style: { fontWeight: '700', fontSize: '13px' } }, pool.family || pool.provider),
-          h('span', { class: 'badge', style: { background: 'var(--hover)', fontWeight: '600', fontSize: '11px', border: '1px solid var(--border)' } }, '🌐 Shared Upstream Pool')
-        ),
-        h('span', { class: `badge ${statusTone}` }, pool.status || 'ok')
-      ),
-      bucketRows.length > 0
-        ? h('div', { class: 'table-wrap' },
-            h('table', { class: 'table', style: { width: '100%', fontSize: '12px', margin: 0 } },
-              h('thead', null,
-                h('tr', null,
-                  h('th', { style: { width: '36%' } }, 'Window / Bucket'),
-                  h('th', { class: 'num', style: { width: '24%' } }, 'Used / Total'),
-                  h('th', { style: { width: '25%' } }, 'Remaining'),
-                  h('th', { style: { width: '15%' } }, 'Reset In')
-                )
-              ),
-              h('tbody', null, ...bucketRows)
-            )
-          )
-        : h('p', { class: 'muted', style: { margin: 0, fontSize: '12px' } }, 'No active quota buckets reported.')
-    );
-  });
-
-  return h('div', { class: 'card', style: { padding: '16px 20px', background: 'var(--panel)' } },
-    h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' } },
-      icon('server'),
-      h('b', { style: { fontSize: '14px' } }, 'Upstream Shared Capacity'),
-      h('span', { class: 'badge muted', style: { fontSize: '11px' } }, `${pools.length} pool${pools.length === 1 ? '' : 's'}`)
+  main.append(h('div', { class: 'pt-grid' },
+    h('div', { class: 'pt-col' },
+      renderBudget(),
+      renderActivity()
     ),
-    h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } }, ...poolCards)
-  );
-}
-
-function renderUsageKPICards() {
-  const s = usageData;
-  const reqSub = s.errors > 0 ? `${fmtNum(s.errors)} err (${s.error_rate_pct}%)` : '100% success';
-  const tokSub = `↓ ${fmtCompact(s.tokens.prompt)} · ↑ ${fmtCompact(s.tokens.completion)}`;
-  const costVal = s.cost ? s.cost.display_formatted : null;
-  const costSub = s.cost ? `${s.cost.currency} (est. list price)` : null;
-
-  function kpi(label, val, sub, tone = '') {
-    return h('div', { class: 'card', style: { padding: '12px 16px', background: 'var(--panel)' } },
-      h('div', { class: 'muted', style: { fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.04em' } }, label),
-      h('div', { style: { fontSize: '18px', fontWeight: 'bold', margin: '4px 0 2px', color: tone || 'inherit' } }, val),
-      sub ? h('div', { class: 'muted', style: { fontSize: '11px' } }, sub) : null
-    );
-  }
-
-  const cards = [
-    kpi('Requests', fmtNum(s.requests), reqSub, 'var(--lv-info)'),
-    kpi('Total Tokens', fmtCompact(s.tokens.total), tokSub, 'var(--ok)'),
-    kpi('Sessions (inferred)', fmtNum(s.sessions), '30m inactivity gap', 'var(--text)'),
-    kpi('Cache Hit Rate', `${s.cache_hit_pct}%`, `${fmtCompact(s.tokens.cache_read)} read`, 'var(--accent)')
-  ];
-
-  if (costVal) {
-    cards.push(kpi('Est. Cost', costVal, costSub, '#eab308'));
-  }
-
-  cards.push(
-    kpi('Active Days', fmtNum(s.active_days), `in ${s.range} window`),
-    kpi('Peak Usage Hour', s.peak_hour_formatted, `local ${s.timezone}`),
-    kpi('Thinking / Fallbacks', `${s.thinking.delivered} / ${s.fallbacks}`, `${s.thinking.lost} lost`)
-  );
-
-  return h('div', { class: 'grid grid-4', style: { gap: '10px' } }, ...cards);
-}
-
-function renderHeatmapCard() {
-  const s = usageData;
-  const dailyPoints = s.daily || [];
-  const maxDayTokens = Math.max(...dailyPoints.map(p => p.tokens || 0), 1);
-  const weeks = groupDailyIntoWeeks(dailyPoints);
-
-  const weekdays = ['Mon', '', 'Wed', '', 'Fri', '', 'Sun'];
-
-  const weekCols = weeks.map(w => {
-    const dayCells = w.days.map(d => {
-      const lvl = heatmapIntensity(d.tokens, maxDayTokens);
-      const bgColors = [
-        'var(--border)',
-        'rgba(56, 189, 248, 0.35)',
-        'rgba(56, 189, 248, 0.65)',
-        'rgba(56, 189, 248, 0.90)',
-        '#38bdf8'
-      ];
-      const cur = usageData?.cost?.currency || 'USD';
-      const rate = usageData?.cost?.rate || 1.0;
-      const costTip = (d.cost != null && usageData?.cost) ? ` · ${formatCost(d.cost, cur, rate, 0)}` : '';
-      return h('div', {
-        style: {
-          width: '11px',
-          height: '11px',
-          borderRadius: '2px',
-          background: d.inRange ? bgColors[lvl] : 'transparent',
-          opacity: d.inRange ? '1' : '0.2'
-        },
-        title: `${d.date}: ${fmtNum(d.tokens)} tokens (${fmtNum(d.requests)} requests)${costTip}`
-      });
-    });
-    return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '3px' } }, ...dayCells);
-  });
-
-  const weekdayLabels = weekdays.map(name =>
-    h('div', { style: { height: '11px', fontSize: '9px', lineHeight: '11px', color: 'var(--muted)', textAlign: 'right', width: '22px' } }, name)
-  );
-
-  return h('div', { class: 'card', style: { padding: '16px 20px', background: 'var(--panel)' } },
-    h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' } },
-      h('b', { style: { fontSize: '13px' } }, 'Activity Heatmap (Daily Token Load)'),
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10.5px', color: 'var(--muted)' } },
-        'Less',
-        h('span', { style: { width: '9px', height: '9px', borderRadius: '2px', background: 'var(--border)' } }),
-        h('span', { style: { width: '9px', height: '9px', borderRadius: '2px', background: 'rgba(56, 189, 248, 0.35)' } }),
-        h('span', { style: { width: '9px', height: '9px', borderRadius: '2px', background: 'rgba(56, 189, 248, 0.65)' } }),
-        h('span', { style: { width: '9px', height: '9px', borderRadius: '2px', background: '#38bdf8' } }),
-        'More'
-      )
-    ),
-    h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', overflowX: 'auto', paddingBottom: '4px' } },
-      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '3px' } }, ...weekdayLabels),
-      h('div', { style: { display: 'flex', gap: '3px' } }, ...weekCols)
+    h('aside', { class: 'pt-col' },
+      renderConnect(),
+      renderSharedCapacity(),
+      renderAllowedModels()
     )
-  );
+  ));
+  root.replaceChildren(header, main);
 }
 
-function renderModelsBreakdownCard() {
-  const models = usageData.models || [];
-  if (!models.length) return h('div');
-
-  const cur = usageData?.cost?.currency || 'USD';
-  const rate = usageData?.cost?.rate || 1.0;
-
-  const rows = models.map(m => {
-    const costStr = (m.cost != null && usageData?.cost) ? formatCost(m.cost, cur, rate, 0) : '—';
-    return h('tr', null,
-      h('td', { class: 'strong' }, m.model_id),
-      h('td', { class: 'num' }, fmtCompact(m.prompt)),
-      h('td', { class: 'num' }, fmtCompact(m.completion)),
-      h('td', { class: 'num strong' }, fmtCompact(m.total)),
-      h('td', { class: 'num' }, costStr),
-      h('td', { class: 'num' },
-        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' } },
-          h('span', null, `${m.pct_tokens.toFixed(1)}%`),
-          h('div', { style: { width: '50px', height: '4px', background: 'var(--border)', borderRadius: '2px', overflow: 'hidden' } },
-            h('div', { style: { width: `${m.pct_tokens}%`, height: '100%', background: 'var(--accent)' } })
-          )
-        )
-      )
-    );
-  });
-
-  return h('div', { class: 'card table-card' },
-    h('div', { class: 'card-head' },
-      h('b', { style: { fontSize: '13px' } }, 'Model Usage Distribution')
-    ),
-    h('div', { class: 'table-wrap' },
-      h('table', { class: 'table' },
-        h('thead', null,
-          h('tr', null,
-            h('th', null, 'Model'),
-            h('th', { class: 'num' }, 'Prompt Tokens'),
-            h('th', { class: 'num' }, 'Output Tokens'),
-            h('th', { class: 'num' }, 'Total Tokens'),
-            h('th', { class: 'num' }, `Est. Cost (${cur})`),
-            h('th', { class: 'num', style: { width: '130px' } }, 'Share %')
-          )
-        ),
-        h('tbody', null, ...rows)
-      )
-    )
-  );
-}
-
-function renderAllowedModelsCard() {
-  const list = modelsData || [];
-  if (!list.length) return h('div');
-
-  const badges = list.map(m => {
-    return h('div', {
-      class: 'card',
-      style: { padding: '8px 12px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--panel)' }
-    },
-      icon('box'),
-      h('span', { class: 'strong' }, m.id),
-      m.owned_by ? h('span', { class: 'badge muted', style: { fontSize: '10px' } }, m.owned_by) : null
-    );
-  });
-
-  return h('div', { class: 'card', style: { padding: '16px 20px', background: 'var(--panel)' } },
-    h('b', { style: { fontSize: '13px', display: 'block', marginBottom: '10px' } }, `Permitted Models (${list.length})`),
-    h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } }, ...badges)
-  );
-}
-
-function renderContextFooter() {
-  const s = usageData;
-  const items = [];
-
-  if (s.upstream_usage && s.upstream_usage.length) {
-    s.upstream_usage.forEach(u => {
-      if (u.summary) {
-        let costPart = '';
-        if (u.summary.cost && u.summary.cost.display_formatted) {
-          costPart = ` · Est. cost ${u.summary.cost.display_formatted}`;
-        }
-        items.push(h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--muted)' } },
-          icon('server'),
-          h('span', null, `Upstream (${u.provider}, shared gateway capacity): ${fmtCompact(u.summary.tokens.total)} tokens${costPart}`)
-        ));
-      }
-    });
-  }
-
-  if (!items.length) return h('div');
-
+function meter(pct, tone, label) {
   return h('div', {
-    class: 'card',
-    style: { padding: '12px 18px', background: 'var(--hover)', display: 'flex', flexDirection: 'column', gap: '8px' }
-  }, ...items);
+    class: `pt-meter ${tone}`,
+    role: 'meter',
+    'aria-valuemin': '0',
+    'aria-valuemax': '100',
+    'aria-valuenow': String(Math.round(pct)),
+    'aria-label': label
+  }, h('i', { style: { width: `${Math.max(pct > 0 ? 1 : 0, Math.min(100, pct))}%` } }));
+}
+
+function resetLine(resetAt, period) {
+  if (!resetAt) return period === 'total' ? 'Lifetime budget: it does not reset.' : '';
+  const ms = Date.parse(resetAt);
+  const day = new Date(ms).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: timeZone() || undefined });
+  return `Resets in ${formatResetIn(resetAt)}, on ${day} at ${fmtClock(ms)} (${tzLabel()}).`;
+}
+
+function renderBudget() {
+  const b = budgetSummary(quotaData);
+  const section = h('section', { class: 'pt-panel pt-budget' });
+
+  if (b.kind === 'unknown') {
+    section.append(h('h2', { class: 'pt-status' }, 'Budget status is unavailable right now.'));
+    return section;
+  }
+  if (b.kind === 'unlimited') {
+    section.classList.add('ok');
+    section.append(
+      h('h2', { class: 'pt-status' }, 'This key has no token limit in force.'),
+      h('p', { class: 'pt-sub' }, 'Requests are only limited by the shared upstream capacity listed on the right.'),
+      inactiveNote(b.inactive)
+    );
+    return section;
+  }
+
+  if (b.kind === 'key') {
+    section.classList.add(b.tone);
+    const word = periodWord(b.period);
+    const headline = b.left <= 0
+      ? `Budget used up. New requests are blocked until it resets.`
+      : `${formatTokensCompact(b.left)} tokens left of your ${formatTokensCompact(b.limit)} ${word} budget.`;
+    section.append(
+      h('h2', { class: 'pt-status' }, headline),
+      meter(b.pct, b.tone, `${Math.round(b.pct)}% of ${word} budget used`),
+      h('div', { class: 'pt-meter-legend' },
+        h('span', null, `${fmtNum(b.used)} used`),
+        h('span', null, `${Math.round(b.pct)}%`)
+      ),
+      h('p', { class: 'pt-sub' }, resetLine(b.resetAt, b.period))
+    );
+    return section;
+  }
+
+  // Per-model budgets: the combined allowance leads; each model's own bar follows.
+  const tot = b.total;
+  section.classList.add(tot.tone);
+  const word = tot.period === 'mixed' ? '' : `${periodWord(tot.period)} `;
+  const headline = b.exhausted === b.rows.length
+    ? 'Every model budget is used up. Requests are blocked until they reset.'
+    : `${formatTokensCompact(tot.left)} tokens left of your ${formatTokensCompact(tot.limit)} ${word}budget, across ${b.rows.length} model${b.rows.length === 1 ? '' : 's'}.`;
+  const warnLine = b.exhausted
+    ? `${b.exhausted === 1 ? shortModel(b.tightest.modelId) + ' is' : b.exhausted + ' models are'} used up and blocked until reset; the others keep working.`
+    : (b.tightest.tone === 'warn' ? `${shortModel(b.tightest.modelId)} is close to its own limit (${Math.round(b.tightest.pct)}%).` : '');
+
+  section.append(
+    h('h2', { class: 'pt-status' }, headline),
+    meter(tot.pct, tot.tone, `${Math.round(tot.pct)}% of combined budget used`),
+    h('div', { class: 'pt-meter-legend' },
+      h('span', null, `${fmtNum(tot.used)} used`),
+      h('span', null, `${Math.round(tot.pct)}%`)
+    ),
+    h('p', { class: 'pt-sub' }, warnLine || 'Each model has its own limit; a used-up model is blocked while the others keep working.'),
+    h('h3', { class: 'pt-mq-title' }, 'Per model'),
+    h('ul', { class: 'pt-mq' }, ...b.rows.map((r) => h('li', { class: r.tone },
+      h('div', { class: 'pt-mq-head' },
+        h('span', { class: 'pt-mono', title: r.modelId }, r.modelId),
+        h('span', { class: 'pt-num' }, `${formatTokensCompact(r.used)} / ${formatTokensCompact(r.limit)}`)
+      ),
+      meter(r.pct, r.tone, `${r.modelId}: ${Math.round(r.pct)}% used`),
+      h('div', { class: 'pt-mq-foot' },
+        h('span', null, `${periodWord(r.period)} budget`),
+        h('span', null, r.resetAt ? `resets in ${formatResetIn(r.resetAt)}` : (r.period === 'total' ? 'does not reset' : ''))
+      )
+    ))),
+    inactiveNote(b.inactive)
+  );
+  return section;
+}
+
+const INACTIVE_WORD = { removed: 'removed', disabled: 'turned off by the admin', no_access: 'no longer allowed' };
+
+// Budgets the admin kept but that do not apply: listed once, quietly, so they are not mistaken for room.
+function inactiveNote(list) {
+  if (!list || !list.length) return null;
+  return h('p', { class: 'pt-fine' },
+    `Not counted: ${list.map((r) => `${shortModel(r.modelId)} (${INACTIVE_WORD[r.reason] || 'inactive'})`).join(', ')}.`);
+}
+
+function rangeSwitch() {
+  return h('div', { class: 'segmented', role: 'group', 'aria-label': 'Time range' },
+    ...RANGES.map(([id, label]) => h('button', {
+      type: 'button',
+      class: id === activeRange ? 'active' : '',
+      'aria-pressed': String(id === activeRange),
+      disabled: loading,
+      onclick: () => {
+        if (id === activeRange) return;
+        activeRange = id;
+        loadPortalData();
+      }
+    }, label))
+  );
+}
+
+function renderActivity() {
+  const s = usageData;
+  const head = h('div', { class: 'pt-head' }, h('h2', null, 'Your activity'), rangeSwitch());
+  const section = h('section', { class: 'pt-panel' }, head);
+
+  if (!s) {
+    section.append(h('p', { class: 'pt-sub' }, 'Usage history is unavailable right now.'));
+    return section;
+  }
+  if (!s.requests) {
+    section.append(h('p', { class: 'pt-empty' }, 'No requests from this key in this period. Use the connection details to send your first one.'));
+    return section;
+  }
+
+  const cur = s.cost?.currency || 'USD';
+  const rate = s.cost?.rate || 1;
+  const stats = [
+    ['Requests', fmtNum(s.requests), s.errors ? `${fmtNum(s.errors)} failed (${s.error_rate_pct}%)` : 'none failed'],
+    ['Tokens', fmtCompact(s.tokens.total), `${fmtCompact(s.tokens.prompt)} in, ${fmtCompact(s.tokens.completion)} out`],
+    ['Cache hits', `${s.cache_hit_pct}%`, `${fmtCompact(s.tokens.cache_read)} tokens read from cache`],
+  ];
+  if (s.cost) {
+    stats.push(['Est. cost', s.cost.display_formatted, s.cost.unpriced_requests ? `${fmtNum(s.cost.unpriced_requests)} requests unpriced` : 'at list price']);
+  } else {
+    stats.push(['Active days', fmtNum(s.active_days), `busiest hour ${s.peak_hour_formatted}`]);
+  }
+
+  section.append(
+    h('dl', { class: 'pt-stats' }, ...stats.map(([k, v, sub]) => h('div', null,
+      h('dt', null, k), h('dd', null, v), h('small', null, sub)
+    ))),
+    renderDailyBars(s, cur, rate),
+    renderModelShare(s, cur, rate),
+    renderExtras(s)
+  );
+  return section;
+}
+
+function renderDailyBars(s, cur, rate) {
+  // "All time" can hold a year of days; the last 60 stay readable as bars on a phone.
+  const days = (s.daily || []).slice(-60);
+  if (!days.length) return null;
+  const max = Math.max(...days.map((d) => d.tokens || 0), 1);
+  const busiest = days.reduce((a, d) => ((d.tokens || 0) > (a.tokens || 0) ? d : a), days[0]);
+  const fmtDay = (ds) => new Date(ds + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+
+  return h('figure', { class: 'pt-daily' },
+    h('figcaption', null,
+      h('span', null, 'Tokens per day'),
+      h('span', { class: 'pt-faint' }, `busiest ${fmtDay(busiest.date)}: ${fmtCompact(busiest.tokens)}`)
+    ),
+    h('div', { class: 'pt-bars', role: 'img', 'aria-label': `Daily tokens, ${days.length} days. Busiest ${fmtDay(busiest.date)} with ${fmtNum(busiest.tokens)} tokens.` },
+      ...days.map((d) => {
+        const cost = (d.cost != null && s.cost) ? `, ${formatCost(d.cost, cur, rate, 0)}` : '';
+        return h('span', {
+          class: d.tokens ? '' : 'zero',
+          style: { height: `${d.tokens ? Math.max(4, (d.tokens / max) * 100) : 2}%` },
+          title: `${fmtDay(d.date)}: ${fmtNum(d.tokens)} tokens, ${fmtNum(d.requests)} requests${cost}`
+        });
+      })
+    ),
+    h('div', { class: 'pt-axis' }, h('span', null, fmtDay(days[0].date)), h('span', null, fmtDay(days[days.length - 1].date)))
+  );
+}
+
+function renderModelShare(s, cur, rate) {
+  const models = s.models || [];
+  if (!models.length) return null;
+  return h('div', { class: 'pt-share' },
+    h('h3', null, 'Tokens by model'),
+    h('ul', null, ...models.map((m) => h('li', null,
+      h('div', { class: 'pt-share-head' },
+        h('span', { class: 'pt-mono', title: m.model_id }, m.model_id),
+        h('span', { class: 'pt-num' },
+          fmtCompact(m.total),
+          (m.cost != null && s.cost) ? h('span', { class: 'pt-faint' }, ` ${formatCost(m.cost, cur, rate, 0)}`) : null
+        )
+      ),
+      h('div', { class: 'pt-share-bar' }, h('i', { style: { width: `${Math.max(1, Math.min(100, m.pct_tokens))}%` } }), h('b', null, `${m.pct_tokens.toFixed(0)}%`))
+    )))
+  );
+}
+
+// Facts that only matter when non-zero, as one quiet line instead of more stat cards.
+function renderExtras(s) {
+  const bits = [];
+  if (s.sessions) bits.push(`${fmtNum(s.sessions)} sessions`);
+  if (s.thinking?.requested) bits.push(`thinking delivered on ${fmtNum(s.thinking.delivered)} of ${fmtNum(s.thinking.requested)} requests`);
+  if (s.fallbacks) bits.push(`${fmtNum(s.fallbacks)} fallbacks to another model`);
+  if (s.estimated_requests) bits.push(`${fmtNum(s.estimated_requests)} requests with estimated usage`);
+  if (!bits.length) return null;
+  return h('p', { class: 'pt-extras' }, bits.join('; ') + '.');
+}
+
+function copyRow(label, value, hint) {
+  return h('div', { class: 'pt-copy' },
+    h('div', { class: 'pt-copy-text' },
+      h('span', null, label),
+      h('code', null, value),
+      hint ? h('small', null, hint) : null
+    ),
+    h('button', { class: 'icon-btn', type: 'button', title: `Copy ${label}`, 'aria-label': `Copy ${label}`, onclick: () => copy(value, `${label} copied`) }, icon('copy'))
+  );
+}
+
+function renderConnect() {
+  const origin = location.origin;
+  return h('section', { class: 'pt-panel' },
+    h('h2', null, 'Connect'),
+    copyRow('OpenAI-compatible base URL', `${origin}/v1`, 'Cursor, Cline, Continue, OpenAI SDK'),
+    copyRow('Anthropic base URL', origin, 'Claude Code, Anthropic SDK. Recommended for Claude models.'),
+    h('p', { class: 'pt-fine' }, 'Use your key as the API key. Model ids include the provider prefix, as listed below.')
+  );
+}
+
+function renderSharedCapacity() {
+  const pools = (quotaData && quotaData.upstream_pools) || [];
+  if (!pools.length) return null;
+
+  return h('section', { class: 'pt-panel' },
+    h('h2', null, 'Shared capacity'),
+    h('p', { class: 'pt-sub' }, 'Upstream limits shared by every key. When one runs out, requests fail even if your own budget is left.'),
+    h('ul', { class: 'pt-pools' }, ...pools.map((pool) => {
+      const buckets = (pool.buckets || []).filter((b) => b.is_credit_balance || b.total > 0);
+      return h('li', null,
+        h('div', { class: 'pt-pool-head' },
+          h('strong', null, pool.family || pool.provider),
+          pool.status && pool.status !== 'ok' ? h('span', { class: `badge ${pool.status === 'degraded' ? 'warn' : 'err'}` }, pool.status) : null
+        ),
+        buckets.length
+          ? h('ul', { class: 'pt-buckets' }, ...buckets.map((b) => {
+              if (b.is_credit_balance) {
+                return h('li', null, h('div', { class: 'pt-mq-head' }, h('span', null, b.name), h('span', { class: 'pt-num' }, `$${(b.remaining / 100).toFixed(2)} credit`)));
+              }
+              const left = Math.max(0, Math.min(100, b.remaining_percentage || 0));
+              const tone = left < 30 ? 'err' : left <= 70 ? 'warn' : 'ok';
+              return h('li', null,
+                h('div', { class: 'pt-mq-head' },
+                  h('span', null, b.name),
+                  h('span', { class: 'pt-num' }, `${left}% left`)
+                ),
+                meter(100 - left, tone, `${b.name}: ${left}% left`),
+                b.reset_at ? h('div', { class: 'pt-mq-foot' }, h('span', null, `resets in ${formatResetIn(b.reset_at)}`)) : null
+              );
+            }))
+          : h('p', { class: 'pt-fine' }, 'No limits reported.')
+      );
+    }))
+  );
+}
+
+function renderAllowedModels() {
+  const list = modelsData || [];
+  const section = h('section', { class: 'pt-panel' });
+  const listEl = h('ul', { class: 'pt-models' });
+  const more = h('button', { class: 'btn btn-sm pt-more', type: 'button' });
+
+  function paint() {
+    const q = modelFilter.toLowerCase();
+    const hits = list.filter((m) => !q || m.id.toLowerCase().includes(q));
+    const shown = (showAllModels || q) ? hits : hits.slice(0, MODEL_LIST_PREVIEW);
+    listEl.replaceChildren(...(shown.length
+      ? shown.map((m) => h('li', null,
+          h('button', { type: 'button', title: 'Copy model id', onclick: () => copy(m.id, `${m.id} copied`) },
+            h('span', { class: 'pt-mono' }, m.id), icon('copy'))
+        ))
+      : [h('li', { class: 'pt-fine' }, `No model matches "${modelFilter}".`)]));
+    more.hidden = !!q || hits.length <= MODEL_LIST_PREVIEW;
+    more.textContent = showAllModels ? 'Show fewer' : `Show all ${hits.length}`;
+  }
+  more.addEventListener('click', () => { showAllModels = !showAllModels; paint(); });
+
+  section.append(h('div', { class: 'pt-head' }, h('h2', null, 'Models you can call'), h('span', { class: 'pt-faint' }, fmtNum(list.length))));
+  if (!list.length) {
+    section.append(h('p', { class: 'pt-sub' }, 'No models are enabled for this key. Ask your NineGuard admin to grant access.'));
+    return section;
+  }
+  if (list.length > MODEL_LIST_PREVIEW) {
+    const input = h('input', {
+      type: 'search', placeholder: 'Filter models...', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Filter models',
+      value: modelFilter,
+      oninput: (e) => { modelFilter = e.target.value.trim(); paint(); }
+    });
+    section.append(h('label', { class: 'tool-search pt-filter' }, icon('search'), input));
+  }
+  section.append(listEl, more);
+  paint();
+  return section;
 }
 
 function render() {
-  if (!activeKey) {
-    renderLoginView();
-  } else {
-    renderDashboardView();
-  }
+  if (!activeKey) renderLoginView();
+  else renderDashboardView();
 }
 
-initTheme();
-if (activeKey) {
-  loadPortalData();
-} else {
-  render();
-}
+if (activeKey) loadPortalData();
+else render();

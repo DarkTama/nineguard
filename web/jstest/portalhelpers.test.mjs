@@ -7,7 +7,8 @@ import {
   buildHeaders,
   getStoredPortalKey,
   setStoredPortalKey,
-  clearStoredPortalKey
+  clearStoredPortalKey,
+  budgetSummary
 } from '../static/js/portalhelpers.js';
 
 test('isValidKeyFormat validates key structure', () => {
@@ -55,4 +56,40 @@ test('localStorage key management', () => {
 
   clearStoredPortalKey(fakeLocalStorage);
   assert.equal(getStoredPortalKey(fakeLocalStorage), '');
+});
+
+test('budgetSummary: per-model budgets win over the key budget, total first, tightest row first', () => {
+  const s = budgetSummary({
+    key_quota: { limit: 1000, used: 10, period: 'daily' },
+    model_quotas: [
+      { model_id: 'a', limit: 100, used: 20, period: 'daily' },
+      { model_id: 'b', limit: 100, used: 150, period: 'weekly' },
+      { model_id: 'c', limit: 0, used: 5 },
+      { model_id: 'd', limit: 1000, used: 999, period: 'daily', inactive: true },
+    ],
+  });
+  assert.equal(s.kind, 'models');
+  assert.deepEqual(s.rows.map((r) => r.modelId), ['b', 'a']);
+  assert.equal(s.tightest.modelId, 'b');
+  assert.equal(s.tightest.pct, 100);
+  assert.equal(s.tightest.left, 0);
+  assert.equal(s.tightest.tone, 'err');
+  assert.equal(s.exhausted, 1);
+  // Total over active budgets: used is capped per row (b counts 100, not 150); tone is the worst row's.
+  assert.deepEqual([s.total.used, s.total.limit, s.total.left, s.total.pct, s.total.tone], [120, 200, 80, 60, 'err']);
+  assert.deepEqual(s.inactive.map((r) => r.modelId), ['d']);
+});
+
+test('budgetSummary: key budget tone crosses warn at 80%', () => {
+  assert.equal(budgetSummary({ key_quota: { limit: 1000, used: 799, period: 'daily' } }).tone, 'ok');
+  const near = budgetSummary({ key_quota: { limit: 1000, used: 800, period: 'daily' } });
+  assert.equal(near.kind, 'key');
+  assert.equal(near.tone, 'warn');
+  assert.equal(near.left, 200);
+});
+
+test('budgetSummary: no limits is unlimited, missing data is unknown', () => {
+  assert.equal(budgetSummary({ upstream_pools: [] }).kind, 'unlimited');
+  assert.equal(budgetSummary({ key_quota: { limit: 0, used: 5 } }).kind, 'unlimited');
+  assert.equal(budgetSummary(null).kind, 'unknown');
 });

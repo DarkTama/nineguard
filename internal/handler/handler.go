@@ -36,6 +36,7 @@ type Handler struct {
 	pricing      *pricing.Manager
 	proxy        *proxy.Proxy
 	upstream     *upstream.Manager
+	quotaAlerter *upstream.QuotaAlerter
 	syncReset    chan struct{}
 	routerTarget string
 }
@@ -60,6 +61,7 @@ func New(am *auth.Manager, mm *models.Manager, tm *traffic.Manager, sm *syslog.M
 		providers:    pm,
 		proxy:        pr,
 		upstream:     upstream.NewManager(),
+		quotaAlerter: upstream.NewQuotaAlerter(),
 		syncReset:    make(chan struct{}, 1),
 		routerTarget: target,
 	}

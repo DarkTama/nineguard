@@ -910,6 +910,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .tab .badge { height: 17px; padding: 0 5px; background: var(--border); }
 .badge.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: color-mix(in srgb, var(--ok) 80%, var(--text)); }
 .badge.err { background: color-mix(in srgb, var(--danger) 13%, transparent); color: var(--danger); }
+.badge.warn { background: color-mix(in srgb, var(--lv-warn) 16%, transparent); color: var(--lvt-warn); }
 .badge.removed { background: color-mix(in srgb, var(--lv-warn) 16%, transparent); color: var(--lvt-warn); }
 .badge.removed-tag { height: 15px; padding: 0 5px; margin-left: 6px; font-size: 9.5px; font-weight: 600; text-transform: lowercase; }
 .badge.proto-messages { background: rgba(251, 146, 60, 0.15); color: #fb923c; border: 1px solid rgba(251, 146, 60, 0.35); }

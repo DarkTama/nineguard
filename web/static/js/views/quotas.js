@@ -1,7 +1,7 @@
 // Quotas: every API key with its Key Quota or Model Quotas, usage and reset (ADR 0007).
 import { api } from '../api.js';
 import { h, icon, emptyState, fmtNum, debounce } from '../ui.js';
-import { patchRoute } from '../state.js';
+import { patchRoute, getRoute } from '../state.js';
 import { formatTokensCompact } from '../quotahelpers.js';
 import { barTone, formatResetIn, filterQuotaKeys, quotaFiltersFromParams } from '../modelquotas.js';
 import { renderUpstreamQuotas } from './upstream_quotas.js';
@@ -11,11 +11,12 @@ import { nextResetText } from '../resetschedule.js';
 const PERIOD_LABEL = { daily: 'daily', weekly: 'weekly', monthly: 'monthly', total: 'lifetime' };
 const REASON_LABEL = { removed: 'removed', disabled: 'disabled', no_access: 'no access' };
 
-export function mount(root) {
+export function mount(root, initialParams) {
   let alive = true;
   let data = null;
   let error = '';
-  let filters = quotaFiltersFromParams({});
+  const initParams = initialParams || (typeof getRoute === 'function' ? getRoute()?.params : {}) || {};
+  let filters = quotaFiltersFromParams(initParams);
   const toggled = new Map(); // key id -> expanded (user choice beats the default)
 
   const cards = h('div', { class: 'grid grid-4 quota-summary' });
@@ -34,12 +35,18 @@ export function mount(root) {
   const clientTabBtn = h('button', {
     class: 'btn btn-sm btn-primary',
     type: 'button',
-    onclick: () => switchTab('client')
+    onclick: () => {
+      patchRoute({ tab: '' });
+      switchTab('client');
+    }
   }, 'Client Quotas');
   const upstreamTabBtn = h('button', {
     class: 'btn btn-sm',
     type: 'button',
-    onclick: () => switchTab('upstream')
+    onclick: () => {
+      patchRoute({ tab: 'upstream' });
+      switchTab('upstream');
+    }
   }, 'Upstream Quotas');
   const tabSwitcher = h('div', { class: 'btn-group mb', style: { display: 'inline-flex' } }, clientTabBtn, upstreamTabBtn);
 
@@ -178,8 +185,17 @@ export function mount(root) {
   }
 
   load();
+  applyFilters();
+  if (initParams.tab === 'upstream') {
+    switchTab('upstream');
+  }
   return {
     update(params) {
+      if (params?.tab === 'upstream') {
+        if (activeTab !== 'upstream') switchTab('upstream');
+      } else {
+        if (activeTab !== 'client') switchTab('client');
+      }
       const next = quotaFiltersFromParams(params);
       if (JSON.stringify(next) === JSON.stringify(filters) && data) return;
       filters = next;

@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { h, icon, emptyState, fmtNum, fmtCompact, fmtAgo } from '../ui.js';
 import { setRoute, store, on } from '../state.js';
 import { nearLimitRows, barTone, formatResetIn } from '../modelquotas.js';
+import { upstreamAlertRows } from './upstream_quotas.js';
 import { formatCost, costTooltip } from '../costhelpers.js';
 
 // ── Math & Interpolation: Monotone Cubic Hermite Spline (Fritsch-Carlson) ──
@@ -149,6 +150,86 @@ export function mount(root) {
     } catch {
       // Optional card: never let it break the dashboard.
       if (alive) { quotaCard.style.display = 'none'; quotaCard.replaceChildren(); }
+    }
+  }
+
+  // ── Upstream quotas running low: hidden unless some upstream bucket is low, exhausted, or connection failing ──
+  const upstreamQuotaCard = h('div', { class: 'card mt quota-card', style: { display: 'none' } });
+
+  async function loadUpstreamQuotaCard() {
+    try {
+      const res = await api.get('/upstream-quotas');
+      if (!alive) return;
+      const { rows, total } = upstreamAlertRows(res.providers || [], 6);
+      if (!rows.length || total === 0) {
+        upstreamQuotaCard.style.display = 'none';
+        upstreamQuotaCard.replaceChildren();
+        return;
+      }
+      upstreamQuotaCard.style.display = '';
+
+      const moreCount = total - rows.length;
+      const moreText = moreCount > 0
+        ? h('span', { class: 'muted', style: { marginLeft: '8px', fontSize: '12px', fontWeight: 'normal' } }, `+${moreCount} more`)
+        : null;
+
+      upstreamQuotaCard.replaceChildren(
+        h('div', { class: 'card-head' },
+          h('div', null,
+            h('h3', null, icon('alert'), ' Upstream quotas running low', moreText),
+            h('p', { class: 'card-sub' }, 'Upstream buckets below 25% remaining, exhausted credits, or failing connections.')
+          ),
+          h('button', {
+            class: 'btn btn-sm',
+            type: 'button',
+            onclick: () => setRoute('quotas', { tab: 'upstream' })
+          }, 'View all \u2192')
+        ),
+        h('div', { class: 'removed-body' },
+          h('div', { class: 'removed-list' }, rows.map((r) => {
+            if (r.kind === 'problem') {
+              const badgeClass = r.status === 'error' ? 'badge err' : 'badge warn';
+              const truncatedMsg = (r.errorMsg || '').length > 80
+                ? (r.errorMsg || '').slice(0, 80) + '...'
+                : (r.errorMsg || '');
+              return h('div', { class: 'removed-row quota-row' },
+                h('b', null, r.providerName),
+                r.accountLabel ? h('span', { class: 'muted' }, r.accountLabel) : null,
+                h('span', { class: badgeClass }, r.status),
+                h('span', {
+                  class: 'muted',
+                  style: { marginLeft: 'auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                  title: r.errorMsg || ''
+                }, truncatedMsg)
+              );
+            }
+
+            const pctText = r.isCredit
+              ? (r.remaining <= 0 ? 'exhausted' : `$${(r.remaining / 100).toFixed(2)}`)
+              : `${r.percent}% left`;
+            const resetText = r.resetAt ? formatResetIn(r.resetAt) : '-';
+
+            return h('div', { class: 'removed-row quota-row' },
+              h('b', null, r.providerName),
+              r.accountLabel ? h('span', { class: 'muted' }, r.accountLabel) : null,
+              h('span', { class: 'muted' }, r.bucketName),
+              h('span', { style: { marginLeft: 'auto' } },
+                h('span', { class: `qbar ${r.tone}`, style: { width: '80px' } },
+                  h('i', { style: { width: `${Math.min(100, r.percent)}%` } })
+                ),
+                h('span', { class: `qpct ${r.tone}` }, pctText)
+              ),
+              h('span', { class: 'muted' }, resetText)
+            );
+          }))
+        )
+      );
+    } catch {
+      // Optional card: never let it break the dashboard.
+      if (alive) {
+        upstreamQuotaCard.style.display = 'none';
+        upstreamQuotaCard.replaceChildren();
+      }
     }
   }
 
@@ -302,6 +383,7 @@ export function mount(root) {
     recoveryBanner,
     removedCard,
     quotaCard,
+    upstreamQuotaCard,
     errorCard,
     kpiRow,
     rowVolumeMix,
@@ -1191,6 +1273,7 @@ export function mount(root) {
     updateRecoveryBanner();
     loadRemovedSummary();
     loadQuotaCard();
+    loadUpstreamQuotaCard();
   }
 
   load();

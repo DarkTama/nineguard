@@ -10,6 +10,110 @@ export function upstreamBarTone(pct) {
   return 'danger';
 }
 
+export function upstreamAlertRows(providers, max = 6) {
+  if (!Array.isArray(providers)) return { rows: [], total: 0 };
+
+  const errorProblemRows = [];
+  const degradedProblemRows = [];
+  const bucketRows = [];
+
+  for (const p of providers) {
+    if (!p) continue;
+    if (!p.quota_type || p.quota_type === 'disabled') continue;
+    if (p.status === 'unsupported') continue;
+
+    const providerName = p.provider_name || p.provider_id || '';
+    const connections = Array.isArray(p.connections) ? p.connections : [];
+
+    if (connections.length === 0) {
+      if (p.status === 'error') {
+        errorProblemRows.push({
+          kind: 'problem',
+          providerName,
+          accountLabel: '',
+          status: 'error',
+          errorMsg: p.error_msg || '',
+          tone: 'danger',
+        });
+      } else if (p.status === 'degraded') {
+        degradedProblemRows.push({
+          kind: 'problem',
+          providerName,
+          accountLabel: '',
+          status: 'degraded',
+          errorMsg: p.error_msg || '',
+          tone: 'warn',
+        });
+      }
+      continue;
+    }
+
+    for (const conn of connections) {
+      if (!conn) continue;
+      const accountLabel = conn.account_label || '';
+
+      if (conn.status === 'error') {
+        errorProblemRows.push({
+          kind: 'problem',
+          providerName,
+          accountLabel,
+          status: 'error',
+          errorMsg: conn.error_msg || '',
+          tone: 'danger',
+        });
+      } else if (conn.status === 'degraded') {
+        degradedProblemRows.push({
+          kind: 'problem',
+          providerName,
+          accountLabel,
+          status: 'degraded',
+          errorMsg: conn.error_msg || '',
+          tone: 'warn',
+        });
+      }
+
+      const buckets = Array.isArray(conn.buckets) ? conn.buckets : [];
+      for (const b of buckets) {
+        if (!b) continue;
+        if (b.warning === true) {
+          const isCredit = Boolean(b.is_credit_balance);
+          const remaining = typeof b.remaining === 'number' ? b.remaining : 0;
+          const rawPct = typeof b.remaining_percentage === 'number' ? b.remaining_percentage : 0;
+          const percent = Math.max(0, Math.min(100, Math.round(rawPct)));
+          let tone = upstreamBarTone(percent);
+          if (isCredit && remaining <= 0) {
+            tone = 'danger';
+          }
+          bucketRows.push({
+            kind: 'bucket',
+            providerName,
+            accountLabel,
+            bucketName: b.name || '',
+            percent,
+            isCredit,
+            remaining,
+            resetAt: b.reset_at || null,
+            tone,
+          });
+        }
+      }
+    }
+  }
+
+  bucketRows.sort((a, b) => {
+    const effA = a.isCredit && a.remaining <= 0 ? 0 : a.percent;
+    const effB = b.isCredit && b.remaining <= 0 ? 0 : b.percent;
+    return effA - effB;
+  });
+
+  const allRows = [...errorProblemRows, ...bucketRows, ...degradedProblemRows];
+  const total = allRows.length;
+  const limit = typeof max === 'number' && max >= 0 ? max : 6;
+  const rows = allRows.slice(0, limit);
+
+  return { rows, total };
+}
+
 function timeAgo(dateStr) {
   if (!dateStr) return '';
   const diffSec = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);

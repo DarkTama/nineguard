@@ -68,7 +68,7 @@ function renderRoute() {
     current?.inst.destroy?.();
     viewRoot.replaceChildren();
     viewRoot.scrollTop = 0;
-    current = { view: r.view, inst: VIEWS[r.view].mount(viewRoot) };
+    current = { view: r.view, inst: VIEWS[r.view].mount(viewRoot, r.params) };
   }
   current.inst.update?.(r.params);
   document.title = `${page.label} - ${APP}`;

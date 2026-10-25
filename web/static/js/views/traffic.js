@@ -4,6 +4,9 @@ import { h, icon, fmtTime, fmtNum, fmtCompact, localDate, tzLabel, msOf, podColo
 import { patchRoute } from '../state.js';
 import { queryParams, rangeControls, searchTerms, highlight, toLocalInput, iso } from '../filters.js';
 import { volumeChart } from '../chart.js';
+import { formatCacheHitRate, thinkingBadge, fallbackBadge, protocolBadge, endpointPathForFormat } from '../diagnosticshelpers.js';
+import { formatCost, costTooltip } from '../costhelpers.js';
+import { openCostSettingsModal } from '../costmodal.js';
 
 const PAGE = 500;
 const MAX_ROWS = 5000;
@@ -22,7 +25,7 @@ const TRAFFIC_SERIES = [
   { label: '2xx', levels: ['2xx'], color: 'var(--ok)' },
 ];
 
-const keyOf = (x) => JSON.stringify([x.key, x.model, x.provider, x.ip, x.status, x.q, x.range, x.date, x.from, x.to, x.has_images]);
+const keyOf = (x) => JSON.stringify([x.key, x.model, x.provider, x.ip, x.status, x.q, x.range, x.date, x.from, x.to, x.has_images, x.thinking, x.fallback, x.api_format, x.estimated]);
 
 export function mount(root) {
   let p = {};
@@ -39,11 +42,51 @@ export function mount(root) {
   let heavyThreshold = 8000;
   let recordPayloads = 'disabled';
   let quotaWarnPercent = 80;
+  let costSettings = { display_currency: 'USD', effective_rate: 1.0, effective_currency: 'USD', fx_rate_manual: '', cost_visible_to_keys: true };
+
   api.get('/settings/traffic').then(s => {
     if (s && s.heavy_token_threshold > 0) heavyThreshold = s.heavy_token_threshold;
     if (s && s.record_payloads) recordPayloads = s.record_payloads;
     if (s && s.quota_warn_percent > 0) quotaWarnPercent = s.quota_warn_percent;
   }).catch(() => {});
+
+  function reloadCostSettings() {
+    api.get('/settings/cost').then(s => { if (s) costSettings = s; }).catch(() => {});
+  }
+  reloadCostSettings();
+
+  function openRepriceModal() {
+    const fromInput = h('input', { class: 'input', type: 'datetime-local' });
+    const toInput = h('input', { class: 'input', type: 'datetime-local' });
+    const modelInput = h('input', { class: 'input', type: 'text', placeholder: 'Optional (e.g. claude-3-5-sonnet)' });
+
+    formDialog({
+      title: 'Re-price Historical Requests',
+      submitText: 'Run Re-price',
+      danger: true,
+      fields: [
+        {
+          label: 'Notice',
+          node: h('p', { class: 'muted', style: { fontSize: '11.5px', margin: '0' } },
+            'Recomputes cost_usd from stored token columns with current prices. Rows recorded before Usage Diagnostics have no prompt cache split and will be priced as 100% uncached input tokens.'
+          )
+        },
+        { label: 'From Date/Time (optional)', node: fromInput },
+        { label: 'To Date/Time (optional)', node: toInput },
+        { label: 'Model ID (optional)', node: modelInput }
+      ],
+      onSubmit: async () => {
+        const payload = {};
+        if (fromInput.value) payload.from = new Date(fromInput.value).toISOString();
+        if (toInput.value) payload.to = new Date(toInput.value).toISOString();
+        if (modelInput.value.trim()) payload.model_id = modelInput.value.trim();
+
+        const res = await api.post('/costs/reprice', payload);
+        toast(`Successfully re-priced ${res.updated || 0} traffic requests`, 'ok');
+        reload();
+      }
+    });
+  }
 
   function openTrafficSettingsModal() {
     const input = h('input', {
@@ -61,7 +104,7 @@ export function mount(root) {
     );
 
     formDialog({
-      title: 'Traffic Explorer Settings',
+      title: 'Traffic & Alert Thresholds',
       submitText: 'Save Settings',
       fields: [
         {
@@ -108,6 +151,12 @@ export function mount(root) {
     });
   }
 
+  const costBtn = h('button', {
+    class: 'btn btn-sm', type: 'button',
+    title: 'Configure Display Currency, FX Exchange Rates, and Key Cost Visibility',
+    onclick: () => openCostSettingsModal(() => { reloadCostSettings(); renderRows(); }),
+  }, icon('dollar-sign'), 'Cost & Currency');
+
   const alertBtn = h('button', {
     class: 'btn btn-sm', type: 'button',
     title: 'Configure Traffic Spike Alert Threshold',
@@ -138,7 +187,7 @@ export function mount(root) {
 
   const clearBtn = h('button', {
     class: 'btn btn-sm', type: 'button',
-    onclick: () => patch({ key: '', key_id: '', model: '', provider: '', ip: '', status: '', q: '', has_images: '' }),
+    onclick: () => patch({ key: '', key_id: '', model: '', provider: '', ip: '', status: '', q: '', has_images: '', fallback: '', thinking: '', api_format: '', estimated: '' }),
   }, icon('x'), 'Clear');
 
   const searchIn = h('input', {
@@ -162,6 +211,30 @@ export function mount(root) {
     onclick: () => toggleStatus(s.id)
   }, h('i', { class: 'dot' }), s.label));
 
+  const protoMessagesChip = h('button', {
+    class: `chip ${p.api_format === 'messages' ? 'active' : ''}`,
+    type: 'button',
+    title: 'Filter requests using Anthropic Messages API (/v1/messages)',
+    onclick: () => patch({ api_format: p.api_format === 'messages' ? '' : 'messages' }),
+    style: p.api_format === 'messages' ? { background: 'rgba(251, 146, 60, 0.2)', color: '#fb923c', borderColor: '#fb923c' } : {}
+  }, '/v1/messages');
+
+  const protoChatChip = h('button', {
+    class: `chip ${p.api_format === 'chat' ? 'active' : ''}`,
+    type: 'button',
+    title: 'Filter requests using OpenAI Chat Completions API (/v1/chat/completions)',
+    onclick: () => patch({ api_format: p.api_format === 'chat' ? '' : 'chat' }),
+    style: p.api_format === 'chat' ? { background: 'rgba(56, 189, 248, 0.2)', color: '#38bdf8', borderColor: '#38bdf8' } : {}
+  }, '/v1/chat');
+
+  const protoResponsesChip = h('button', {
+    class: `chip ${p.api_format === 'responses' ? 'active' : ''}`,
+    type: 'button',
+    title: 'Filter requests using OpenAI Responses API (/v1/responses)',
+    onclick: () => patch({ api_format: p.api_format === 'responses' ? '' : 'responses' }),
+    style: p.api_format === 'responses' ? { background: 'rgba(52, 211, 153, 0.2)', color: '#34d399', borderColor: '#34d399' } : {}
+  }, '/v1/responses');
+
   const imgChip = h('button', {
     class: `chip ${p.has_images ? 'active' : ''}`,
     type: 'button',
@@ -169,6 +242,30 @@ export function mount(root) {
     onclick: () => patch({ has_images: p.has_images ? '' : '1' }),
     style: p.has_images ? { background: 'rgba(56, 189, 248, 0.2)', color: '#38bdf8', borderColor: '#38bdf8' } : {}
   }, '🖼️ Images');
+
+  const fallbackChip = h('button', {
+    class: `chip ${p.fallback === '1' ? 'active' : ''}`,
+    type: 'button',
+    title: 'Filter requests where model fallback occurred',
+    onclick: () => patch({ fallback: p.fallback === '1' ? '' : '1' }),
+    style: p.fallback === '1' ? { background: 'rgba(234, 179, 8, 0.2)', color: 'var(--lv-warn)', borderColor: 'var(--lv-warn)' } : {}
+  }, '⚠ Fallback');
+
+  const thinkingLostChip = h('button', {
+    class: `chip ${p.thinking === 'lost' ? 'active' : ''}`,
+    type: 'button',
+    title: 'Filter requests where thinking was requested but lost upstream',
+    onclick: () => patch({ thinking: p.thinking === 'lost' ? '' : 'lost' }),
+    style: p.thinking === 'lost' ? { background: 'rgba(239, 68, 68, 0.2)', color: 'var(--lv-error)', borderColor: 'var(--lv-error)' } : {}
+  }, '🧠✗ Lost');
+
+  const thinkingDeliveredChip = h('button', {
+    class: `chip ${p.thinking === 'delivered' ? 'active' : ''}`,
+    type: 'button',
+    title: 'Filter requests where thinking was delivered',
+    onclick: () => patch({ thinking: p.thinking === 'delivered' ? '' : 'delivered' }),
+    style: p.thinking === 'delivered' ? { background: 'rgba(168, 85, 247, 0.2)', color: '#a855f7', borderColor: '#a855f7' } : {}
+  }, '🧠 Thinking');
 
   const liveBtn = h('button', { class: 'chip live', type: 'button', onclick: toggleLive });
 
@@ -188,7 +285,7 @@ export function mount(root) {
   root.append(h('div', { class: 'page-fill' },
     h('div', { class: 'toolbar' },
       searchBox, range.el, h('span', { class: 'sep' }), keySel, modelSel, providerSel, clearBtn,
-      h('span', { class: 'spacer' }), h('span', { class: 'chips' }, ...chips, imgChip), liveBtn, alertBtn, exportBtn),
+      h('span', { class: 'spacer' }), h('span', { class: 'chips' }, ...chips, protoMessagesChip, protoChatChip, protoResponsesChip, imgChip, fallbackChip, thinkingLostChip, thinkingDeliveredChip), liveBtn, costBtn, alertBtn, exportBtn),
     chartBox,
     h('div', { class: 'log-table traffic-table' },
       h('div', { class: 'log-head' },
@@ -197,6 +294,7 @@ export function mount(root) {
         h('span', null, 'Client Key'),
         h('span', null, 'Target Model'),
         h('span', { class: 'num' }, 'Tokens'),
+        h('span', { class: 'num' }, 'Est. Cost'),
         h('span', { class: 'num' }, 'Latency'),
         h('span', null, 'Client IP')),
       body),
@@ -300,8 +398,50 @@ export function mount(root) {
 
     const set = statusSet();
     chips.forEach((c, i) => c.classList.toggle('active', set.has(TRAFFIC_STATUSES[i].id)));
-    imgChip.classList.toggle('active', !!p.has_images);
-    clearBtn.hidden = !(p.key || p.key_id || p.model || p.provider || p.ip || p.status || p.q || p.has_images);
+
+    const isMsg = p.api_format === 'messages';
+    protoMessagesChip.classList.toggle('active', isMsg);
+    protoMessagesChip.style.background = isMsg ? 'rgba(251, 146, 60, 0.2)' : '';
+    protoMessagesChip.style.color = isMsg ? '#fb923c' : '';
+    protoMessagesChip.style.borderColor = isMsg ? '#fb923c' : '';
+
+    const isChat = p.api_format === 'chat';
+    protoChatChip.classList.toggle('active', isChat);
+    protoChatChip.style.background = isChat ? 'rgba(56, 189, 248, 0.2)' : '';
+    protoChatChip.style.color = isChat ? '#38bdf8' : '';
+    protoChatChip.style.borderColor = isChat ? '#38bdf8' : '';
+
+    const isResp = p.api_format === 'responses';
+    protoResponsesChip.classList.toggle('active', isResp);
+    protoResponsesChip.style.background = isResp ? 'rgba(52, 211, 153, 0.2)' : '';
+    protoResponsesChip.style.color = isResp ? '#34d399' : '';
+    protoResponsesChip.style.borderColor = isResp ? '#34d399' : '';
+
+    const hasTLost = p.thinking === 'lost';
+    thinkingLostChip.classList.toggle('active', hasTLost);
+    thinkingLostChip.style.background = hasTLost ? 'rgba(239, 68, 68, 0.2)' : '';
+    thinkingLostChip.style.color = hasTLost ? 'var(--lv-error)' : '';
+    thinkingLostChip.style.borderColor = hasTLost ? 'var(--lv-error)' : '';
+
+    const hasTDel = p.thinking === 'delivered';
+    thinkingDeliveredChip.classList.toggle('active', hasTDel);
+    thinkingDeliveredChip.style.background = hasTDel ? 'rgba(168, 85, 247, 0.2)' : '';
+    thinkingDeliveredChip.style.color = hasTDel ? '#a855f7' : '';
+    thinkingDeliveredChip.style.borderColor = hasTDel ? '#a855f7' : '';
+
+    const hasFb = p.fallback === '1';
+    fallbackChip.classList.toggle('active', hasFb);
+    fallbackChip.style.background = hasFb ? 'rgba(234, 179, 8, 0.2)' : '';
+    fallbackChip.style.color = hasFb ? 'var(--lv-warn)' : '';
+    fallbackChip.style.borderColor = hasFb ? 'var(--lv-warn)' : '';
+
+    const hasImg = !!p.has_images;
+    imgChip.classList.toggle('active', hasImg);
+    imgChip.style.background = hasImg ? 'rgba(56, 189, 248, 0.2)' : '';
+    imgChip.style.color = hasImg ? '#38bdf8' : '';
+    imgChip.style.borderColor = hasImg ? '#38bdf8' : '';
+
+    clearBtn.hidden = !(p.key || p.key_id || p.model || p.provider || p.ip || p.status || p.q || p.has_images || p.fallback || p.thinking || p.api_format || p.estimated);
 
     liveBtn.classList.toggle('active', !!p.live);
     liveBtn.title = p.live ? 'Stop following new requests' : 'Follow new requests in real time';
@@ -558,6 +698,63 @@ export function mount(root) {
           },
           title: `Multimodal: prompt history contains ${e.image_count || 1} image(s) in conversation context`
         }, `🖼️ ${e.image_count > 1 ? e.image_count + ' imgs' : '1 img'}`) : null,
+        (() => {
+          if (e.api_format !== 'messages' && e.api_format !== 'responses') return null;
+          const pb = protocolBadge(e.api_format);
+          if (!pb) return null;
+          const isMsg = pb.cls === 'proto-messages';
+          return h('span', {
+            class: `badge ${pb.cls}`,
+            style: {
+              fontSize: '9.5px',
+              padding: '1px 5px',
+              marginLeft: '4px',
+              background: isMsg ? 'rgba(251, 146, 60, 0.15)' : 'rgba(52, 211, 153, 0.15)',
+              color: isMsg ? '#fb923c' : '#34d399',
+              border: isMsg ? '1px solid rgba(251, 146, 60, 0.35)' : '1px solid rgba(52, 211, 153, 0.35)',
+              fontWeight: '600',
+              whiteSpace: 'nowrap'
+            },
+            title: pb.title
+          }, pb.text);
+        })(),
+        (() => {
+          const tb = thinkingBadge(e.thinking_requested, e.thinking_delivered, e.reasoning_tokens, e.api_format, e.model);
+          if (!tb) return null;
+          const isDelivered = tb.cls === 'thinking-delivered';
+          return h('span', {
+            class: `badge ${tb.cls}`,
+            style: {
+              fontSize: '9.5px',
+              padding: '1px 5px',
+              marginLeft: '4px',
+              background: isDelivered ? 'rgba(168, 85, 247, 0.15)' : 'rgba(148, 163, 184, 0.15)',
+              color: isDelivered ? '#a855f7' : '#94a3b8',
+              border: isDelivered ? '1px solid rgba(168, 85, 247, 0.35)' : '1px solid rgba(148, 163, 184, 0.35)',
+              fontWeight: '600',
+              whiteSpace: 'nowrap'
+            },
+            title: tb.title
+          }, tb.text);
+        })(),
+        (() => {
+          const fb = fallbackBadge(e.model_fallback, e.model, e.served_model);
+          if (!fb) return null;
+          return h('span', {
+            class: 'badge',
+            style: {
+              fontSize: '9.5px',
+              padding: '1px 5px',
+              marginLeft: '4px',
+              background: 'rgba(234, 179, 8, 0.15)',
+              color: 'var(--lv-warn)',
+              border: '1px solid rgba(234, 179, 8, 0.35)',
+              fontWeight: '600',
+              whiteSpace: 'nowrap'
+            },
+            title: fb.title
+          }, fb.text);
+        })(),
         e.plugins_applied ? h('span', {
           class: 'badge',
           style: {
@@ -580,10 +777,27 @@ export function mount(root) {
       ),
       // 5. Tokens
       h('span', { class: 'num c-tokens' },
-        h('span', { title: `Prompt: ${fmtNum(e.prompt_tokens || 0)} · Comp: ${fmtNum(e.completion_tokens || 0)}` },
+        h('span', {
+          title: `Prompt: ${fmtNum(e.prompt_tokens || 0)} · Comp: ${fmtNum(e.completion_tokens || 0)}${e.cache_read_tokens > 0 ? ` · Cache: ${formatCacheHitRate(e.cache_read_tokens, e.prompt_tokens)} (${fmtNum(e.cache_read_tokens)})` : ''}${e.reasoning_tokens > 0 ? ` · Reasoning: ${fmtNum(e.reasoning_tokens)}` : ''}${e.usage_estimated ? '\n≈ Estimated usage (upstream reported no token counts)' : ''}`
+        },
+          e.usage_estimated ? '≈ ' : '',
           fmtCompact(e.total_tokens || 0)
-        )
+        ),
+        (() => {
+          const hitRate = formatCacheHitRate(e.cache_read_tokens, e.prompt_tokens);
+          if (!hitRate) return null;
+          return h('span', {
+            class: 'badge',
+            style: { fontSize: '8.5px', padding: '0px 3px', marginLeft: '3px', opacity: 0.8 },
+            title: `Cache hit rate: ${hitRate} (${fmtCompact(e.cache_read_tokens)} read / ${fmtCompact(e.prompt_tokens)} prompt)`
+          }, hitRate);
+        })()
       ),
+      // 6. Est. Cost
+      h('span', {
+        class: 'num c-cost',
+        title: costTooltip(e.cost_usd, costSettings.effective_currency, costSettings.effective_rate, costSettings.fx_rate_synced_at)
+      }, formatCost(e.cost_usd, costSettings.effective_currency, costSettings.effective_rate, 0)),
       // 6. Latency
       h('span', { class: 'num c-lat' },
         latStr,
@@ -634,11 +848,32 @@ export function mount(root) {
     const meta = [
       ['Timestamp', e.timestamp ? new Date(e.timestamp).toLocaleString() : '-'],
       ['Guard Status', statusText],
+      ['API Protocol', e.api_format || 'chat (OpenAI)'],
       ['Client Key', e.api_key_name ? `${e.api_key_name} (${e.api_key})` : (e.api_key || '-')],
       ['Target Model', e.model ? (e.model_removed ? `${e.model} (removed from provider)` : e.model) : '-'],
+      ['Served Model', e.served_model ? (e.model_fallback ? `${e.served_model} (⚠ Fallback from ${e.model})` : e.served_model) : (e.model || '-')],
+      ['Thinking Status', (() => {
+        if (e.thinking_delivered) {
+          return `Delivered (${e.reasoning_tokens > 0 ? fmtNum(e.reasoning_tokens) + ' reasoning tokens' : 'observed in response'})`;
+        }
+        if (e.thinking_requested) {
+          const isUnverifiable = (e.api_format === 'chat' || (typeof e.api_format === 'string' && e.api_format.toLowerCase() === 'chat')) &&
+            typeof e.model === 'string' &&
+            e.model.toLowerCase().includes('claude');
+          if (isUnverifiable) {
+            return 'Unverifiable (Claude via OpenAI chat format does not expose reasoning text)';
+          }
+          return 'Lost (requested by client, but no reasoning returned upstream)';
+        }
+        return 'Not requested';
+      })()],
       ['Images in Prompt Context', e.has_images ? `${e.image_count || 1} image(s) in conversation history` : 'None (text only)'],
       ['Provider', e.provider_id || '(default upstream)'],
-      ['Tokens', `${fmtNum(e.total_tokens)} (prompt: ${fmtNum(e.prompt_tokens)}, completion: ${fmtNum(e.completion_tokens)})`],
+      ['Estimated Cost', e.cost_usd != null ? formatCost(e.cost_usd, costSettings.effective_currency, costSettings.effective_rate, 0) : '— (unpriced or estimated usage)'],
+      ['Tokens', `${fmtNum(e.total_tokens)} (prompt: ${fmtNum(e.prompt_tokens)}, completion: ${fmtNum(e.completion_tokens)})${e.usage_estimated ? ' [≈ Estimated]' : ''}`],
+      ['Cache Breakdown', (e.cache_read_tokens || e.cache_write_tokens)
+        ? `Read: ${fmtNum(e.cache_read_tokens || 0)} (${formatCacheHitRate(e.cache_read_tokens, e.prompt_tokens)} hit rate) · Write: ${fmtNum(e.cache_write_tokens || 0)}`
+        : 'None'],
       ['Tokens Saved', e.tokens_saved ? `${fmtNum(e.tokens_saved)} tokens` : '0'],
       ['Plugin Overhead (est.)', e.tokens_overhead ? `+${fmtNum(e.tokens_overhead)} tokens` : '0'],
       ['Plugins Applied', e.plugins_applied || '(none)'],
@@ -701,7 +936,11 @@ export function mount(root) {
         type: 'button',
         onclick: () => {
           const origin = location.origin || 'http://localhost:8080';
-          const curl = `curl -X POST ${origin}/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer <NINEGUARD_API_KEY>" \\\n  -d '${(pay.request_body || '').replace(/'/g, "'\\''")}'`;
+          const ep = endpointPathForFormat(e.api_format);
+          const anthropicHdr = (e.api_format === 'messages' || (typeof e.api_format === 'string' && e.api_format.trim().toLowerCase() === 'messages'))
+            ? ' \\\n  -H "anthropic-version: 2023-06-01"'
+            : '';
+          const curl = `curl -X POST ${origin}${ep} \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer <NINEGUARD_API_KEY>"${anthropicHdr} \\\n  -d '${(pay.request_body || '').replace(/'/g, "'\\''")}'`;
           copy(curl);
         }
       }, icon('copy'), 'Copy as cURL');
@@ -724,6 +963,7 @@ export function mount(root) {
       h('div', { class: 'detail-actions' },
         action('copy', 'Copy message', () => copy(e.message || '')),
         action('copy', 'Copy JSON', () => copy(JSON.stringify(e, null, 2))),
+        e.api_format ? action('filter', 'Filter ' + e.api_format, () => patch({ api_format: e.api_format })) : null,
         e.api_key_name || e.api_key ? action('key', 'Filter key', () => patch(e.api_key_id ? { key_id: e.api_key_id, key: '' } : { key: e.api_key_name || e.api_key, key_id: '' })) : null,
         e.model ? action('box', 'Filter model', () => patch({ model: e.model })) : null,
         e.provider_id ? action('server', 'Filter provider', () => patch({ provider: e.provider_id })) : null,

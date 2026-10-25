@@ -1,7 +1,11 @@
 package traffic
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -15,10 +19,58 @@ type PayloadEntry struct {
 const maxPayloadBytes = 512 * 1024 // 512KB cap per body
 
 func clampBytes(b []byte) []byte {
-	if len(b) > maxPayloadBytes {
+	if len(b) <= maxPayloadBytes {
+		return b
+	}
+
+	trimmed := bytes.TrimLeft(b, " \t\r\n")
+	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
 		return b[:maxPayloadBytes]
 	}
-	return b
+
+	// Try parsing as JSON object
+	var obj map[string]interface{}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	if err := dec.Decode(&obj); err == nil {
+		if msgs, ok := obj["messages"].([]interface{}); ok && len(msgs) > 2 {
+			marker := map[string]interface{}{
+				"role":    "system",
+				"content": fmt.Sprintf("[... %d messages truncated by NineGuard (original payload %d bytes > 512KB cap) ...]", len(msgs)-2, len(b)),
+			}
+			obj["messages"] = []interface{}{msgs[0], marker, msgs[len(msgs)-1]}
+			obj["_truncated"] = true
+			obj["_original_bytes"] = len(b)
+			if data, err := json.Marshal(obj); err == nil && len(data) <= maxPayloadBytes {
+				return data
+			}
+		}
+	}
+
+	// Wrapper JSON fallback guaranteed to be <= maxPayloadBytes
+	previewLen := maxPayloadBytes - 256
+	if previewLen > len(b) {
+		previewLen = len(b)
+	}
+	for previewLen >= 0 {
+		preview := strings.ToValidUTF8(string(b[:previewLen]), "")
+		wrapper := map[string]interface{}{
+			"_truncated":      true,
+			"_original_bytes": len(b),
+			"_preview":        preview,
+		}
+		data, err := json.Marshal(wrapper)
+		if err == nil && len(data) <= maxPayloadBytes {
+			return data
+		}
+		previewLen -= 1024
+	}
+
+	fallback, _ := json.Marshal(map[string]interface{}{
+		"_truncated":      true,
+		"_original_bytes": len(b),
+	})
+	return fallback
 }
 
 func (m *Manager) SavePayload(trafficID int64, reqBody, respBody []byte) error {

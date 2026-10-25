@@ -4,6 +4,8 @@ import { api } from '../api.js';
 import { h, icon, emptyState, fmtNum, fmtCompact, fmtAgo } from '../ui.js';
 import { setRoute, store, on } from '../state.js';
 import { nearLimitRows, barTone, formatResetIn } from '../modelquotas.js';
+import { upstreamAlertRows } from './upstream_quotas.js';
+import { formatCost, costTooltip } from '../costhelpers.js';
 
 // ── Math & Interpolation: Monotone Cubic Hermite Spline (Fritsch-Carlson) ──
 // Guarantees zero-overshoot, zero dips below 0, and no looping curves when values fluctuate.
@@ -99,9 +101,11 @@ export function mount(root) {
   let errorTableView = false;
   let modelMetric = 'tokens'; // 'tokens' or 'requests'
   let keyMetric = 'tokens'; // 'tokens' or 'requests'
+  let costSettings = { display_currency: 'USD', effective_rate: 1.0, effective_currency: 'USD' };
+  api.get('/settings/cost').then(s => { if (s) costSettings = s; }).catch(() => {});
 
   const pageHeadSub = h('p', null, 'Loading gateway telemetry...');
-  const kpiRow = h('div', { class: 'grid grid-4' });
+  const kpiRow = h('div', { class: 'grid grid-3 mt' });
   const rowVolumeMix = h('div', { class: 'grid grid-2 mt' });
   const rowUsageBreakdown = h('div', { class: 'grid grid-2 mt' });
   const rowErrorInspection = h('div', { class: 'grid grid-2 mt' });
@@ -146,6 +150,86 @@ export function mount(root) {
     } catch {
       // Optional card: never let it break the dashboard.
       if (alive) { quotaCard.style.display = 'none'; quotaCard.replaceChildren(); }
+    }
+  }
+
+  // ── Upstream quotas running low: hidden unless some upstream bucket is low, exhausted, or connection failing ──
+  const upstreamQuotaCard = h('div', { class: 'card mt quota-card', style: { display: 'none' } });
+
+  async function loadUpstreamQuotaCard() {
+    try {
+      const res = await api.get('/upstream-quotas');
+      if (!alive) return;
+      const { rows, total } = upstreamAlertRows(res.providers || [], 6);
+      if (!rows.length || total === 0) {
+        upstreamQuotaCard.style.display = 'none';
+        upstreamQuotaCard.replaceChildren();
+        return;
+      }
+      upstreamQuotaCard.style.display = '';
+
+      const moreCount = total - rows.length;
+      const moreText = moreCount > 0
+        ? h('span', { class: 'muted', style: { marginLeft: '8px', fontSize: '12px', fontWeight: 'normal' } }, `+${moreCount} more`)
+        : null;
+
+      upstreamQuotaCard.replaceChildren(
+        h('div', { class: 'card-head' },
+          h('div', null,
+            h('h3', null, icon('alert'), ' Upstream quotas running low', moreText),
+            h('p', { class: 'card-sub' }, 'Upstream buckets below 25% remaining, exhausted credits, or failing connections.')
+          ),
+          h('button', {
+            class: 'btn btn-sm',
+            type: 'button',
+            onclick: () => setRoute('quotas', { tab: 'upstream' })
+          }, 'View all \u2192')
+        ),
+        h('div', { class: 'removed-body' },
+          h('div', { class: 'removed-list' }, rows.map((r) => {
+            if (r.kind === 'problem') {
+              const badgeClass = r.status === 'error' ? 'badge err' : 'badge warn';
+              const truncatedMsg = (r.errorMsg || '').length > 80
+                ? (r.errorMsg || '').slice(0, 80) + '...'
+                : (r.errorMsg || '');
+              return h('div', { class: 'removed-row quota-row' },
+                h('b', null, r.providerName),
+                r.accountLabel ? h('span', { class: 'muted' }, r.accountLabel) : null,
+                h('span', { class: badgeClass }, r.status),
+                h('span', {
+                  class: 'muted',
+                  style: { marginLeft: 'auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                  title: r.errorMsg || ''
+                }, truncatedMsg)
+              );
+            }
+
+            const pctText = r.isCredit
+              ? (r.remaining <= 0 ? 'exhausted' : `$${(r.remaining / 100).toFixed(2)}`)
+              : `${r.percent}% left`;
+            const resetText = r.resetAt ? formatResetIn(r.resetAt) : '-';
+
+            return h('div', { class: 'removed-row quota-row' },
+              h('b', null, r.providerName),
+              r.accountLabel ? h('span', { class: 'muted' }, r.accountLabel) : null,
+              h('span', { class: 'muted' }, r.bucketName),
+              h('span', { style: { marginLeft: 'auto' } },
+                h('span', { class: `qbar ${r.tone}`, style: { width: '80px' } },
+                  h('i', { style: { width: `${Math.min(100, r.percent)}%` } })
+                ),
+                h('span', { class: `qpct ${r.tone}` }, pctText)
+              ),
+              h('span', { class: 'muted' }, resetText)
+            );
+          }))
+        )
+      );
+    } catch {
+      // Optional card: never let it break the dashboard.
+      if (alive) {
+        upstreamQuotaCard.style.display = 'none';
+        upstreamQuotaCard.replaceChildren();
+      }
     }
   }
 
@@ -299,6 +383,7 @@ export function mount(root) {
     recoveryBanner,
     removedCard,
     quotaCard,
+    upstreamQuotaCard,
     errorCard,
     kpiRow,
     rowVolumeMix,
@@ -724,7 +809,8 @@ export function mount(root) {
         sparkWrap,
         h('div', { class: 'source-count-col' },
           h('span', { class: 'source-count-val' }, keyMetric === 'tokens' ? fmtCompact(k.tokens) : fmtNum(k.requests)),
-          h('span', { class: 'source-count-lbl' }, keyMetric === 'tokens' ? `${fmtNum(k.requests)} reqs` : `${fmtCompact(k.tokens)} tok`)
+          h('span', { class: 'source-count-lbl' }, keyMetric === 'tokens' ? `${fmtNum(k.requests)} reqs` : `${fmtCompact(k.tokens)} tok`),
+          h('span', { class: 'source-count-lbl', style: { color: 'var(--text)', fontWeight: '600', fontSize: '10.5px' } }, formatCost(k.estimated_cost_usd, costSettings.effective_currency, costSettings.effective_rate, k.unpriced_requests))
         )
       );
     });
@@ -1151,12 +1237,19 @@ export function mount(root) {
     const activeKeys = stats.active_keys || 0;
     const avgLatStr = stats.avg_duration_ms > 0 ? `${stats.avg_duration_ms}ms` : '< 1ms';
 
-    // 1. Top KPI Row (Screenshot 4 Style, Focusing on Success, Tokens, Latency & Guard)
+    const costDelta = comp.cost_delta_pct || 0;
+    const costDeltaStr = costDelta >= 0 ? `+${costDelta.toFixed(0)}%` : `${costDelta.toFixed(0)}%`;
+    const costDeltaText = comp.prev_estimated_cost > 0 ? `${costDeltaStr} vs prev ${periodLabel}` : (stats.estimated_cost_usd > 0 ? 'API list price' : 'No cost yet');
+    const costDeltaClass = costDelta > 0 ? 'delta-bad' : (costDelta < 0 ? 'delta-good' : '');
+
+    // 1. Top KPI Row (Focusing on Success, Tokens, Est. Cost, Latency & Guard)
     kpiRow.replaceChildren(
       // Total Requests & Success Count
       renderKPICard('activity', currentPeriod === 'today' ? 'Lines today' : 'Requests', fmtNum(totalReqs), `${fmtNum(successReqs)} passed (${successRate.toFixed(1)}%)`, reqSpark, reqDeltaClass, 'var(--lv-info)', 'var(--lv-info)'),
       // Token Consumption Guard
       renderKPICard('sparkles', 'Total Tokens', fmtCompact(stats.total_tokens), `In: ${fmtCompact(stats.prompt_tokens)} • Out: ${fmtCompact(stats.completion_tokens)}`, tokenSpark, 'delta-good', 'var(--ok)', 'var(--ok)'),
+      // Estimated Cost KPI Card
+      renderKPICard('dollar-sign', 'Est. Cost', formatCost(stats.estimated_cost_usd, costSettings.effective_currency, costSettings.effective_rate, stats.unpriced_requests), costDeltaText, null, costDeltaClass, '#eab308', '#eab308'),
       // Tokens Saved by Plugins
       renderKPICard('puzzle', 'Tokens Saved', fmtCompact(stats.tokens_saved || 0), stats.tokens_saved ? 'Reduced by plugins' : 'Token savers active', null, 'delta-good', 'var(--accent)', 'var(--accent)'),
       // Firewall Policy Blocks
@@ -1180,6 +1273,7 @@ export function mount(root) {
     updateRecoveryBanner();
     loadRemovedSummary();
     loadQuotaCard();
+    loadUpstreamQuotaCard();
   }
 
   load();

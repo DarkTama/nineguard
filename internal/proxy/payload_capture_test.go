@@ -87,4 +87,42 @@ func TestProxyPayloadCapture(t *testing.T) {
 	if !strings.Contains(payload.ResponseBody, "chatcmpl-payload") {
 		t.Errorf("expected response body to contain upstream json, got %s", payload.ResponseBody)
 	}
+
+	// Case 3: SSE stream payload capture stores reconstructed JSON summary
+	sseUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {\"id\":\"chatcmpl-stream\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"hello from stream\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer sseUpstream.Close()
+
+	_, _ = providersMgr.CreateProvider("sse-up", sseUpstream.URL, "sk-test", "", true, true)
+	sseReqBody := `{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"stream me"}]}`
+	req3 := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(sseReqBody))
+	req3.Header.Set("Authorization", "Bearer "+clientKey.RawKey)
+	w3 := httptest.NewRecorder()
+	p.ServeHTTP(w3, req3)
+
+	time.Sleep(50 * time.Millisecond)
+
+	logs3, _, _ := trafficMgr.QueryLogs(traffic.FilterParams{Limit: 1})
+	if len(logs3) == 0 {
+		t.Fatalf("no log found for SSE request")
+	}
+	ssePayload, err := trafficMgr.GetPayload(logs3[0].ID)
+	if err != nil {
+		t.Fatalf("expected payload stored for SSE request, got err: %v", err)
+	}
+
+	var sseSummary proxy.StreamSummary
+	if err := json.Unmarshal([]byte(ssePayload.ResponseBody), &sseSummary); err != nil {
+		t.Fatalf("expected valid reconstructed JSON summary, got unmarshal error: %v, body was: %s", err, ssePayload.ResponseBody)
+	}
+	if !sseSummary.StreamReconstructed {
+		t.Errorf("expected _stream_reconstructed = true")
+	}
+	if sseSummary.Content != "hello from stream" {
+		t.Errorf("expected Content 'hello from stream', got %q", sseSummary.Content)
+	}
 }

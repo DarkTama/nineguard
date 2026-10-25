@@ -78,7 +78,7 @@ func (h *Handler) BuildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.K
 	if keyInfo != nil {
 		if !keyInfo.EnforcesModelQuotas() && keyInfo.QuotaLimit > 0 && keyInfo.QuotaPeriod != "" && keyInfo.QuotaPeriod != "none" {
 			if h.traffic != nil {
-				consumed, resetAt, err := h.traffic.GetQuotaUsage(keyInfo.ID, keyInfo.QuotaPeriod, now)
+				consumed, resetAt, err := h.traffic.GetQuotaUsage(keyInfo.ID, keyInfo.QuotaPeriod, keyInfo.ResetRule, now)
 				if err == nil {
 					remaining := keyInfo.QuotaLimit - consumed
 					if remaining < 0 {
@@ -130,6 +130,16 @@ func (h *Handler) BuildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.K
 
 func (h *Handler) SetUpstreamManager(um *upstream.Manager) {
 	h.upstream = um
+	if h.quotaAlerter == nil {
+		h.quotaAlerter = upstream.NewQuotaAlerter()
+	}
+}
+
+func (h *Handler) getQuotaAlerter() *upstream.QuotaAlerter {
+	if h.quotaAlerter == nil {
+		h.quotaAlerter = upstream.NewQuotaAlerter()
+	}
+	return h.quotaAlerter
 }
 
 // currentSyncInterval reads the stored sync interval, falling back to the default when invalid.
@@ -238,6 +248,8 @@ func (h *Handler) SyncAllUpstreamQuotas(ctx context.Context, force bool) int {
 		return 0
 	}
 
+	alerter := h.getQuotaAlerter()
+
 	var wg sync.WaitGroup
 	syncedCount := 0
 	var mu sync.Mutex
@@ -254,6 +266,9 @@ func (h *Handler) SyncAllUpstreamQuotas(ctx context.Context, force bool) int {
 				mu.Lock()
 				syncedCount++
 				mu.Unlock()
+			}
+			if res != nil && alerter != nil {
+				alerter.Observe(res, time.Now())
 			}
 		}(p)
 	}

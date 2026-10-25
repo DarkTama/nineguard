@@ -1,6 +1,6 @@
 // Models & Groups view: View, filter by provider, toggle firewall, and manage Model Groups.
 import { api } from '../api.js';
-import { h, icon, emptyState, toast, formDialog, confirmDialog, fmtNum, fmtCompact, fmtAgo, searchableSelect } from '../ui.js';
+import { h, icon, emptyState, toast, formDialog, confirmDialog, fmtNum, fmtCompact, fmtAgo, searchableSelect, menu } from '../ui.js';
 import { formatPriceRate } from '../costhelpers.js';
 import { openCostSettingsModal } from '../costmodal.js';
 
@@ -18,12 +18,16 @@ export function mount(root) {
   let pricesMap = new Map();
   let selectedProvider = '';
   let filterText = '';
+  let statusFilter = 'all'; // 'all' | 'enabled' | 'disabled' | 'removed'
   let groupFilterText = '';
   let page = 1;
   let pageSize = 20;
 
   const contentWrap = h('div', { class: 'tab-body' });
-  const actionsWrap = h('div', { class: 'page-actions' });
+  const actionsWrap = h('div', { class: 'page-actions', style: { flexShrink: '0', flexWrap: 'nowrap' } });
+  // Toolbars live in persistent cards so the search box keeps focus while the table re-renders.
+  const modelsBody = h('div');
+  const groupsBody = h('div');
   const subText = h('p', null, activeTab === 'groups'
     ? 'Create reusable groups of models (e.g. GPT Ecosystem, Claude) that API keys dynamically link to.'
     : 'Control model firewall rules and access. Models are grouped by provider prefix (e.g. openrouter/model-id).');
@@ -50,25 +54,34 @@ export function mount(root) {
 
   // ── All Models Controls ──
   const searchInput = h('input', {
-    class: 'input',
-    type: 'text',
+    type: 'search',
     placeholder: 'Search models...',
+    autocomplete: 'off',
     spellcheck: 'false',
-    style: { width: '200px' },
+    'aria-label': 'Search models',
     oninput: (e) => {
       filterText = e.target.value.toLowerCase().trim();
       page = 1;
       renderModelsTable();
+    },
+    onkeydown: (e) => {
+      if (e.key === 'Escape' && searchInput.value) {
+        searchInput.value = '';
+        filterText = '';
+        page = 1;
+        renderModelsTable();
+      }
     }
   });
+  const searchBox = h('label', { class: 'tool-search' }, icon('search'), searchInput);
 
   const providerSelect = searchableSelect({
-    placeholder: 'All Providers',
+    placeholder: 'All providers',
     searchPlaceholder: 'Search providers...',
-    ariaLabel: 'Filter by Provider',
+    ariaLabel: 'Filter by provider',
     clearable: true,
     compact: true,
-    style: { minWidth: '150px', maxWidth: '210px' },
+    style: { minWidth: '140px', maxWidth: '200px' },
     onChange: (val) => {
       selectedProvider = val;
       page = 1;
@@ -76,46 +89,98 @@ export function mount(root) {
     }
   });
 
+  const STATUS_FILTERS = [
+    { id: 'all', label: 'All' },
+    { id: 'enabled', label: 'Enabled' },
+    { id: 'disabled', label: 'Disabled' },
+    { id: 'removed', label: 'Removed' },
+  ];
+  const statusCounts = new Map();
+  const statusButtons = new Map();
+  const statusSegmented = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Filter by firewall status' },
+    ...STATUS_FILTERS.map((s) => {
+      const count = h('span', { class: 'seg-count' }, '0');
+      statusCounts.set(s.id, count);
+      const btn = h('button', {
+        type: 'button',
+        'aria-pressed': String(s.id === statusFilter),
+        onclick: () => {
+          statusFilter = s.id;
+          page = 1;
+          renderModelsTable();
+        }
+      }, s.label, count);
+      statusButtons.set(s.id, btn);
+      return btn;
+    })
+  );
+
+  const clearFiltersBtn = h('button', {
+    class: 'btn btn-sm',
+    type: 'button',
+    title: 'Reset search, provider and status filters',
+    onclick: () => clearModelFilters()
+  }, icon('x'), 'Clear');
+
+  const matchInfo = h('span', { class: 'muted', style: { fontSize: '11.5px', whiteSpace: 'nowrap' } });
+
+  const modelsToolbar = h('div', { class: 'toolbar card-toolbar' },
+    searchBox, providerSelect, statusSegmented, clearFiltersBtn,
+    h('span', { class: 'spacer' }), matchInfo
+  );
+  const modelsCard = h('div', { class: 'card table-card' }, modelsToolbar, modelsBody);
+
+  function clearModelFilters() {
+    searchInput.value = '';
+    filterText = '';
+    selectedProvider = '';
+    providerSelect.setValue('', false);
+    statusFilter = 'all';
+    page = 1;
+    renderModelsTable();
+  }
+
   const fetchBtn = h('button', {
     class: 'btn',
     type: 'button',
     onclick: fetchFromProviders
   }, icon('refresh'), 'Fetch from Providers');
 
-  const repriceAllBtn = h('button', {
-    class: 'btn',
-    type: 'button',
-    title: 'Re-calculate estimated costs for all past non-estimated requests',
-    onclick: async () => {
-      const ok = await confirmDialog({
-        title: 'Re-price All Traffic History?',
-        body: 'This will re-calculate the estimated cost for all non-estimated historical requests using the latest LiteLLM catalog and active price overrides.',
-        okText: 'Re-price History',
-        danger: false
-      });
-      if (!ok) return;
+  async function repriceAll() {
+    const ok = await confirmDialog({
+      title: 'Re-price All Traffic History?',
+      body: 'This will re-calculate the estimated cost for all non-estimated historical requests using the latest LiteLLM catalog and active price overrides.',
+      confirmText: 'Re-price History',
+      danger: false
+    });
+    if (!ok) return;
 
-      repriceAllBtn.disabled = true;
-      repriceAllBtn.replaceChildren(icon('refresh'), ' Re-pricing...');
-      try {
-        const res = await api.post('/costs/reprice', {});
-        toast(`Successfully re-priced ${fmtNum(res.recalculated || 0)} historical requests!`, 'ok');
-        await load();
-      } catch (err) {
-        toast(`Re-price failed: ${err.message}`, 'error');
-      } finally {
-        repriceAllBtn.disabled = false;
-        repriceAllBtn.replaceChildren(icon('refresh'), 'Re-price All');
-      }
+    toast('Re-pricing traffic history...', 'ok');
+    try {
+      const res = await api.post('/costs/reprice', {});
+      toast(`Successfully re-priced ${fmtNum(res.updated || 0)} historical requests!`, 'ok');
+      await load();
+    } catch (err) {
+      toast(`Re-price failed: ${err.message}`, 'error');
     }
-  }, icon('refresh'), 'Re-price All');
+  }
 
-  const costSettingsBtn = h('button', {
+  // Secondary, rarely used actions sit behind one menu so the header stays a single row.
+  const moreBtn = h('button', {
     class: 'btn',
     type: 'button',
-    title: 'Configure Display Currency, FX Exchange Rates, and Key Cost Visibility',
-    onclick: () => openCostSettingsModal(() => load())
-  }, icon('dollar-sign'), 'Cost & Currency');
+    title: 'More model actions',
+    'aria-label': 'More model actions',
+    'aria-haspopup': 'menu',
+    onclick: () => {
+      const removed = allModels.filter(m => m.removed).length;
+      menu(moreBtn, [
+        { text: 'Cost & Currency', onClick: () => openCostSettingsModal(() => load()) },
+        { icon: 'refresh', text: 'Re-price all history', onClick: repriceAll },
+        ...(removed ? [{ icon: 'trash', text: `Clear ${removed} removed model${removed === 1 ? '' : 's'}`, onClick: confirmClearRemoved }] : []),
+      ]);
+    }
+  }, icon('more'));
 
   const addModelBtn = h('button', {
     class: 'btn btn-primary',
@@ -123,27 +188,22 @@ export function mount(root) {
     onclick: addModel
   }, icon('plus'), 'Add Model');
 
-  // Shown only while Removed Models exist (ADR 0006).
-  const clearRemovedBtn = h('button', {
-    class: 'btn',
-    type: 'button',
-    title: 'Delete every model its provider stopped listing',
-    onclick: () => confirmClearRemoved()
-  }, icon('trash'), 'Clear removed');
-  clearRemovedBtn.hidden = true;
-
   // ── Model Groups Controls ──
   const groupSearchInput = h('input', {
-    class: 'input',
-    type: 'text',
+    type: 'search',
     placeholder: 'Search model groups...',
+    autocomplete: 'off',
     spellcheck: 'false',
-    style: { width: '220px' },
+    'aria-label': 'Search model groups',
     oninput: (e) => {
       groupFilterText = e.target.value.toLowerCase().trim();
       renderGroupsTable();
     }
   });
+  const groupsCard = h('div', { class: 'card table-card' },
+    h('div', { class: 'toolbar card-toolbar' }, h('label', { class: 'tool-search' }, icon('search'), groupSearchInput)),
+    groupsBody
+  );
 
   const addGroupBtn = h('button', {
     class: 'btn btn-primary',
@@ -170,11 +230,13 @@ export function mount(root) {
 
     if (tab === 'models') {
       subText.textContent = 'Control model firewall rules and access. Models are grouped by provider prefix (e.g. openrouter/model-id).';
-      actionsWrap.replaceChildren(searchInput, providerSelect, clearRemovedBtn, fetchBtn, costSettingsBtn, repriceAllBtn, addModelBtn);
+      actionsWrap.replaceChildren(fetchBtn, moreBtn, addModelBtn);
+      contentWrap.replaceChildren(modelsCard);
       renderModelsTable();
     } else {
       subText.textContent = 'Create reusable groups of models (e.g. GPT Ecosystem, Claude) that API keys dynamically link to.';
-      actionsWrap.replaceChildren(groupSearchInput, addGroupBtn);
+      actionsWrap.replaceChildren(addGroupBtn);
+      contentWrap.replaceChildren(groupsCard);
       renderGroupsTable();
     }
   }
@@ -370,18 +432,37 @@ export function mount(root) {
   }
 
   function renderModelsTable() {
-    const tableCard = h('div', { class: 'card table-card' });
+    const tableCard = modelsBody;
 
-    let filtered = allModels.filter(m => {
+    const matchesStatus = (m, s) => s === 'all'
+      || (s === 'removed' ? !!m.removed : (s === 'enabled' ? m.enabled : !m.enabled));
+    const base = allModels.filter(m => {
       const matchesSearch = m.id.toLowerCase().includes(filterText) || (m.name && m.name.toLowerCase().includes(filterText));
       if (!matchesSearch) return false;
       if (!selectedProvider) return true;
       return m.provider_id === selectedProvider || m.id.startsWith(selectedProvider + '/');
     });
+    // Counts reflect search + provider, so each status button shows what clicking it yields.
+    for (const s of STATUS_FILTERS) {
+      statusCounts.get(s.id).textContent = fmtNum(base.filter(m => matchesStatus(m, s.id)).length);
+      const btn = statusButtons.get(s.id);
+      btn.classList.toggle('active', s.id === statusFilter);
+      btn.setAttribute('aria-pressed', String(s.id === statusFilter));
+    }
+    statusButtons.get('removed').hidden = !allModels.some(m => m.removed) && statusFilter !== 'removed';
+    const filtered = base.filter(m => matchesStatus(m, statusFilter));
+
+    const isFiltered = !!(filterText || selectedProvider || statusFilter !== 'all');
+    clearFiltersBtn.hidden = !isFiltered;
+    matchInfo.textContent = isFiltered
+      ? `${fmtNum(filtered.length)} of ${fmtNum(allModels.length)} models`
+      : `${fmtNum(allModels.length)} models`;
 
     if (!filtered.length) {
-      const emptyAction = (filterText || selectedProvider)
-        ? null
+      const emptyAction = isFiltered
+        ? h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px' } },
+            h('button', { class: 'btn btn-sm', type: 'button', onclick: clearModelFilters }, icon('x'), 'Clear filters')
+          )
         : h('div', { style: { display: 'flex', gap: '8px', marginTop: '12px' } },
             h('button', { class: 'btn btn-primary', type: 'button', onclick: fetchFromProviders }, icon('refresh'), 'Fetch from Providers'),
             h('button', { class: 'btn', type: 'button', onclick: addModel }, icon('plus'), 'Add Model')
@@ -391,13 +472,12 @@ export function mount(root) {
         emptyState(
           'box',
           'No Models Found',
-          filterText || selectedProvider
-            ? 'No models match your current filter.'
+          isFiltered
+            ? 'No models match your current filters.'
             : 'No models configured yet. Click "Fetch from Providers" to retrieve models from upstream or "Add Model" to register one manually.',
           emptyAction
         )
       );
-      contentWrap.replaceChildren(tableCard);
       return;
     }
 
@@ -489,9 +569,7 @@ export function mount(root) {
     }
 
     const startNum = startIdx + 1;
-    const countInfo = filtered.length < allModels.length
-      ? `Showing ${startNum}–${endIdx} of ${fmtNum(total)} models (${fmtNum(allModels.length)} total)`
-      : `Showing ${startNum}–${endIdx} of ${fmtNum(total)} models`;
+    const countInfo = `Showing ${startNum}–${endIdx} of ${fmtNum(total)}`;
 
     const prevBtn = h('button', {
       class: 'btn btn-sm',
@@ -611,13 +689,11 @@ export function mount(root) {
       ),
       paginationBar
     );
-
-    contentWrap.replaceChildren(tableCard);
   }
 
   // ── Model Groups Tab Logic ──
   function renderGroupsTable() {
-    const card = h('div', { class: 'card table-card' });
+    const card = groupsBody;
 
     let filtered = modelGroups.filter(g => {
       const q = groupFilterText;
@@ -632,7 +708,6 @@ export function mount(root) {
       card.replaceChildren(
         emptyState('sparkles', 'No model groups found', groupFilterText ? 'No group matches your search query.' : 'Create a model group to easily assign sets of models to agent API keys.')
       );
-      contentWrap.replaceChildren(card);
       return;
     }
 
@@ -733,8 +808,6 @@ export function mount(root) {
         )
       )
     );
-
-    contentWrap.replaceChildren(card);
   }
 
   async function confirmRemoveUnavailable(g) {
@@ -1132,12 +1205,13 @@ export function mount(root) {
     }
 
     if (!alive) return;
-    clearRemovedBtn.hidden = !allModels.some(m => m.removed);
     if (activeTab === 'models') {
-      actionsWrap.replaceChildren(searchInput, providerSelect, clearRemovedBtn, fetchBtn, costSettingsBtn, repriceAllBtn, addModelBtn);
+      actionsWrap.replaceChildren(fetchBtn, moreBtn, addModelBtn);
+      contentWrap.replaceChildren(modelsCard);
       renderModelsTable();
     } else {
-      actionsWrap.replaceChildren(groupSearchInput, addGroupBtn);
+      actionsWrap.replaceChildren(addGroupBtn);
+      contentWrap.replaceChildren(groupsCard);
       renderGroupsTable();
     }
   }

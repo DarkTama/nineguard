@@ -1,19 +1,25 @@
 // Provider connections: custom upstream gateways and embedded OAuth accounts.
 import { api } from '../api.js';
-import { h, icon, toast, emptyState, formDialog, confirmDialog, passwordField, fmtDateTime } from '../ui.js';
+import { h, icon, toast, emptyState, formDialog, confirmDialog, passwordField, fmtDateTime, menu } from '../ui.js';
 import { PROVIDER_ICONS, providerMark } from '../providericons.js';
 import { openProviderLogin } from '../provideroauth.js';
+import { openCostSettingsModal } from '../costmodal.js';
 
 export function mount(root) {
   let alive = true;
   let providers = [];
   let connectors = [];
   let query = '';
-  const body = h('div', { class: 'provider-list' });
+  const body = h('div', { class: 'provider-list', 'aria-busy': 'true' },
+    Array.from({ length: 3 }, () => h('div', { class: 'skel provider-skel', 'aria-hidden': 'true' })));
   const search = h('input', { type: 'search', placeholder: 'Find a provider...', 'aria-label': 'Find a provider', oninput: (e) => { query = e.target.value.toLowerCase().trim(); render(); } });
+  const configBtn = h('button', { class: 'btn', type: 'button', 'aria-haspopup': 'menu', onclick: () => menu(configBtn, [
+    { icon: 'dollar-sign', text: 'Cost & currency', onClick: () => openCostSettingsModal() },
+  ]) }, icon('settings'), 'Configure');
   root.append(h('div', { class: 'page' },
     h('div', { class: 'page-head' }, h('div', null, h('h1', null, 'Providers'), h('p', null, 'Connect an account or route requests through your own upstream gateway.')),
-      h('button', { class: 'btn btn-primary', type: 'button', onclick: () => edit() }, icon('plus'), 'Add provider')),
+      h('div', { class: 'page-actions' }, configBtn,
+        h('button', { class: 'btn btn-primary', type: 'button', onclick: () => edit() }, icon('plus'), 'Add provider'))),
     h('div', { class: 'provider-toolbar' }, h('label', { class: 'tool-search' }, icon('search'), search),
       h('details', { class: 'provider-routing' }, h('summary', null, 'How routing works'), h('p', null, 'Models use prefix/model-id. NineGuard removes the prefix before forwarding. Requests without a prefix use the default provider. OAuth accounts run through the embedded engine; custom URLs keep their existing protocol.'))),
     body
@@ -21,7 +27,15 @@ export function mount(root) {
   async function action(fn) { try { await fn(); await load(); } catch (err) { toast(err.message, 'error'); } }
   function render() {
     const list = providers.filter(p => `${p.name} ${p.prefix} ${p.family || ''} ${p.route}`.toLowerCase().includes(query));
-    if (!list.length) { body.replaceChildren(emptyState('server', providers.length ? 'No matching providers' : 'No providers connected', providers.length ? 'Try another provider name or prefix.' : 'Add a custom URL or connect a Claude / Codex account.')); return; }
+    body.removeAttribute('aria-busy');
+    if (!list.length) {
+      body.replaceChildren(providers.length
+        ? emptyState('search', 'No matching providers', 'Try another provider name or prefix.',
+          h('button', { class: 'btn', type: 'button', onclick: () => { search.value = ''; query = ''; render(); search.focus(); } }, icon('x'), 'Clear search'))
+        : emptyState('server', 'No providers connected', 'Add a custom URL or connect a Claude / Codex account.',
+          h('button', { class: 'btn btn-primary', type: 'button', onclick: () => edit() }, icon('plus'), 'Add provider')));
+      return;
+    }
     body.replaceChildren(...list.map(p => {
       const sdk = p.backend === 'cliproxy';
       const accountsBody = h('div', { class: 'provider-accounts', hidden: !sdk });
@@ -117,7 +131,7 @@ export function mount(root) {
   }
   async function load() {
     try { const [p,c] = await Promise.all([api.get('/providers'),api.get('/provider-connectors').catch(() => ({connectors:[]}))]); if (!alive) return;providers = p.providers || [];connectors = c.connectors || [];render(); }
-    catch(err) { if (alive) body.replaceChildren(emptyState('alert','Could not load providers',err.message,h('button',{class:'btn',onclick:load},'Try again'))); }
+    catch(err) { if (alive) { body.removeAttribute('aria-busy'); body.replaceChildren(emptyState('alert','Could not load providers',err.message,h('button',{class:'btn',onclick:load},'Try again'))); } }
   }
   load();
   return { update(){},refresh:load,destroy(){alive=false;} };

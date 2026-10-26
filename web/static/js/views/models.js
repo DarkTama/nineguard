@@ -2,7 +2,6 @@
 import { api } from '../api.js';
 import { h, icon, emptyState, toast, formDialog, confirmDialog, fmtNum, fmtCompact, fmtAgo, searchableSelect, menu } from '../ui.js';
 import { formatPriceRate } from '../costhelpers.js';
-import { openCostSettingsModal } from '../costmodal.js';
 
 export function mount(root) {
   let alive = true;
@@ -175,7 +174,6 @@ export function mount(root) {
     onclick: () => {
       const removed = allModels.filter(m => m.removed).length;
       menu(moreBtn, [
-        { text: 'Cost & Currency', onClick: () => openCostSettingsModal(() => load()) },
         { icon: 'refresh', text: 'Re-price all history', onClick: repriceAll },
         ...(removed ? [{ icon: 'trash', text: `Clear ${removed} removed model${removed === 1 ? '' : 's'}`, onClick: confirmClearRemoved }] : []),
       ]);

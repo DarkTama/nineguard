@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { upstreamBarTone, upstreamAlertRows } from '../static/js/views/upstream_quotas.js';
+import { upstreamBarTone, upstreamAlertRows, upstreamNeedsAttention, upstreamProviderSummary } from '../static/js/views/upstream_quotas.js';
 
 test('upstreamBarTone assigns correct status color tones', () => {
   // > 70% is ok (green)
@@ -13,10 +13,10 @@ test('upstreamBarTone assigns correct status color tones', () => {
   assert.equal(upstreamBarTone(50), 'warn');
   assert.equal(upstreamBarTone(30), 'warn');
 
-  // < 30% is danger (red)
-  assert.equal(upstreamBarTone(29), 'danger');
-  assert.equal(upstreamBarTone(22), 'danger');
-  assert.equal(upstreamBarTone(0), 'danger');
+  // < 30% is err (red); matches the .qbar.err / .qpct.err CSS classes
+  assert.equal(upstreamBarTone(29), 'err');
+  assert.equal(upstreamBarTone(22), 'err');
+  assert.equal(upstreamBarTone(0), 'err');
 });
 
 test('upstreamAlertRows filters disabled and unsupported providers', () => {
@@ -114,12 +114,12 @@ test('upstreamAlertRows includes warning-only buckets and clamps percentage', ()
   // negative_pct clamped to 0
   assert.equal(rows[0].bucketName, 'negative_pct');
   assert.equal(rows[0].percent, 0);
-  assert.equal(rows[0].tone, 'danger');
+  assert.equal(rows[0].tone, 'err');
 
   // low bucket rounded to 19
   assert.equal(rows[1].bucketName, 'low');
   assert.equal(rows[1].percent, 19);
-  assert.equal(rows[1].tone, 'danger');
+  assert.equal(rows[1].tone, 'err');
   assert.equal(rows[1].resetAt, '2026-10-25T15:00:00Z');
 
   // over_100 clamped to 100
@@ -164,12 +164,12 @@ test('upstreamAlertRows handles credit exhausted buckets', () => {
   const { rows, total } = upstreamAlertRows(providers);
   assert.equal(total, 2);
   assert.equal(rows[0].bucketName, 'Credits Zero');
-  assert.equal(rows[0].tone, 'danger'); // remaining <= 0 uses tone 'danger'
+  assert.equal(rows[0].tone, 'err'); // remaining <= 0 uses tone 'err'
   assert.equal(rows[0].isCredit, true);
   assert.equal(rows[0].remaining, 0);
 
   assert.equal(rows[1].bucketName, 'Credits Positive Low');
-  assert.equal(rows[1].tone, 'danger'); // 10% is danger via upstreamBarTone
+  assert.equal(rows[1].tone, 'err'); // 10% is err via upstreamBarTone
   assert.equal(rows[1].isCredit, true);
   assert.equal(rows[1].remaining, 450);
 });
@@ -222,7 +222,7 @@ test('upstreamAlertRows captures error and degraded problem rows', () => {
   // Errors first
   const errors = rows.filter((r) => r.status === 'error');
   assert.equal(errors.length, 2);
-  assert.deepEqual(errors.map((e) => e.tone), ['danger', 'danger']);
+  assert.deepEqual(errors.map((e) => e.tone), ['err', 'err']);
 
   // Degraded last
   const degraded = rows.filter((r) => r.status === 'degraded');
@@ -341,5 +341,24 @@ test('upstreamAlertRows is tolerant of null, undefined, and empty inputs', () =>
   assert.equal(res.rows[0].providerName, 'p_sparse');
   assert.equal(res.rows[0].bucketName, '');
   assert.equal(res.rows[0].percent, 0);
-  assert.equal(res.rows[0].tone, 'danger');
+  assert.equal(res.rows[0].tone, 'err');
+});
+
+test('upstreamNeedsAttention flags errors, degradation and warning buckets', () => {
+  assert.equal(upstreamNeedsAttention(null), false);
+  assert.equal(upstreamNeedsAttention({ status: 'ok', connections: [{ status: 'ok', buckets: [{ warning: false }] }] }), false);
+  assert.equal(upstreamNeedsAttention({ status: 'degraded' }), true);
+  assert.equal(upstreamNeedsAttention({ status: 'ok', connections: [{ status: 'error' }] }), true);
+  assert.equal(upstreamNeedsAttention({ status: 'ok', connections: [{ status: 'ok', buckets: [{ warning: true }] }] }), true);
+});
+
+test('upstreamProviderSummary reports connections, lowest remaining and next reset', () => {
+  const now = Date.parse('2026-10-25T12:00:00Z');
+  const p = { connections: [
+    { buckets: [{ total: 100, remaining_percentage: 64, reset_at: '2026-10-25T15:00:00Z' }] },
+    { buckets: [{ total: 100, remaining_percentage: 12.4, reset_at: '2026-10-25T13:00:00Z' }, { is_credit_balance: true, total: 0, remaining_percentage: 0 }] },
+  ] };
+  const s = upstreamProviderSummary(p, now);
+  assert.match(s, /^2 connections · lowest 12% left · next reset in /);
+  assert.equal(upstreamProviderSummary({ connections: [] }, now), '0 connections');
 });

@@ -3,7 +3,6 @@ import { api } from '../api.js';
 import { h, icon, emptyState, fmtNum, fmtCompact, fmtAgo, fmtDateTime, tzLabel, toast, menu } from '../ui.js';
 import { setRoute } from '../state.js';
 import { formatCost } from '../costhelpers.js';
-import { openCostSettingsModal } from '../costmodal.js';
 
 export function mount(root) {
   let alive = true;
@@ -22,7 +21,7 @@ export function mount(root) {
   const expandedKeys = new Set();
   const expandedModels = new Set();
 
-  const topKPI = h('div', { class: 'grid grid-4' });
+  const topKPI = h('div', { class: 'grid grid-4 reports-kpi' });
   const contentArea = h('div', { class: 'mt' });
 
   function toDateStr(d) {
@@ -170,12 +169,12 @@ export function mount(root) {
       renderContent();
     }
   },
-    h('option', { value: 'tokens_desc' }, '🔥 Total Tokens (Terbanyak)'),
-    h('option', { value: 'prompt_desc' }, '📥 Input Tokens (Prompt)'),
-    h('option', { value: 'comp_desc' }, '📤 Output Tokens (Response)'),
-    h('option', { value: 'requests_desc' }, '⚡ Requests (Paling Sering)'),
-    h('option', { value: 'latency_desc' }, '⏱️ Latensi (Paling Lambat)'),
-    h('option', { value: 'name_asc' }, '🔤 Nama (A - Z)')
+    h('option', { value: 'tokens_desc' }, 'Total tokens'),
+    h('option', { value: 'prompt_desc' }, 'Input tokens'),
+    h('option', { value: 'comp_desc' }, 'Output tokens'),
+    h('option', { value: 'requests_desc' }, 'Requests'),
+    h('option', { value: 'latency_desc' }, 'Latency (slowest)'),
+    h('option', { value: 'name_asc' }, 'Name (A–Z)')
   );
 
   // ── Filter Toolbar Card ──
@@ -217,24 +216,13 @@ export function mount(root) {
     ])
   }, icon('download'), 'Export');
 
-  const costSettingsBtn = h('button', {
-    class: 'btn btn-sm',
-    type: 'button',
-    title: 'Configure Display Currency, FX Exchange Rates, and Key Cost Visibility',
-    onclick: () => openCostSettingsModal(async () => {
-      await reloadCostSettings();
-      await load();
-    })
-  }, icon('dollar-sign'), 'Cost & Currency');
-
   const header = h('div', { class: 'page-head' },
     h('div', null,
       h('h1', null, 'Usage Reports & Breakdown'),
-      h('p', null, 'Detailed token consumption analysis, user attribution ("siapa saja pemakai tokennya"), and model usage')
+      h('p', null, 'Token consumption per client key and per model, with cost estimates')
     ),
     h('div', { class: 'page-actions' },
       exportBtn,
-      costSettingsBtn,
       refreshBtn
     )
   );
@@ -310,7 +298,7 @@ export function mount(root) {
     });
 
     const keySection = h('div', { class: 'print-section' },
-      h('h2', { class: 'print-section-title' }, 'Client API Key Attribution ("Siapa Saja Pemakai Token")'),
+      h('h2', { class: 'print-section-title' }, 'Client API key attribution'),
       h('table', { class: 'print-table' },
         h('thead', null,
           h('tr', null,
@@ -447,7 +435,7 @@ export function mount(root) {
 
   // ── KPI Helper ──
   function kpiCard(title, mainVal, subVal, ic = 'activity', badgeText = null, isWarn = false) {
-    return h('div', { class: 'card stat-tile' },
+    return h('div', { class: `card stat-tile${isWarn ? ' kpi-warn' : ''}` },
       h('div', { class: 'stat-label', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } }, icon(ic), h('span', null, title)),
         badgeText ? h('span', { class: `badge ${isWarn ? 'warn' : 'ok'}`, style: { fontSize: '10px' } }, badgeText) : null
@@ -461,7 +449,7 @@ export function mount(root) {
 
   function fmtDur(ms) {
     if (!ms || ms <= 0) return '-';
-    if (ms < 1000) return `${ms}ms`;
+    if (ms < 1000) return `${Math.round(ms)}ms`;
     return `${(ms / 1000).toFixed(2)}s`;
   }
 
@@ -481,18 +469,46 @@ export function mount(root) {
     const totalReq = reportData.total_requests || 0;
     let totalSuccess = 0;
     let totalBlocked = 0;
+    let totalErrors = 0;
+    let latWeighted = 0;
+    let latReqs = 0;
     (reportData.keys_breakdown || []).forEach(k => {
+      const reqs = k.total_requests || 0;
       totalSuccess += (k.success_requests || 0);
       totalBlocked += (k.blocked_requests || 0);
+      totalErrors += (k.error_requests || 0);
+      if (k.avg_duration_ms > 0 && reqs > 0) {
+        latWeighted += k.avg_duration_ms * reqs;
+        latReqs += reqs;
+      }
     });
+
+    // Error rate: errored requests over all requests in the period.
+    const errRate = totalReq > 0 ? (totalErrors / totalReq) * 100 : null;
+    const errWarn = errRate !== null && errRate > 5;
+    const errVal = errRate === null ? '—' : `${errRate < 10 ? errRate.toFixed(1) : errRate.toFixed(0)}%`;
+    const errSub = `${fmtNum(totalErrors)} errors · ${fmtNum(totalBlocked)} blocked`;
+
+    // Avg latency: request-weighted mean of per-key averages.
+    const avgLat = latReqs > 0 ? latWeighted / latReqs : 0;
+    const latVal = avgLat > 0 ? fmtDur(avgLat) : '—';
+    const latSub = latReqs > 0 ? `Weighted over ${fmtNum(latReqs)} requests` : 'No timed requests';
+
+    // Tokens saved: total plus the plugin that saved the most.
+    const saved = reportData.tokens_saved || 0;
+    const topSaver = (reportData.plugins_breakdown || [])
+      .filter(p => (p.tokens_saved || 0) > 0)
+      .sort((a, b) => (b.tokens_saved || 0) - (a.tokens_saved || 0))[0];
+    const savedSub = topSaver
+      ? h('span', { title: `${fmtNum(topSaver.tokens_saved)} tokens saved by ${topSaver.plugin_id}` }, `Top: ${topSaver.plugin_id} · ${fmtCompact(topSaver.tokens_saved)}`)
+      : 'No plugin savings';
 
     // Sub-content for Total Tokens Card
     const tokensSub = h('div', null,
       h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', marginBottom: '5px' } },
         h('span', { class: 'tok-in', title: `Input Prompt: ${fmtNum(promptToks)}` }, `↓ ${fmtCompact(promptToks)} in (${promptPct.toFixed(0)}%)`),
         h('span', { class: 'muted' }, '·'),
-        h('span', { class: 'tok-out', title: `Output Response: ${fmtNum(compToks)}` }, `↑ ${fmtCompact(compToks)} out (${compPct.toFixed(0)}%)`),
-        reportData.tokens_saved ? h('span', { style: { color: 'var(--ok)', fontWeight: 'bold' } }, `· ${fmtCompact(reportData.tokens_saved)} saved`) : null
+        h('span', { class: 'tok-out', title: `Output Response: ${fmtNum(compToks)}` }, `↑ ${fmtCompact(compToks)} out (${compPct.toFixed(0)}%)`)
       ),
       totToks > 0 ? renderRatioBar(promptToks, compToks) : null
     );
@@ -506,12 +522,16 @@ export function mount(root) {
       h('div', { class: 'muted', style: { fontSize: '10.5px' } }, `${reportData.keys_breakdown?.length || 0} active keys · ${reportData.models_breakdown?.length || 0} models`)
     );
 
+    // Order: volume & cost (row 1), then quality and top consumer/model (row 2).
     topKPI.replaceChildren(
-      kpiCard('Top Token Consumer', topKey, 'Key consuming the most tokens', 'key', 'Top Key'),
-      kpiCard('Top Utilized Model', topMod, 'Model handling highest token load', 'box', 'Top Model'),
-      kpiCard('Estimated Cost', formatCost(reportData.estimated_cost_usd, costSettings.effective_currency, costSettings.effective_rate, reportData.unpriced_requests), 'API list-price equivalent', 'dollar-sign'),
-      kpiCard('Total Tokens', h('span', { title: `${fmtNum(totToks)} total tokens` }, fmtCompact(totToks)), tokensSub, 'sparkles'),
-      kpiCard('Total Requests', fmtNum(totalReq), requestsSub, 'activity')
+      kpiCard('Total requests', fmtNum(totalReq), requestsSub, 'activity'),
+      kpiCard('Total tokens', h('span', { title: `${fmtNum(totToks)} total tokens` }, fmtCompact(totToks)), tokensSub, 'sparkles'),
+      kpiCard('Estimated cost', formatCost(reportData.estimated_cost_usd, costSettings.effective_currency, costSettings.effective_rate, reportData.unpriced_requests), 'API list-price equivalent', 'dollar-sign'),
+      kpiCard('Tokens saved', h('span', { title: `${fmtNum(saved)} tokens saved` }, fmtCompact(saved)), savedSub, 'scissors'),
+      kpiCard('Error rate', errVal, errSub, 'circle-x', errWarn ? 'Above 5%' : null, errWarn),
+      kpiCard('Avg latency', latVal, latSub, 'timer'),
+      kpiCard('Top token consumer', topKey, 'Key consuming the most tokens', 'key', 'Top key'),
+      kpiCard('Top model', topMod, 'Model handling the highest token load', 'box', 'Top model')
     );
   }
 
@@ -542,12 +562,12 @@ export function mount(root) {
 
   // ── Legend & Status Bar Helper ──
   function renderLegend(totalItems, filteredCount) {
-    let sortLabel = 'Total Tokens (Terbanyak)';
-    if (currentSort === 'prompt_desc') sortLabel = 'Input Tokens (Prompt)';
-    else if (currentSort === 'comp_desc') sortLabel = 'Output Tokens (Response)';
-    else if (currentSort === 'requests_desc') sortLabel = 'Requests (Paling Sering)';
-    else if (currentSort === 'latency_desc') sortLabel = 'Latensi (Paling Lambat)';
-    else if (currentSort === 'name_asc') sortLabel = 'Nama (A - Z)';
+    let sortLabel = 'Total tokens';
+    if (currentSort === 'prompt_desc') sortLabel = 'Input tokens';
+    else if (currentSort === 'comp_desc') sortLabel = 'Output tokens';
+    else if (currentSort === 'requests_desc') sortLabel = 'Requests';
+    else if (currentSort === 'latency_desc') sortLabel = 'Latency (slowest)';
+    else if (currentSort === 'name_asc') sortLabel = 'Name (A–Z)';
 
     const countText = filteredCount < totalItems
       ? `${filteredCount} of ${totalItems} ${currentGroup === 'keys' ? 'Keys' : 'Models'}`
@@ -557,16 +577,16 @@ export function mount(root) {
       h('div', { class: 'legend-item' },
         h('span', { class: 'tok-dot-in' }),
         h('span', { class: 'strong tok-in' }, 'Input (Prompt):'),
-        h('span', { class: 'muted' }, 'Teks pertanyaan/instruksi yang dikirim ke AI')
+        h('span', { class: 'muted' }, 'Prompt and instructions sent to the model')
       ),
       h('div', { class: 'legend-item' },
         h('span', { class: 'tok-dot-out' }),
         h('span', { class: 'strong tok-out' }, 'Output (Response):'),
-        h('span', { class: 'muted' }, 'Jawaban yang dihasilkan AI')
+        h('span', { class: 'muted' }, 'Text generated by the model')
       ),
       h('div', { class: 'legend-item', style: { marginLeft: 'auto', gap: '8px' } },
         h('span', { class: 'badge', style: { background: 'var(--hover)', fontSize: '11px' } }, countText),
-        h('span', { class: 'muted', style: { fontSize: '11px' } }, 'Urut: ', h('b', { style: { color: 'var(--text)' } }, sortLabel))
+        h('span', { class: 'muted', style: { fontSize: '11px' } }, 'Sort: ', h('b', { style: { color: 'var(--text)' } }, sortLabel))
       )
     );
   }
@@ -752,10 +772,10 @@ export function mount(root) {
                   h('th', null, 'Model'),
                   h('th', { class: 'num' }, 'Requests'),
                   h('th', { class: 'num', style: { minWidth: '110px' } },
-                    h('span', { class: 'tok-in' }, '📥 Input (Prompt)')
+                    h('span', { class: 'tok-in' }, 'Input')
                   ),
                   h('th', { class: 'num', style: { minWidth: '110px' } },
-                    h('span', { class: 'tok-out' }, '📤 Output (Response)')
+                    h('span', { class: 'tok-out' }, 'Output')
                   ),
                   h('th', { style: { width: '90px' } }, 'In / Out Ratio'),
                   h('th', { class: 'num' }, 'Total Tokens'),
@@ -896,7 +916,7 @@ export function mount(root) {
         )
       );
 
-      // Expanded Sub-table: Who consumed this model ("Siapa saja pemakai model ini")
+      // Expanded sub-table: keys that consumed this model
       if (isExpanded) {
         const consumers = [...(m.key_consumers || [])].sort((a, b) => (b.total_tokens || 0) - (a.total_tokens || 0));
         const consumerRows = consumers.map((c) => {
@@ -928,7 +948,7 @@ export function mount(root) {
 
         const detailSection = h('div', { style: { padding: '16px 20px', background: 'var(--bg)' } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' } },
-            h('b', { style: { fontSize: '13px' } }, `Token Consumers for "${m.model}" ("Siapa saja pemakai model ini")`),
+            h('b', { style: { fontSize: '13px' } }, `Token consumers for "${m.model}"`),
             renderLastActive(m.last_active_at)
           ),
           h('div', { class: 'table-wrap', style: { background: 'var(--panel)', borderRadius: '6px', border: '1px solid var(--border)' } },
@@ -939,10 +959,10 @@ export function mount(root) {
                   h('th', null, 'Masked Key'),
                   h('th', { class: 'num' }, 'Requests'),
                   h('th', { class: 'num', style: { minWidth: '110px' } },
-                    h('span', { class: 'tok-in' }, '📥 Input (Prompt)')
+                    h('span', { class: 'tok-in' }, 'Input')
                   ),
                   h('th', { class: 'num', style: { minWidth: '110px' } },
-                    h('span', { class: 'tok-out' }, '📤 Output (Response)')
+                    h('span', { class: 'tok-out' }, 'Output')
                   ),
                   h('th', { style: { width: '90px' } }, 'In / Out Ratio'),
                   h('th', { class: 'num' }, 'Total Tokens'),
@@ -1006,7 +1026,7 @@ export function mount(root) {
   async function load() {
     topKPI.style.display = 'grid';
     filterToolbar.style.display = 'flex';
-    topKPI.replaceChildren(...[1, 2, 3, 4].map(() => h('div', { class: 'card skel', style: { height: '80px' } })));
+    topKPI.replaceChildren(...Array.from({ length: 8 }, () => h('div', { class: 'card skel kpi-skel' })));
     contentArea.replaceChildren(h('div', { class: 'card skel', style: { height: '240px' } }));
 
     const queryParams = { period: currentPeriod };

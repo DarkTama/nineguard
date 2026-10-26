@@ -6,7 +6,6 @@ import { queryParams, rangeControls, searchTerms, highlight, toLocalInput, iso }
 import { volumeChart } from '../chart.js';
 import { formatCacheHitRate, thinkingBadge, fallbackBadge, protocolBadge, endpointPathForFormat } from '../diagnosticshelpers.js';
 import { formatCost, costTooltip } from '../costhelpers.js';
-import { openCostSettingsModal } from '../costmodal.js';
 
 const PAGE = 500;
 const MAX_ROWS = 5000;
@@ -112,7 +111,7 @@ export function mount(root) {
           node: h('div', null,
             input,
             h('p', { class: 'muted', style: { fontSize: '11.5px', margin: '4px 0 0' } },
-              'Requests consuming at or above this token count are flagged with ⚠️ Heavy badge in Traffic Explorer and trigger WARN logs.'
+              'Requests consuming at or above this token count are flagged with a Heavy badge in Traffic Explorer and trigger WARN logs.'
             )
           )
         },
@@ -151,17 +150,11 @@ export function mount(root) {
     });
   }
 
-  const costBtn = h('button', {
-    class: 'btn btn-sm', type: 'button',
-    title: 'Configure Display Currency, FX Exchange Rates, and Key Cost Visibility',
-    onclick: () => openCostSettingsModal(() => { reloadCostSettings(); renderRows(); }),
-  }, icon('dollar-sign'), 'Cost & Currency');
-
   const alertBtn = h('button', {
     class: 'btn btn-sm', type: 'button',
     title: 'Configure Traffic Spike Alert Threshold',
     onclick: openTrafficSettingsModal,
-  }, icon('alert'), 'Alerts');
+  }, icon('bell'), 'Alerts');
 
   let availableKeys = [];
   let availableModels = [];
@@ -212,60 +205,53 @@ export function mount(root) {
   }, h('i', { class: 'dot' }), s.label));
 
   const protoMessagesChip = h('button', {
-    class: `chip ${p.api_format === 'messages' ? 'active' : ''}`,
+    class: `chip tf-chip-messages ${p.api_format === 'messages' ? 'active' : ''}`,
     type: 'button',
     title: 'Filter requests using Anthropic Messages API (/v1/messages)',
     onclick: () => patch({ api_format: p.api_format === 'messages' ? '' : 'messages' }),
-    style: p.api_format === 'messages' ? { background: 'rgba(251, 146, 60, 0.2)', color: '#fb923c', borderColor: '#fb923c' } : {}
   }, '/v1/messages');
 
   const protoChatChip = h('button', {
-    class: `chip ${p.api_format === 'chat' ? 'active' : ''}`,
+    class: `chip tf-chip-chat ${p.api_format === 'chat' ? 'active' : ''}`,
     type: 'button',
     title: 'Filter requests using OpenAI Chat Completions API (/v1/chat/completions)',
     onclick: () => patch({ api_format: p.api_format === 'chat' ? '' : 'chat' }),
-    style: p.api_format === 'chat' ? { background: 'rgba(56, 189, 248, 0.2)', color: '#38bdf8', borderColor: '#38bdf8' } : {}
   }, '/v1/chat');
 
   const protoResponsesChip = h('button', {
-    class: `chip ${p.api_format === 'responses' ? 'active' : ''}`,
+    class: `chip tf-chip-responses ${p.api_format === 'responses' ? 'active' : ''}`,
     type: 'button',
     title: 'Filter requests using OpenAI Responses API (/v1/responses)',
     onclick: () => patch({ api_format: p.api_format === 'responses' ? '' : 'responses' }),
-    style: p.api_format === 'responses' ? { background: 'rgba(52, 211, 153, 0.2)', color: '#34d399', borderColor: '#34d399' } : {}
   }, '/v1/responses');
 
   const imgChip = h('button', {
-    class: `chip ${p.has_images ? 'active' : ''}`,
+    class: `chip tf-chip-images ${p.has_images ? 'active' : ''}`,
     type: 'button',
     title: 'Filter requests containing attached images',
     onclick: () => patch({ has_images: p.has_images ? '' : '1' }),
-    style: p.has_images ? { background: 'rgba(56, 189, 248, 0.2)', color: '#38bdf8', borderColor: '#38bdf8' } : {}
-  }, '🖼️ Images');
+  }, icon('image'), 'Images');
 
   const fallbackChip = h('button', {
-    class: `chip ${p.fallback === '1' ? 'active' : ''}`,
+    class: `chip tf-chip-fallback ${p.fallback === '1' ? 'active' : ''}`,
     type: 'button',
     title: 'Filter requests where model fallback occurred',
     onclick: () => patch({ fallback: p.fallback === '1' ? '' : '1' }),
-    style: p.fallback === '1' ? { background: 'rgba(234, 179, 8, 0.2)', color: 'var(--lv-warn)', borderColor: 'var(--lv-warn)' } : {}
-  }, '⚠ Fallback');
+  }, icon('alert'), 'Fallback');
 
   const thinkingLostChip = h('button', {
-    class: `chip ${p.thinking === 'lost' ? 'active' : ''}`,
+    class: `chip tf-chip-lost ${p.thinking === 'lost' ? 'active' : ''}`,
     type: 'button',
     title: 'Filter requests where thinking was requested but lost upstream',
     onclick: () => patch({ thinking: p.thinking === 'lost' ? '' : 'lost' }),
-    style: p.thinking === 'lost' ? { background: 'rgba(239, 68, 68, 0.2)', color: 'var(--lv-error)', borderColor: 'var(--lv-error)' } : {}
-  }, '🧠✗ Lost');
+  }, icon('brain'), 'Lost thinking');
 
   const thinkingDeliveredChip = h('button', {
-    class: `chip ${p.thinking === 'delivered' ? 'active' : ''}`,
+    class: `chip tf-chip-thinking ${p.thinking === 'delivered' ? 'active' : ''}`,
     type: 'button',
     title: 'Filter requests where thinking was delivered',
     onclick: () => patch({ thinking: p.thinking === 'delivered' ? '' : 'delivered' }),
-    style: p.thinking === 'delivered' ? { background: 'rgba(168, 85, 247, 0.2)', color: '#a855f7', borderColor: '#a855f7' } : {}
-  }, '🧠 Thinking');
+  }, icon('brain'), 'Thinking');
 
   const liveBtn = h('button', { class: 'chip live', type: 'button', onclick: toggleLive });
 
@@ -285,7 +271,8 @@ export function mount(root) {
   root.append(h('div', { class: 'page-fill' },
     h('div', { class: 'toolbar' },
       searchBox, range.el, h('span', { class: 'sep' }), keySel, modelSel, providerSel, clearBtn,
-      h('span', { class: 'spacer' }), h('span', { class: 'chips' }, ...chips, protoMessagesChip, protoChatChip, protoResponsesChip, imgChip, fallbackChip, thinkingLostChip, thinkingDeliveredChip), liveBtn, costBtn, alertBtn, exportBtn),
+      h('span', { class: 'spacer' }), h('span', { class: 'chips' }, ...chips, protoMessagesChip, protoChatChip, protoResponsesChip, imgChip, fallbackChip, thinkingLostChip, thinkingDeliveredChip),
+      h('div', { class: 'tf-actions' }, liveBtn, alertBtn, exportBtn)),
     chartBox,
     h('div', { class: 'log-table traffic-table' },
       h('div', { class: 'log-head' },
@@ -399,47 +386,13 @@ export function mount(root) {
     const set = statusSet();
     chips.forEach((c, i) => c.classList.toggle('active', set.has(TRAFFIC_STATUSES[i].id)));
 
-    const isMsg = p.api_format === 'messages';
-    protoMessagesChip.classList.toggle('active', isMsg);
-    protoMessagesChip.style.background = isMsg ? 'rgba(251, 146, 60, 0.2)' : '';
-    protoMessagesChip.style.color = isMsg ? '#fb923c' : '';
-    protoMessagesChip.style.borderColor = isMsg ? '#fb923c' : '';
-
-    const isChat = p.api_format === 'chat';
-    protoChatChip.classList.toggle('active', isChat);
-    protoChatChip.style.background = isChat ? 'rgba(56, 189, 248, 0.2)' : '';
-    protoChatChip.style.color = isChat ? '#38bdf8' : '';
-    protoChatChip.style.borderColor = isChat ? '#38bdf8' : '';
-
-    const isResp = p.api_format === 'responses';
-    protoResponsesChip.classList.toggle('active', isResp);
-    protoResponsesChip.style.background = isResp ? 'rgba(52, 211, 153, 0.2)' : '';
-    protoResponsesChip.style.color = isResp ? '#34d399' : '';
-    protoResponsesChip.style.borderColor = isResp ? '#34d399' : '';
-
-    const hasTLost = p.thinking === 'lost';
-    thinkingLostChip.classList.toggle('active', hasTLost);
-    thinkingLostChip.style.background = hasTLost ? 'rgba(239, 68, 68, 0.2)' : '';
-    thinkingLostChip.style.color = hasTLost ? 'var(--lv-error)' : '';
-    thinkingLostChip.style.borderColor = hasTLost ? 'var(--lv-error)' : '';
-
-    const hasTDel = p.thinking === 'delivered';
-    thinkingDeliveredChip.classList.toggle('active', hasTDel);
-    thinkingDeliveredChip.style.background = hasTDel ? 'rgba(168, 85, 247, 0.2)' : '';
-    thinkingDeliveredChip.style.color = hasTDel ? '#a855f7' : '';
-    thinkingDeliveredChip.style.borderColor = hasTDel ? '#a855f7' : '';
-
-    const hasFb = p.fallback === '1';
-    fallbackChip.classList.toggle('active', hasFb);
-    fallbackChip.style.background = hasFb ? 'rgba(234, 179, 8, 0.2)' : '';
-    fallbackChip.style.color = hasFb ? 'var(--lv-warn)' : '';
-    fallbackChip.style.borderColor = hasFb ? 'var(--lv-warn)' : '';
-
-    const hasImg = !!p.has_images;
-    imgChip.classList.toggle('active', hasImg);
-    imgChip.style.background = hasImg ? 'rgba(56, 189, 248, 0.2)' : '';
-    imgChip.style.color = hasImg ? '#38bdf8' : '';
-    imgChip.style.borderColor = hasImg ? '#38bdf8' : '';
+    protoMessagesChip.classList.toggle('active', p.api_format === 'messages');
+    protoChatChip.classList.toggle('active', p.api_format === 'chat');
+    protoResponsesChip.classList.toggle('active', p.api_format === 'responses');
+    thinkingLostChip.classList.toggle('active', p.thinking === 'lost');
+    thinkingDeliveredChip.classList.toggle('active', p.thinking === 'delivered');
+    fallbackChip.classList.toggle('active', p.fallback === '1');
+    imgChip.classList.toggle('active', !!p.has_images);
 
     clearBtn.hidden = !(p.key || p.key_id || p.model || p.provider || p.ip || p.status || p.q || p.has_images || p.fallback || p.thinking || p.api_format || p.estimated);
 
@@ -671,103 +624,33 @@ export function mount(root) {
         h('span', { class: 'strong' }, highlight(modShort, terms)),
         e.model_removed ? h('span', { class: 'badge removed removed-tag', title: 'This model was removed from its provider' }, 'removed') : null,
         (heavyThreshold > 0 && (e.total_tokens || 0) >= heavyThreshold) ? h('span', {
-          class: 'badge',
-          style: {
-            fontSize: '9.5px',
-            padding: '1px 5px',
-            marginLeft: '6px',
-            background: 'rgba(234, 179, 8, 0.15)',
-            color: 'var(--lv-warn)',
-            border: '1px solid rgba(234, 179, 8, 0.35)',
-            fontWeight: '600',
-            whiteSpace: 'nowrap'
-          },
+          class: 'badge tf-badge tf-badge-heavy',
           title: `Heavy request: ${fmtNum(e.total_tokens)} tokens (>= ${fmtNum(heavyThreshold)} threshold)`
-        }, '⚠️ Heavy') : null,
+        }, icon('alert'), 'Heavy') : null,
         e.has_images ? h('span', {
-          class: 'badge',
-          style: {
-            fontSize: '9.5px',
-            padding: '1px 5px',
-            marginLeft: '4px',
-            background: 'rgba(56, 189, 248, 0.15)',
-            color: '#38bdf8',
-            border: '1px solid rgba(56, 189, 248, 0.35)',
-            fontWeight: '600',
-            whiteSpace: 'nowrap'
-          },
+          class: 'badge tf-badge tf-badge-images',
           title: `Multimodal: prompt history contains ${e.image_count || 1} image(s) in conversation context`
-        }, `🖼️ ${e.image_count > 1 ? e.image_count + ' imgs' : '1 img'}`) : null,
+        }, icon('image'), String(e.image_count > 1 ? e.image_count : 1)) : null,
         (() => {
           if (e.api_format !== 'messages' && e.api_format !== 'responses') return null;
           const pb = protocolBadge(e.api_format);
           if (!pb) return null;
-          const isMsg = pb.cls === 'proto-messages';
-          return h('span', {
-            class: `badge ${pb.cls}`,
-            style: {
-              fontSize: '9.5px',
-              padding: '1px 5px',
-              marginLeft: '4px',
-              background: isMsg ? 'rgba(251, 146, 60, 0.15)' : 'rgba(52, 211, 153, 0.15)',
-              color: isMsg ? '#fb923c' : '#34d399',
-              border: isMsg ? '1px solid rgba(251, 146, 60, 0.35)' : '1px solid rgba(52, 211, 153, 0.35)',
-              fontWeight: '600',
-              whiteSpace: 'nowrap'
-            },
-            title: pb.title
-          }, pb.text);
+          return h('span', { class: `badge tf-badge ${pb.cls}`, title: pb.title }, pb.text);
         })(),
         (() => {
           const tb = thinkingBadge(e.thinking_requested, e.thinking_delivered, e.reasoning_tokens, e.api_format, e.model);
           if (!tb) return null;
-          const isDelivered = tb.cls === 'thinking-delivered';
-          return h('span', {
-            class: `badge ${tb.cls}`,
-            style: {
-              fontSize: '9.5px',
-              padding: '1px 5px',
-              marginLeft: '4px',
-              background: isDelivered ? 'rgba(168, 85, 247, 0.15)' : 'rgba(148, 163, 184, 0.15)',
-              color: isDelivered ? '#a855f7' : '#94a3b8',
-              border: isDelivered ? '1px solid rgba(168, 85, 247, 0.35)' : '1px solid rgba(148, 163, 184, 0.35)',
-              fontWeight: '600',
-              whiteSpace: 'nowrap'
-            },
-            title: tb.title
-          }, tb.text);
+          return h('span', { class: `badge tf-badge ${tb.cls}`, title: tb.title }, icon(tb.icon), tb.text);
         })(),
         (() => {
           const fb = fallbackBadge(e.model_fallback, e.model, e.served_model);
           if (!fb) return null;
-          return h('span', {
-            class: 'badge',
-            style: {
-              fontSize: '9.5px',
-              padding: '1px 5px',
-              marginLeft: '4px',
-              background: 'rgba(234, 179, 8, 0.15)',
-              color: 'var(--lv-warn)',
-              border: '1px solid rgba(234, 179, 8, 0.35)',
-              fontWeight: '600',
-              whiteSpace: 'nowrap'
-            },
-            title: fb.title
-          }, fb.text);
+          return h('span', { class: `badge tf-badge ${fb.cls}`, title: fb.title }, icon(fb.icon), fb.text);
         })(),
         e.plugins_applied ? h('span', {
-          class: 'badge',
-          style: {
-            fontSize: '9.5px',
-            padding: '1px 5px',
-            marginLeft: '6px',
-            background: 'rgba(249, 115, 22, 0.15)',
-            color: 'var(--accent)',
-            border: '1px solid rgba(249, 115, 22, 0.35)',
-            fontWeight: '600'
-          },
+          class: 'badge tf-badge tf-badge-plugins',
           title: `Plugins applied: ${e.plugins_applied}`
-        }, '🧩 ' + e.plugins_applied) : null,
+        }, icon('puzzle'), e.plugins_applied) : null,
         e.tokens_saved > 0 ? h('span', {
           class: 'badge ok',
           style: { fontSize: '9.5px', padding: '1px 5px', marginLeft: '4px' },
@@ -851,7 +734,7 @@ export function mount(root) {
       ['API Protocol', e.api_format || 'chat (OpenAI)'],
       ['Client Key', e.api_key_name ? `${e.api_key_name} (${e.api_key})` : (e.api_key || '-')],
       ['Target Model', e.model ? (e.model_removed ? `${e.model} (removed from provider)` : e.model) : '-'],
-      ['Served Model', e.served_model ? (e.model_fallback ? `${e.served_model} (⚠ Fallback from ${e.model})` : e.served_model) : (e.model || '-')],
+      ['Served Model', e.served_model ? (e.model_fallback ? `${e.served_model} (Fallback from ${e.model})` : e.served_model) : (e.model || '-')],
       ['Thinking Status', (() => {
         if (e.thinking_delivered) {
           return `Delivered (${e.reasoning_tokens > 0 ? fmtNum(e.reasoning_tokens) + ' reasoning tokens' : 'observed in response'})`;

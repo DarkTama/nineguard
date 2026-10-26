@@ -20,8 +20,14 @@ export function mount(root) {
     h('div', { class: 'page-head' }, h('div', null, h('h1', null, 'Providers'), h('p', null, 'Connect an account or route requests through your own upstream gateway.')),
       h('div', { class: 'page-actions' }, configBtn,
         h('button', { class: 'btn btn-primary', type: 'button', onclick: () => edit() }, icon('plus'), 'Add provider'))),
-    h('div', { class: 'provider-toolbar' }, h('label', { class: 'tool-search' }, icon('search'), search),
-      h('details', { class: 'provider-routing' }, h('summary', null, 'How routing works'), h('p', null, 'Models use prefix/model-id. NineGuard removes the prefix before forwarding. Requests without a prefix use the default provider. OAuth accounts run through the embedded engine; custom URLs keep their existing protocol.'))),
+    h('section', { class: 'provider-routing', 'aria-label': 'How routing works' },
+      h('div', { class: 'provider-route-example', 'aria-hidden': 'true' },
+        h('code', null, h('span', { class: 'route-prefix' }, 'openrouter'), '/', h('span', { class: 'route-model' }, 'anthropic/claude-3.5-sonnet'))),
+      h('ul', { class: 'provider-route-rules' },
+        h('li', null, h('b', null, 'Prefix picks the provider. '), 'NineGuard removes it before forwarding, so the upstream receives only the model id.'),
+        h('li', null, h('b', null, 'No prefix? '), 'The request goes to the default provider.'),
+        h('li', null, h('b', null, 'Protocol. '), 'Connected Claude and Codex accounts run through the built-in engine; custom URLs keep their own protocol.'))),
+    h('div', { class: 'provider-toolbar' }, h('label', { class: 'tool-search' }, icon('search'), search)),
     body
   ));
   async function action(fn) { try { await fn(); await load(); } catch (err) { toast(err.message, 'error'); } }

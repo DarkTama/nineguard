@@ -1,6 +1,6 @@
 // Plugins view: Manage token savers, prompt injectors, HTTP filters, pipeline order, and scope bindings.
 import { api } from '../api.js';
-import { h, icon, toast, formDialog, confirmDialog, copy, emptyState } from '../ui.js';
+import { h, icon, toast, formDialog, confirmDialog, copy, emptyState, searchableSelect } from '../ui.js';
 import { store } from '../state.js';
 import { scopeLabel, scopeSubLabel, sortPipeline, warningBannerText, appliesToSummary } from '../pluginhelpers.js';
 
@@ -221,6 +221,11 @@ export function mount(root) {
     return `${fail} · ${p.bypassable ? 'Bypassable' : 'Strict'}`;
   }
 
+  function ordinal(n) {
+    const s = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+    return `${n}${s}`;
+  }
+
   function renderList() {
     const sorted = sortPipeline(pluginsList);
     if (!sorted.length) {
@@ -228,7 +233,10 @@ export function mount(root) {
       return;
     }
 
-    listEl.replaceChildren(...sorted.map((p, idx) => {
+    listEl.replaceChildren(
+      h('p', { class: 'plugin-pipeline-note' }, icon('layers'),
+        'Plugins run top to bottom on every request. Use the arrows to change the order.'),
+      ...sorted.map((p, idx) => {
       const globBinding = p.global_binding || { state: 'off' };
       const isGlobOn = globBinding.state === 'on';
       const bindings = bindingsByPlugin.get(p.id);
@@ -314,20 +322,20 @@ export function mount(root) {
       }, icon('settings'), 'Settings');
 
       const moveUpBtn = h('button', {
-        class: 'btn btn-sm',
+        class: 'plugin-rank-btn',
         type: 'button',
         disabled: idx === 0,
-        title: 'Move up',
-        'aria-label': 'Move up',
+        title: idx === 0 ? 'Already first' : 'Run earlier',
+        'aria-label': `Move ${p.name} up`,
         onclick: () => reorder(idx, idx - 1)
       }, icon('chevron-up'));
 
       const moveDownBtn = h('button', {
-        class: 'btn btn-sm',
+        class: 'plugin-rank-btn',
         type: 'button',
         disabled: idx === sorted.length - 1,
-        title: 'Move down',
-        'aria-label': 'Move down',
+        title: idx === sorted.length - 1 ? 'Already last' : 'Run later',
+        'aria-label': `Move ${p.name} down`,
         onclick: () => reorder(idx, idx + 1)
       }, icon('chevron-down'));
 
@@ -337,29 +345,34 @@ export function mount(root) {
         p.guidance.not_recommended_for ? h('div', { class: 'plugin-guidance-warn' }, h('b', null, 'Not recommended: '), p.guidance.not_recommended_for) : null
       ) : null;
 
-      return h('div', { class: 'card plugin-card' },
-        h('div', { class: 'plugin-card-head' },
-          h('div', { class: 'plugin-card-title' },
-            h('span', { class: 'muted plugin-order', title: 'Pipeline position' }, `#${p.pipeline_order}`),
-            h('h3', { title: policyText(p) }, p.name),
-            h('span', { class: 'badge' }, p.kind),
-            h('span', { class: 'badge' }, CATEGORY_LABELS[p.category] || 'Other')
+      return h('div', { class: `card plugin-card${isGlobOn ? ' is-on' : ''}` },
+        h('div', { class: 'plugin-rank', title: `Runs ${ordinal(idx + 1)} in the pipeline` },
+          moveUpBtn,
+          h('span', { class: 'plugin-rank-num', 'aria-label': `Position ${idx + 1} of ${sorted.length}` }, String(idx + 1)),
+          moveDownBtn
+        ),
+        h('div', { class: 'plugin-card-main' },
+          h('div', { class: 'plugin-card-head' },
+            h('div', { class: 'plugin-card-title' },
+              h('h3', { title: policyText(p) }, p.name),
+              h('span', { class: 'badge' }, p.kind),
+              h('span', { class: 'badge' }, CATEGORY_LABELS[p.category] || 'Other')
+            ),
+            h('div', { class: 'plugin-card-actions' },
+              toggleGlobBtn,
+              applyBtn,
+              testBtn,
+              settingsBtn
+            )
           ),
-          h('div', { class: 'plugin-card-actions' },
-            moveUpBtn, moveDownBtn,
-            toggleGlobBtn,
-            applyBtn,
-            testBtn,
-            settingsBtn
-          )
-        ),
-        h('div', { class: 'plugin-meta' },
-          h('span', null, h('b', null, 'Applies to: '), applies),
-          h('span', { class: 'muted' }, policyText(p)),
-          latencyLabel
-        ),
-        p.description ? h('p', { class: 'muted plugin-desc' }, p.description) : null,
-        guidanceCard
+          h('div', { class: 'plugin-meta' },
+            h('span', null, h('b', null, 'Applies to: '), applies),
+            h('span', { class: 'muted' }, policyText(p)),
+            latencyLabel
+          ),
+          p.description ? h('p', { class: 'muted plugin-desc' }, p.description) : null,
+          guidanceCard
+        )
       );
     }));
   }
@@ -1111,24 +1124,22 @@ export function mount(root) {
 
   function renderProbe() {
     const activeKeys = keysList.filter((k) => k.is_active !== false);
-    const keySelect = h('select', { class: 'input', style: { minWidth: '220px' } },
+    const keySelect = h('select', { class: 'select', 'aria-label': 'API key', style: { minWidth: '220px' } },
       ...activeKeys.map((k) => h('option', { value: k.raw_key || k.key, 'data-id': k.id }, `${k.name} (${k.key})`))
     );
 
     const activeModels = modelsList.filter((m) => m.enabled !== false);
-    const datalistId = 'plugin-probe-models';
-    const datalist = h('datalist', { id: datalistId },
-      ...activeModels.map((m) => h('option', { value: m.id }))
-    );
-
-    const defaultModel = activeModels[0] ? activeModels[0].id : '9router/anthropic/claude-3.5-sonnet';
-    const modelInput = h('input', {
-      class: 'input',
-      list: datalistId,
-      placeholder: 'Select or type model...',
-      value: defaultModel,
+    const modelInput = searchableSelect({
+      placeholder: activeModels.length ? 'Select a model' : 'No enabled models',
+      searchPlaceholder: 'Search models...',
+      ariaLabel: 'Model',
+      clearable: false,
+      compact: false,
+      options: activeModels.map((m) => ({ value: m.id, label: m.id })),
+      value: activeModels[0] ? activeModels[0].id : '',
       style: { minWidth: '260px' }
     });
+    modelInput.disabled = !activeModels.length;
 
     const promptInput = h('input', {
       class: 'input',
@@ -1147,7 +1158,7 @@ export function mount(root) {
       class: 'btn btn-primary',
       type: 'button',
       onclick: async () => {
-        const model = modelInput.value.trim();
+        const model = String(modelInput.value || '').trim();
         const key = keySelect.value;
         const prompt = promptInput.value.trim();
 
@@ -1236,7 +1247,7 @@ export function mount(root) {
       onclick: async () => {
         const selectedOpt = keySelect.selectedOptions?.[0];
         const keyID = selectedOpt?.getAttribute('data-id') || '';
-        const model = modelInput.value.trim();
+        const model = String(modelInput.value || '').trim();
 
         previewBtn.disabled = true;
         try {
@@ -1295,7 +1306,6 @@ export function mount(root) {
         h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' } },
           keySelect,
           modelInput,
-          datalist,
           promptInput,
           pingBtn,
           previewBtn

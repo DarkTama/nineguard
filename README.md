@@ -24,7 +24,7 @@ NineGuard is a high-performance reverse proxy and intelligent firewall designed 
 
 ## Overview
 
-In modern AI engineering ecosystems, teams and developers frequently consume LLMs across diverse OpenAI-compatible providers (such as 9router, OpenRouter, vLLM, local Ollama, LiteLLM, etc.). However, several operational challenges arise:
+In modern AI engineering ecosystems, teams and developers frequently consume LLMs across diverse providers: OpenAI-compatible gateways (9router, OpenRouter, vLLM, local Ollama, LiteLLM, etc.) and subscription accounts such as Claude and OpenAI/Codex. However, several operational challenges arise:
 
 1. **Model & Quota Leaks** — Models intended to be disabled or restricted remain accessible if a client knows or manually enters the model ID.
 2. **Absence of Client API Key Governance** — Clients and agents connect directly with master upstream provider keys, making it difficult to trace which developer or agent consumed the quota.
@@ -32,13 +32,14 @@ In modern AI engineering ecosystems, teams and developers frequently consume LLM
 
 **NineGuard resolves these challenges as a Unified Gateway:**
 * **Strict Gatekeeper** — Clients (Cursor, Cline, Pi, custom scripts) authenticate using dedicated NineGuard API keys (`sk-ng-...`). Requests without a valid key are instantly rejected with HTTP 401 Unauthorized.
-* **Prefix Multi-Provider Routing** — Register upstream providers with custom routing prefixes (e.g. `openrouter`, `local`, `ollama`). NineGuard aggregates models into prefixed identifiers like `openrouter/claude-3.5-sonnet` and automatically strips the prefix when forwarding requests to the target provider.
+* **Prefix Multi-Provider Routing** — Register upstream providers with custom routing prefixes (e.g. `openrouter`, `local`, `claude`). NineGuard aggregates models into prefixed identifiers like `openrouter/claude-3.5-sonnet` and automatically strips the prefix when forwarding requests to the target provider.
+* **Built-in Claude & Codex Accounts (Embedded CLIProxyAPI SDK)** — Connect Claude and OpenAI/Codex accounts with OAuth directly in **Providers**. The [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) SDK runs inside the NineGuard binary, so no separate CLIProxyAPI, 9router, or other proxy service is needed. Tokens are encrypted locally and refreshed automatically, and observed account limits (5-hour and weekly windows) appear in Quotas, `/quota`, and the portal.
 * **Per-Key Model Access Control** — Restrict accessible models per API key (custom whitelist, dynamic Model Groups, or global wildcard `*`). Requests for unlisted models are blocked immediately (HTTP 403 Forbidden).
 * **Permanent Model Firewall** — Intercept requests before they hit upstream endpoints. Disabled models are blocked on the spot with HTTP 403 Forbidden.
 * **Accurate Token Audit & Telemetry** — Captures request metadata, client key name, model ID, prompt tokens, completion tokens, latency, and client IP address in embedded SQLite.
 * **Zero-Latency Transparent Streaming** — Server-Sent Events (SSE) responses are flushed instantly back to the client.
 * **Pure Dependency-Free Single Binary** — Built with pure Go (`CGO_ENABLED=0`) and a Vanilla JS single-page frontend embedded directly into the binary.
-* **Upstream Quota Tracking & Cascaded Gateways (v1.4.0)** — Live visibility into upstream capacities and rolling limits (e.g. 5-hour rolling windows and weekly allowances in 9router, prepaid balances) as well as cascaded NineGuard gateways (*Office -> VM -> Local*).
+* **Upstream Quota Tracking & Cascaded Gateways (v1.4.0)** — Live visibility into upstream capacities and rolling limits (e.g. 5-hour rolling windows and weekly allowances from connected Claude/Codex accounts or 9router, prepaid balances) as well as cascaded NineGuard gateways (*Office -> VM -> Local*).
 * **Direct Chat Commands (`/quota`, `/limits`, `/usage`)** — Inspect remaining key allowances and upstream capacity directly from within Cursor/Cline/Pi/IDE chat windows without leaving the workspace, consuming 0 upstream tokens.
 * **Developer Self-Service Portal (`/portal`)** — Mobile-friendly page where developers sign in with their own API key to see how much token budget is left and when it resets (per key or per model), daily activity and per-model share, shared upstream capacity, copyable OpenAI/Anthropic base URLs, and a searchable list of models they can call, without admin credentials.
 * **Secret Vault (AES-256-GCM Encryption-at-Rest)** — All upstream API keys, passwords, and secrets are encrypted at rest in SQLite using authenticated AES-256-GCM.
@@ -89,13 +90,15 @@ NineGuard acts as a unified gateway between AI Coding Agents and Upstream Provid
 │  │ 4. Telemetry: Record Logs, Latency, & Token Usage     │  │
 │  └───────────────────────────────────────────────────────┘  │
 └──────────────────────────────┬──────────────────────────────┘
-                               │  Upstream Master API Key Injection
+                               │  Custom URL: upstream key injected
+                               │  OAuth account: embedded SDK engine
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Upstream OpenAI-Compatible Providers                       │
-│  ├── Provider A (openrouter): https://openrouter.ai/api/v1  │
-│  ├── Provider B (local):      http://localhost:11434        │
-│  └── Provider C:              https://api.openai.com/v1     │
+│  Upstream Providers                                         │
+│  ├── Custom URL (openrouter): https://openrouter.ai/api/v1  │
+│  ├── Custom URL (local):      http://localhost:11434        │
+│  └── OAuth account (claude / codex):                        │
+│        embedded CLIProxyAPI SDK ──► Claude / OpenAI         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -316,31 +319,39 @@ The `.env` file is loaded automatically on startup. Only ports, authentication t
 ---
 
 ### 1. Register an Upstream Provider
-Navigate to **Gateway $\rightarrow$ Providers**:
-1. Click **`+ Add Provider`** (located at top-right or inside the empty state card).
-2. Complete the dialog form:
-   * **Provider Name:** Provider display name (e.g. `OpenRouter Cloud` or `Local Ollama`).
+Navigate to **Gateway $\rightarrow$ Providers** and click **`+ Add provider`** (top right). Choose a connection type:
+
+**Claude or OpenAI/Codex account (OAuth, embedded SDK)**
+1. Select **Claude — OAuth** or **OpenAI / Codex — OAuth**, enter a name and prefix (e.g. `claude`), and save.
+2. Click **`Connect account`** and approve access on the provider's site. On a remote server, paste the full callback URL from the browser address bar and click **`Finish login`**.
+3. Add more accounts to the same provider to spread load. Each account can be refreshed, re-logged, disabled, or disconnected from its row.
+4. Codex OAuth is not an OpenAI Platform API key; available models follow the account's entitlement. Provider terms still apply.
+
+**Custom URL (OpenAI-compatible gateway or local model server)**
+1. Fill in:
+   * **Provider Name:** Display name (e.g. `OpenRouter Cloud` or `Local Ollama`).
    * **Model Routing Prefix:** Routing prefix (e.g. `openrouter` or `local`). Leave blank to use as root provider.
-   * **Route / Target URL:** OpenAI-compatible base URL (e.g. `https://openrouter.ai/api/v1` or `http://localhost:11434`).
+   * **Route / Target URL:** Base URL (e.g. `https://openrouter.ai/api/v1`, `http://localhost:11434`, or `http://localhost:20128` for 9router).
    * **Upstream API Key:** Master API key for the provider (leave empty for local unauthenticated models).
-   * **Set as Default Provider:** Check this box if you want this provider to act as fallback for unprefixed model requests.
-3. Click **`Add Provider`** to save.
-4. Click **`Test Probe`** on the new provider card to verify connectivity. A green checkmark with response latency confirms success.
+   * **Set as Default Provider:** Use this provider for model requests without a prefix.
+2. Save, then click **`Check connection`** on the provider card to verify connectivity.
+
+Cost & currency settings for estimated spend are under **Providers $\rightarrow$ Configure**. Full details in the [Provider Guide](docs/PROVIDERS.md).
 
 ---
 
 ### 2. Generate a NineGuard API Key for Agents
 Navigate to **Gateway $\rightarrow$ Endpoints & Keys**:
-1. On the **NineGuard Client API Keys** card, click **`+ Generate New Key`**.
-2. Complete the modal form:
-   * **Key Name / Description:** Agent or developer identifier (e.g. `Cursor IDE`, `Cline Mac`, or `Pi Agent`). This label is tagged across all logs and reports.
-   * **Allowed Models (Access Control):** Choose one of three access modes:
-     * **All Models (Global):** Grants access to all models permitted by the global firewall. New models added later are available immediately.
-     * **Model Groups:** Links key to one or more dynamic Model Groups (e.g. *OpenAI Models* or *Claude*). Automatically synchronizes when group members change.
-     * **Custom Selection:** Explicit checklist selection or custom model patterns/wildcards (e.g. `openrouter/*`).
-3. Click **`Generate Key`**.
-4. The **NineGuard API Key Generated** dialog displays the new token (`sk-ng-...`).
-5. Click **`Copy Key`** to copy to clipboard.
+1. Click **`+ Generate key`** at the top right of the page.
+2. Complete the dialog:
+   * **Name and access → Key name:** Agent or developer identifier (e.g. `Cursor on laptop`, `Cline Mac`, or `Pi Agent`). Required; it labels every log and report.
+   * **Allowed models:** Choose one of three access modes:
+     * **All models:** Grants access to all models permitted by the global firewall. New models added later are available immediately.
+     * **Model groups:** Links the key to one or more dynamic Model Groups (e.g. *OpenAI Models* or *Claude*). Automatically synchronizes when group members change.
+     * **Custom:** Explicit checklist selection or custom model patterns/wildcards (e.g. `openrouter/*`).
+   * **Quota** and **Plugins and cost** are optional.
+3. Click **`Generate key`**.
+4. The **NineGuard API Key Generated** dialog displays the new token (`sk-ng-...`); copy it from there.
    > **Security Note:** The full token is only shown once at creation time. Store it securely; NineGuard only stores a cryptographic hash in SQLite.
 
 ---
@@ -349,7 +360,7 @@ Navigate to **Gateway $\rightarrow$ Endpoints & Keys**:
 * **Fetch Live Models:**
   Go to **Gateway $\rightarrow$ Models**, then click **`Fetch from Providers`** at the top right to query and synchronize model catalogs from all active providers.
 * **In-Browser Endpoint Tester:**
-  Go to **Gateway $\rightarrow$ Endpoints & Keys**, scroll down to the **Live Endpoint Tester**, select your model and key, enter a test prompt, and click **Send Test Request** to verify streaming before configuring external agents.
+  Go to **Gateway $\rightarrow$ Endpoints & Keys**, scroll down to the **Live Endpoint Probe**, select your key and model, enter a test prompt, and click **Test Ping** to verify streaming before configuring external agents.
 
 ---
 
@@ -364,7 +375,7 @@ Set OpenAI-compatible options in your editor or tool:
 
 #### 4b. Claude / Anthropic models: use the native `/v1/messages` endpoint (Recommended)
 For Claude models, prefer the native Anthropic Messages API over `/v1/chat/completions`. NineGuard forwards `POST /v1/messages` to the upstream **as-is, without protocol translation** (ADR 0014), so you keep:
-* **Extended thinking** — `thinking` blocks and their signatures survive multi-turn tool loops. Via chat completions, Claude's adaptive thinking is often invisible (signature-only), so the Traffic Explorer can only mark it `🧠?` (unverifiable), and some upstreams drop `thinking` on tool-result turns.
+* **Extended thinking** — `thinking` blocks and their signatures survive multi-turn tool loops. Via chat completions, Claude's adaptive thinking is often invisible (signature-only), so the Traffic Explorer can only mark it as unverifiable, and some upstreams drop `thinking` on tool-result turns.
 * **Prompt caching** — `cache_control` breakpoints reach Anthropic unchanged, including in plugin-injected `system` prompts.
 * **Native tool blocks** — `tool_use` / `tool_result` keep their structure; tool names cloaked by 9router (`bash_ide`, `_cc`) are restored automatically.
 * **Same governance** — key permissions, Key/Model Quotas, plugins (Caveman, Ponytail, SecretGuard; Headroom is skipped on this format), `/quota` and `/usage` chat commands, and errors in the Anthropic envelope (`{"type":"error",...}`).
@@ -372,8 +383,8 @@ For Claude models, prefer the native Anthropic Messages API over `/v1/chat/compl
 Settings:
 * **Base URL:** `http://localhost:8080` (**no `/v1`**: Anthropic SDKs and Claude Code append `/v1/messages` themselves)
 * **API Key:** `sk-ng-...`, sent as `x-api-key` (or `Authorization: Bearer`; both work). `anthropic-version: 2023-06-01` is added if the client omits it.
-* **Model ID:** the same prefixed id as in the dashboard (e.g. `9router/cc/claude-sonnet-4-5`).
-* **Upstream requirement:** the provider behind that prefix must serve `POST /v1/messages` (e.g. 9router, Anthropic itself, or another Anthropic-compatible gateway). Providers that only implement OpenAI chat completions will answer `/v1/messages` with 404; use 4a for those.
+* **Model ID:** the same prefixed id as in the dashboard (e.g. `claude/claude-sonnet-4-5` for a connected Claude account, or `9router/cc/claude-sonnet-4-5`).
+* **Upstream requirement:** the provider behind that prefix must serve Anthropic Messages. Connected Claude accounts (embedded SDK) do this natively; so do 9router, Anthropic itself, and other Anthropic-compatible gateways. Custom URLs that only implement OpenAI chat completions will answer `/v1/messages` with 404; use 4a for those.
 
 ```bash
 # Claude Code
@@ -414,7 +425,7 @@ Every API key has exactly **one** access mode (`model_access_mode`):
 1. Navigate to **Gateway $\rightarrow$ Models** and click **`Fetch from Providers`**.
 2. Open the **Model Groups** tab and click **`+ Create Model Group`**.
 3. Set name (e.g. `Claude`), description, and select models or enter pattern wildcards (e.g. `9router/*`).
-4. Navigate to **Gateway $\rightarrow$ Endpoints & Keys**, click **`+ Generate New Key`** (or edit an existing key).
+4. Navigate to **Gateway $\rightarrow$ Endpoints & Keys**, click **`+ Generate key`** (or edit an existing key).
 5. Under **Allowed Models**, choose **Model Groups** and check one or more groups.
 6. Save. The key is instantly restricted to models within those groups.
 

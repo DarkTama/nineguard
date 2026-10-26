@@ -16,3 +16,19 @@ export function freshPercent(b, now = Date.now()) {
   const observed = Date.parse(b?.observed_at);
   return isPercentBucket(b) && !b.incomplete && b.observation_state === 'observed' && Number.isFinite(observed) && now - observed <= 300000 && (!b.reset_at || Date.parse(b.reset_at) > now);
 }
+// Remaining-capacity tone shared by dashboard and portal: >70% ok, 30-70% warn, <30% err.
+export function remainingTone(pct) {
+  if (pct > 70) return 'ok';
+  if (pct >= 30) return 'warn';
+  return 'err';
+}
+// Meter model for an SDK percent bucket. Unknown, stale or incomplete values get no fill or color,
+// so a missing observation never looks like empty (or full) capacity.
+export function sdkMeter(b, now = Date.now()) {
+  const pct = b?.remaining_percent;
+  if (pct == null || !Number.isFinite(pct)) {
+    return { known: false, pct: 0, tone: b?.limit_reached ? 'err' : 'muted', dim: true };
+  }
+  const left = Math.max(0, Math.min(100, pct));
+  return { known: true, pct: left, tone: remainingTone(left), dim: !freshPercent(b, now) };
+}

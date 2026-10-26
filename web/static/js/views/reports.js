@@ -252,7 +252,7 @@ export function mount(root) {
       ),
       h('div', { class: 'header-right' },
         h('div', null, 'Classification: ', h('b', null, 'Internal Financial')),
-        h('div', null, 'Exported: ', h('b', null, new Date().toLocaleString())),
+        h('div', null, 'Exported: ', h('b', null, `${fmtDateTime(Date.now())} (${tzLabel()})`)),
         h('div', null, 'Display Currency: ', h('b', null, cur))
       )
     );
@@ -286,8 +286,8 @@ export function mount(root) {
       const shareStr = typeof k.token_share === 'number' ? `${k.token_share.toFixed(1)}%` : '-';
       const costStr = formatCost(k.estimated_cost_usd, cur, rate, k.unpriced_requests);
       return h('tr', null,
-        h('td', { class: 'strong' }, k.key_name),
-        h('td', { class: 'muted' }, k.key || '-'),
+        h('td', { class: 'strong wrap' }, k.key_name),
+        h('td', { class: 'muted nowrap' }, k.key || '-'),
         h('td', { class: 'num' }, fmtNum(k.total_requests)),
         h('td', { class: 'num' }, fmtNum(k.prompt_tokens)),
         h('td', { class: 'num' }, fmtNum(k.completion_tokens)),
@@ -355,7 +355,7 @@ export function mount(root) {
       h('span', null, `Reporting Period: ${dateRangeStr}`)
     );
 
-    return h('div', { id: 'business-report-print' },
+    return h('div', { id: 'business-report-print', class: 'print-doc' },
       printHead,
       kpiGrid,
       keySection,
@@ -364,15 +364,29 @@ export function mount(root) {
     );
   }
 
+  // Injects the report as the only printed node, names the tab so "Save as PDF" suggests a
+  // useful filename, and undoes both once the print dialog closes.
   function printReport() {
     if (!reportData) return;
+    document.querySelectorAll('.print-doc').forEach(n => n.remove());
     const printDoc = renderBusinessReportPrint();
-    const old = document.getElementById('business-report-print');
-    if (old) old.remove();
     document.body.append(printDoc);
-    setTimeout(() => {
-      window.print();
-    }, 120);
+
+    const period = currentPeriod === 'custom' ? `${customStart}_to_${customEnd}` : currentPeriod;
+    const prevTitle = document.title;
+    document.title = `NineGuard-usage-report-${period}-${toDateStr(new Date())}`;
+    let restored = false;
+    const restore = () => {
+      if (restored) return;
+      restored = true;
+      window.removeEventListener('afterprint', restore);
+      printDoc.remove();
+      document.title = prevTitle;
+    };
+    window.addEventListener('afterprint', restore);
+
+    const images = [...printDoc.querySelectorAll('img')].map(img => img.decode().catch(() => {}));
+    Promise.all(images).then(() => window.print());
   }
 
   async function exportAggregatedCSV() {

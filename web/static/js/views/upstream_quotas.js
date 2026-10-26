@@ -3,13 +3,9 @@ import { api } from '../api.js';
 import { h, icon, toast, emptyState, fmtNum, confirmDialog } from '../ui.js';
 import { formatResetIn } from '../modelquotas.js';
 import { formatTokensCompact } from '../quotahelpers.js';
-import { isPercentBucket, remainingLabel, observationLabel, telemetryStateLabel, freshPercent } from '../upstreamtelemetry.js';
+import { isPercentBucket, remainingLabel, observationLabel, telemetryStateLabel, freshPercent, remainingTone, sdkMeter } from '../upstreamtelemetry.js';
 
-export function upstreamBarTone(pct) {
-  if (pct > 70) return 'ok';
-  if (pct >= 30) return 'warn';
-  return 'err';
-}
+export const upstreamBarTone = remainingTone;
 
 export function upstreamAlertRows(providers, max = 6) {
   if (!Array.isArray(providers)) return { rows: [], total: 0 };
@@ -246,10 +242,15 @@ export function renderUpstreamQuotas(container) {
   function renderBucketRow(b) {
     if (isPercentBucket(b)) {
       const state = `${telemetryStateLabel(b.observation_state)}${b.incomplete ? ' · incomplete' : ''}`;
+      const m = sdkMeter(b);
       return h('tr', null,
         h('td', null, b.name, b.scope && b.scope !== 'account' ? h('div', { class: 'muted' }, b.scope) : null),
         h('td', { class: 'muted' }, b.used_percent == null ? '—' : `${b.used_percent.toFixed(1)}% used`),
-        h('td', null, h('strong', null, remainingLabel(b)), h('div', { class: 'muted', style: { fontSize: '11px' } }, state)),
+        h('td', null,
+          h('div', { class: `uq-remaining${m.dim ? ' is-dim' : ''}` },
+            h('span', { class: `qbar ${m.tone}`, role: 'img', 'aria-label': `${remainingLabel(b)}` }, h('i', { style: { width: `${m.pct}%` } })),
+            h('strong', { class: `qpct ${m.tone}` }, remainingLabel(b))),
+          h('div', { class: 'muted uq-state' }, state)),
         h('td', { class: 'muted' }, b.reset_at ? `in ${formatResetIn(b.reset_at)}` : '—')
       );
     }

@@ -13,7 +13,7 @@ import {
 } from './portalhelpers.js';
 import { formatCost } from './costhelpers.js';
 import { formatTokensCompact } from './quotahelpers.js';
-import { isPercentBucket, remainingLabel, observationLabel, telemetryStateLabel } from './upstreamtelemetry.js';
+import { isPercentBucket, remainingLabel, observationLabel, telemetryStateLabel, sdkMeter } from './upstreamtelemetry.js';
 import { formatResetIn, shortModel } from './modelquotas.js';
 
 const root = document.getElementById('portal-app');
@@ -270,7 +270,7 @@ function renderBudget() {
     section.append(
       h('h2', { class: 'pt-status' }, 'This key has no token limit in force.'),
       h('p', { class: 'pt-sub' }, 'Requests are only limited by the shared upstream capacity listed on the right.'),
-      inactiveNote(b.inactive)
+      ...[inactiveNote(b.inactive)].filter(Boolean)
     );
     return section;
   }
@@ -324,7 +324,7 @@ function renderBudget() {
         h('span', null, r.resetAt ? `resets in ${formatResetIn(r.resetAt)}` : (r.period === 'total' ? 'does not reset' : ''))
       )
     ))),
-    inactiveNote(b.inactive)
+    ...[inactiveNote(b.inactive)].filter(Boolean)
   );
   return section;
 }
@@ -356,7 +356,11 @@ function rangeSwitch() {
 
 function renderActivity() {
   const s = usageData;
-  const head = h('div', { class: 'pt-head' }, h('h2', null, 'Your activity'), rangeSwitch());
+  const pdfBtn = h('button', {
+    class: 'btn btn-sm', type: 'button', disabled: loading || (!quotaData && !usageData),
+    title: 'Save a summary of this key and the selected range as a PDF', onclick: printPortalSummary
+  }, icon('printer'), 'Download PDF');
+  const head = h('div', { class: 'pt-head' }, h('h2', null, 'Your activity'), h('div', { class: 'pt-head-actions' }, rangeSwitch(), pdfBtn));
   const section = h('section', { class: 'pt-panel' }, head);
 
   if (!s) {
@@ -448,6 +452,149 @@ function renderExtras(s) {
   return h('p', { class: 'pt-extras' }, bits.join('; ') + '.');
 }
 
+// ── Print / PDF summary ──
+// Built only from data already loaded; the key itself appears masked, never raw.
+
+function localDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function printTable(columns, rows) {
+  return h('table', { class: 'print-table' },
+    h('thead', null, h('tr', null, ...columns.map(([label, num]) => h('th', { class: num ? 'num' : null }, label)))),
+    h('tbody', null, ...rows.map((cells) => h('tr', null,
+      ...cells.map((v, i) => h('td', { class: columns[i][1] ? 'num' : null }, v))
+    )))
+  );
+}
+
+function printSection(title, ...children) {
+  return h('div', { class: 'print-section' }, h('h2', { class: 'print-section-title' }, title), ...children);
+}
+
+function printBudgetSection() {
+  const b = budgetSummary(quotaData);
+  if (b.kind === 'unknown') return printSection('Token budget', h('p', { class: 'print-text' }, 'Budget status was unavailable when this summary was made.'));
+  const inactive = b.inactive && b.inactive.length
+    ? h('p', { class: 'print-note' }, `Not counted: ${b.inactive.map((r) => `${r.modelId} (${INACTIVE_WORD[r.reason] || 'inactive'})`).join(', ')}.`)
+    : null;
+  if (b.kind === 'unlimited') return printSection('Token budget', h('p', { class: 'print-text' }, 'This key has no token limit in force.'), inactive);
+
+  const pct = (p) => `${Math.round(p)}%`;
+  if (b.kind === 'key') {
+    return printSection('Token budget',
+      printTable([['Period'], ['Used', true], ['Limit', true], ['Left', true], ['Used %', true]],
+        [[periodWord(b.period) || '-', fmtNum(b.used), fmtNum(b.limit), fmtNum(b.left), pct(b.pct)]]),
+      h('p', { class: 'print-note' }, resetLine(b.resetAt, b.period))
+    );
+  }
+  const tot = b.total;
+  return printSection('Token budget',
+    h('p', { class: 'print-text' }, `${fmtNum(tot.left)} tokens left of ${fmtNum(tot.limit)} across ${b.rows.length} model budget${b.rows.length === 1 ? '' : 's'} (${pct(tot.pct)} used).`),
+    printTable([['Model'], ['Period'], ['Used', true], ['Limit', true], ['Used %', true], ['Resets']],
+      b.rows.map((r) => [r.modelId, periodWord(r.period) || '-', fmtNum(r.used), fmtNum(r.limit), pct(r.pct),
+        r.resetAt ? `in ${formatResetIn(r.resetAt)}` : (r.period === 'total' ? 'never' : '-')])),
+    inactive
+  );
+}
+
+function renderPortalPrint() {
+  const s = usageData;
+  const keyName = (quotaData && quotaData.key_name) || 'Your key';
+  const rangeLabel = (RANGES.find(([id]) => id === activeRange) || [, activeRange])[1];
+  const rangeText = s && s.from && s.to ? `${rangeLabel} (${s.from} to ${s.to})` : rangeLabel;
+  const cur = s?.cost?.currency || 'USD';
+  const rate = s?.cost?.rate || 1;
+
+  const head = h('div', { class: 'print-report-header' },
+    h('div', null,
+      h('div', { class: 'brand-row' },
+        h('img', { src: '/appicon.png', width: '28', height: '28', alt: 'NineGuard' }),
+        h('span', { class: 'brand-title' }, 'NineGuard')
+      ),
+      h('h1', { class: 'report-title' }, `Key usage summary: ${keyName}`),
+      h('p', { class: 'report-period' }, `Range: ${rangeText} · Timezone: ${tzLabel()}`)
+    ),
+    h('div', { class: 'header-right' },
+      h('div', null, 'Key: ', h('b', null, maskKey(activeKey))),
+      h('div', null, 'Exported: ', h('b', null, new Date().toLocaleString('en-US', { timeZone: timeZone() || undefined }))),
+      s?.cost ? h('div', null, 'Currency: ', h('b', null, cur)) : null
+    )
+  );
+
+  const parts = [head, printBudgetSection()];
+
+  if (!s) {
+    parts.push(printSection('Usage', h('p', { class: 'print-text' }, 'Usage history was unavailable when this summary was made.')));
+  } else if (!s.requests) {
+    parts.push(printSection('Usage', h('p', { class: 'print-text' }, 'No requests from this key in this range.')));
+  } else {
+    const kpi = (label, value, sub) => h('div', { class: 'print-kpi-card' },
+      h('div', { class: 'label' }, label), h('div', { class: 'value' }, value), h('div', { class: 'sub' }, sub));
+    parts.push(h('div', { class: 'print-kpi-grid' },
+      kpi('Requests', fmtNum(s.requests), s.errors ? `${fmtNum(s.errors)} failed (${s.error_rate_pct}%)` : 'none failed'),
+      kpi('Tokens', fmtNum(s.tokens.total), `${fmtNum(s.tokens.prompt)} in · ${fmtNum(s.tokens.completion)} out`),
+      kpi('Cache hits', `${s.cache_hit_pct}%`, `${fmtNum(s.tokens.cache_read)} tokens read from cache`),
+      s.cost
+        ? kpi('Est. cost', s.cost.display_formatted, s.cost.unpriced_requests ? `${fmtNum(s.cost.unpriced_requests)} requests unpriced` : 'at list price')
+        : kpi('Active days', fmtNum(s.active_days), `busiest hour ${s.peak_hour_formatted}`)
+    ));
+    const extras = renderExtras(s);
+    if (extras) parts.push(h('p', { class: 'print-text' }, extras.textContent));
+
+    const models = s.models || [];
+    if (models.length) {
+      const cols = [['Model'], ['Input', true], ['Output', true], ['Total', true], ['Share', true]];
+      if (s.cost) cols.push(['Est. cost', true]);
+      parts.push(printSection('Tokens by model', printTable(cols, models.map((m) => {
+        const row = [m.model_id, fmtNum(m.prompt), fmtNum(m.completion), fmtNum(m.total), `${(m.pct_tokens || 0).toFixed(1)}%`];
+        if (s.cost) row.push(m.cost != null ? formatCost(m.cost, cur, rate, 0) : '-');
+        return row;
+      }))));
+    }
+
+    const days = (s.daily || []).filter((d) => d.requests || d.tokens);
+    if (days.length) {
+      const cols = [['Date'], ['Requests', true], ['Tokens', true]];
+      if (s.cost) cols.push(['Est. cost', true]);
+      parts.push(printSection('Daily usage (active days)', printTable(cols, days.map((d) => {
+        const row = [d.date, fmtNum(d.requests), fmtNum(d.tokens)];
+        if (s.cost) row.push(d.cost != null ? formatCost(d.cost, cur, rate, 0) : '-');
+        return row;
+      }))));
+    }
+  }
+
+  parts.push(h('div', { class: 'print-footer' },
+    h('span', null, 'Generated by the NineGuard key portal'),
+    h('span', null, `Range: ${rangeText}`)
+  ));
+  return h('div', { class: 'print-doc' }, ...parts);
+}
+
+function printPortalSummary() {
+  if (!quotaData && !usageData) return;
+  document.querySelectorAll('.print-doc').forEach((n) => n.remove());
+  const doc = renderPortalPrint();
+  document.body.append(doc);
+
+  const keyName = (quotaData && quotaData.key_name) || 'key';
+  const slug = keyName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'key';
+  const prevTitle = document.title;
+  document.title = `NineGuard-usage-${slug}-${activeRange}-${localDateStr(new Date())}`;
+  let restored = false;
+  const restore = () => {
+    if (restored) return;
+    restored = true;
+    window.removeEventListener('afterprint', restore);
+    doc.remove();
+    document.title = prevTitle;
+  };
+  window.addEventListener('afterprint', restore);
+
+  Promise.all([...doc.querySelectorAll('img')].map((img) => img.decode().catch(() => {}))).then(() => window.print());
+}
+
 function copyRow(label, value, hint) {
   return h('div', { class: 'pt-copy' },
     h('div', { class: 'pt-copy-text' },
@@ -487,8 +634,10 @@ function renderSharedCapacity() {
         buckets.length
           ? h('ul', { class: 'pt-buckets' }, ...buckets.map((b) => {
               if (isPercentBucket(b)) {
-                return h('li', null,
-                  h('div', { class: 'pt-mq-head' }, h('span', null, b.name), h('span', { class: 'pt-num' }, remainingLabel(b))),
+                const m = sdkMeter(b);
+                return h('li', { class: m.dim ? 'is-dim' : null },
+                  h('div', { class: 'pt-mq-head' }, h('span', null, b.name), h('span', { class: `pt-num tone-${m.tone}` }, remainingLabel(b))),
+                  meter(m.pct, m.known ? m.tone : 'muted', `${b.name}: ${remainingLabel(b)}`),
                   h('p', { class: 'pt-fine' }, `${observationLabel(b.observed_at, b.observation_state)}${b.incomplete ? ' · incomplete observations' : ''}`),
                   b.reset_at ? h('div', { class: 'pt-mq-foot' }, `resets in ${formatResetIn(b.reset_at)}`) : null
                 );

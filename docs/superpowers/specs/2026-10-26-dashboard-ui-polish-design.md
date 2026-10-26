@@ -36,3 +36,11 @@ Several admin pages drifted from the shared components: misaligned header action
 ## Verification
 
 `node --check` on edited files, `node --test web/jstest/*.mjs`, server build, and a browser pass of each page at desktop and 390px width in light and dark themes.
+
+## Follow-up fixes
+
+- Plugin cards show their pipeline position as 1, 2, 3… with a visible up/down rail; the stored `pipeline_order` (5, 10, 20…) is an internal sort key and is no longer displayed.
+- Providers explains routing with a worked model id under the header instead of a disclosure beside the search box.
+- Usage Reports PDF prints as a white, paginated A4 document in any theme; the portal has a **Download PDF** summary that never includes the raw key.
+- SDK account limits use colored remaining bars (green above 70%, amber 30–70%, red below 30%) in Quotas and the portal; unknown or stale observations stay grey or dimmed.
+- The plugin probe uses the searchable model select instead of a browser datalist.

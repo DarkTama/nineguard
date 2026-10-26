@@ -29,7 +29,7 @@ export function mount(root) {
   const baseUrl = `${origin}/v1`;
 
   const upstreamCard = h('div', { class: 'card mt' });
-  const keysCard = h('div', { class: 'card' });
+  const keysCard = h('div', { class: 'card table-card' });
   const guidesWrap = h('div', { class: 'card-body p-0' });
   const testerCard = h('div', { class: 'card mt' });
 
@@ -178,13 +178,19 @@ export function mount(root) {
   }
 
   const keySearch = h('input', {
-    class: 'input',
     type: 'search',
-    placeholder: 'Search key name...',
+    placeholder: 'Search keys...',
+    autocomplete: 'off',
+    spellcheck: 'false',
     value: keyState.q,
     'aria-label': 'Search keys by name',
-    style: { width: '220px' },
     oninput: debounce((e) => setKeyState(withFilter(keyState, { q: e.target.value.trim() })), 300),
+    onkeydown: (e) => {
+      if (e.key === 'Escape' && keySearch.value) {
+        keySearch.value = '';
+        setKeyState(withFilter(keyState, { q: '' }));
+      }
+    },
   });
 
   function selectEl(options, value, onChange, title) {
@@ -371,49 +377,102 @@ export function mount(root) {
   function renderPager() {
     const pages = totalPages(keyPage.total, keyState.limit);
     const go = (n) => setKeyState({ ...keyState, page: n });
-    const btn = (label, n, disabled, current = false) => h('button', {
-      class: `btn btn-sm${current ? ' btn-primary' : ''}`,
+    const btn = (label, n, disabled, current = false, num = false) => h('button', {
+      class: `btn btn-sm${num ? ' page-num' : ''}${current ? ' btn-primary' : ''}`,
       type: 'button',
       disabled,
       'aria-current': current ? 'page' : null,
       onclick: () => go(n),
     }, label);
-    return h('div', { class: 'table-foot', style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
+    return h('div', { class: 'table-foot table-pager' },
       h('span', null, rangeLabel(keyState.page, keyState.limit, keyPage.total, (keyPage.keys || []).length)),
-      h('span', { class: 'spacer' }),
-      btn('\u2039 Prev', keyState.page - 1, keyState.page <= 1),
-      ...pageItems(keyState.page, pages).map((it) => it === '\u2026'
-        ? h('span', { class: 'muted' }, '\u2026')
-        : btn(String(it), it, false, it === keyState.page)),
-      btn('Next \u203a', keyState.page + 1, keyState.page >= pages)
+      h('div', { class: 'pager-pages' },
+        keyLimitSel,
+        btn('Previous', keyState.page - 1, keyState.page <= 1),
+        ...pageItems(keyState.page, pages).map((it) => it === '\u2026'
+          ? h('span', { class: 'muted pager-gap' }, '\u2026')
+          : btn(String(it), it, false, it === keyState.page, true)),
+        btn('Next', keyState.page + 1, keyState.page >= pages))
     );
   }
 
   // Card chrome is built once so the search box keeps focus while typing;
   // renderKeysCard() only refreshes control values and the body.
-  const keyStatusSel = selectEl([['all', 'Status: all'], ['active', 'Active'], ['disabled', 'Disabled']], keyState.status,
-    (v) => setKeyState(withFilter(keyState, { status: v })), 'Status');
-  const keyModeSel = selectEl([['any', 'Access: any'], ['all', 'All models'], ['group', 'Model groups'], ['custom', 'Custom list']], keyState.mode,
-    (v) => setKeyState(withFilter(keyState, { mode: v })), 'Access mode');
+  const KEY_STATUS_FILTERS = [
+    { id: 'all', label: 'All' },
+    { id: 'active', label: 'Active' },
+    { id: 'disabled', label: 'Disabled' },
+  ];
+  const keyStatusCounts = new Map();
+  const keyStatusButtons = new Map();
+  const keyStatusSegmented = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Filter by key status' },
+    ...KEY_STATUS_FILTERS.map((s) => {
+      const count = h('span', { class: 'seg-count' }, '0');
+      keyStatusCounts.set(s.id, count);
+      const btn = h('button', {
+        type: 'button',
+        'aria-pressed': String(s.id === keyState.status),
+        onclick: () => setKeyState(withFilter(keyState, { status: s.id })),
+      }, s.label, count);
+      keyStatusButtons.set(s.id, btn);
+      return btn;
+    })
+  );
+  const keyModeSel = selectEl([['any', 'All access modes'], ['all', 'All models'], ['group', 'Model groups'], ['custom', 'Custom list']], keyState.mode,
+    (v) => setKeyState(withFilter(keyState, { mode: v })), 'Filter by access mode');
   const keyLimitSel = selectEl(PAGE_SIZES.map((n) => [String(n), `${n} / page`]), keyState.limit,
     (v) => setKeyState(withFilter(keyState, { limit: Number(v) })), 'Page size');
+  const keyClearBtn = h('button', {
+    class: 'btn btn-sm',
+    type: 'button',
+    title: 'Reset search, status and access mode filters',
+    onclick: () => {
+      keySearch.value = '';
+      setKeyState(withFilter(keyState, { q: '', status: 'all', mode: 'any' }));
+    },
+  }, icon('x'), 'Clear');
+  const keyMatchInfo = h('span', { class: 'muted', style: { fontSize: '11.5px', whiteSpace: 'nowrap' } });
   const keysBody = h('div', null, skeletonRows(5));
   keysCard.append(
-    h('div', { class: 'card-head' },
-      h('div', null,
-        h('h2', null, 'NineGuard client API keys'),
-        h('p', { class: 'card-sub' }, 'Generate dedicated keys for Cursor, Cline, Pi, and developers. Every token and request is tracked per key.')
-      )
-    ),
-    h('div', { class: 'toolbar' }, keySearch, keyStatusSel, keyModeSel, h('span', { class: 'spacer' }), keyLimitSel),
+    h('div', { class: 'toolbar card-toolbar' },
+      h('label', { class: 'tool-search' }, icon('search'), keySearch),
+      keyStatusSegmented, keyModeSel, keyClearBtn,
+      h('span', { class: 'spacer' }), keyMatchInfo),
     keysBody
   );
 
+  // Status counts come from the full key list (keysList) narrowed by the same
+  // name search and access mode the server applies, so they match the table.
+  function keyAccessMode(k) {
+    return k.model_access_mode || 'all';
+  }
+
+  function renderKeyToolbar() {
+    const q = keyState.q.toLowerCase();
+    const base = keysList.filter((k) =>
+      (!q || String(k.name || '').toLowerCase().includes(q)) &&
+      (keyState.mode === 'any' || keyAccessMode(k) === keyState.mode));
+    for (const s of KEY_STATUS_FILTERS) {
+      const n = s.id === 'all' ? base.length : base.filter((k) => (s.id === 'active') === Boolean(k.is_active)).length;
+      keyStatusCounts.get(s.id).textContent = fmtNum(n);
+      const btn = keyStatusButtons.get(s.id);
+      btn.classList.toggle('active', s.id === keyState.status);
+      btn.setAttribute('aria-pressed', String(s.id === keyState.status));
+    }
+    keyModeSel.classList.toggle('has-value', keyState.mode !== 'any');
+    const filtered = Boolean(keyState.q || keyState.status !== 'all' || keyState.mode !== 'any');
+    keyClearBtn.hidden = !filtered;
+    const total = keyPage.total || 0;
+    keyMatchInfo.textContent = filtered
+      ? `${fmtNum(total)} of ${fmtNum(keysList.length)} ${keysList.length === 1 ? 'key' : 'keys'}`
+      : `${fmtNum(total)} ${total === 1 ? 'key' : 'keys'}`;
+  }
+
   function renderKeysCard() {
     if (document.activeElement !== keySearch) keySearch.value = keyState.q;
-    keyStatusSel.value = keyState.status;
     keyModeSel.value = keyState.mode;
     keyLimitSel.value = String(keyState.limit);
+    renderKeyToolbar();
 
     const filtered = keyState.q || keyState.status !== 'all' || keyState.mode !== 'any';
     if (keyPage.error) {
@@ -430,13 +489,13 @@ export function mount(root) {
     const table = h('table', { class: 'table' },
       h('thead', null,
         h('tr', null,
-          sortHeader('Agent / Key Name', 'name'),
-          h('th', null, 'Key Token'),
-          h('th', null, 'Allowed Models'),
+          sortHeader('Agent / key name', 'name'),
+          h('th', null, 'Key token'),
+          h('th', null, 'Allowed models'),
           sortHeader('Requests', 'requests', { class: 'num' }),
           sortHeader('Tokens', 'tokens', { class: 'num' }),
           h('th', null, 'Quota'),
-          sortHeader('Last Active', 'last_active'),
+          sortHeader('Last active', 'last_active'),
           sortHeader('Status', 'status'),
           sortHeader('Created', 'created'),
           h('th', { style: { textAlign: 'right' } }, 'Actions')

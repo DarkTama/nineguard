@@ -2320,3 +2320,23 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .key-group-option:hover { border-color: var(--accent); }
 .key-model-option { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 4px; cursor: pointer; user-select: none; font-size: 12px; font-family: monospace; }
 .key-model-option:hover { background: var(--panel); }
+
+/* table-consistency: quotas */
+.quota-unlimited-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.uq-conn + .uq-conn { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.uq-conn-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+.uq-conn-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.uq-conn-title h3 { margin: 0; font-size: 13px; font-weight: 700; }
+.uq-conn-allowance .uq-conn-title > .icon { color: var(--ok); }
+/* table-consistency: small tables */
+.table th.col-state { width: 110px; }
+.table th.col-action { width: 90px; }
+.qk-table tr.qrow-velocity td { padding: 0 8px; border: 0; }
+/* table-consistency: keys and users */
+/* Shared table pager, matching the Models table footer. */
+.table-pager { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px 8px 6px; border-top: 1px solid var(--border); }
+.table-pager .pager-pages { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.table-pager .pager-pages .btn.page-num { min-width: 28px; padding: 0 6px; }
+.table-pager .pager-pages .btn[aria-current="page"] { font-weight: 700; pointer-events: none; }
+.table-pager .pager-gap { padding: 0 2px; font-size: 11px; }
+.card-toolbar .select, .table-pager .select { height: 28px; padding: 0 22px 0 8px; font-size: 11.5px; width: auto; }

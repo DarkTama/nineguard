@@ -592,46 +592,39 @@ export function mount(root) {
 
     if (startP > 1) {
       pageButtons.push(h('button', {
-        class: 'btn btn-sm',
+        class: 'btn btn-sm page-num',
         type: 'button',
-        style: { minWidth: '28px', padding: '0 6px' },
         onclick: () => changePage(1)
       }, '1'));
       if (startP > 2) {
-        pageButtons.push(h('span', { class: 'muted', style: { padding: '0 2px', fontSize: '11px' } }, '…'));
+        pageButtons.push(h('span', { class: 'muted pager-gap' }, '…'));
       }
     }
 
     for (let p = startP; p <= endP; p++) {
       const isCurrent = p === page;
       pageButtons.push(h('button', {
-        class: `btn btn-sm ${isCurrent ? 'btn-primary' : ''}`,
+        class: `btn btn-sm page-num${isCurrent ? ' btn-primary' : ''}`,
         type: 'button',
-        style: {
-          minWidth: '28px',
-          padding: '0 6px',
-          fontWeight: isCurrent ? '700' : 'normal',
-          pointerEvents: isCurrent ? 'none' : 'auto'
-        },
+        'aria-current': isCurrent ? 'page' : null,
         onclick: () => changePage(p)
       }, String(p)));
     }
 
     if (endP < totalPages) {
       if (endP < totalPages - 1) {
-        pageButtons.push(h('span', { class: 'muted', style: { padding: '0 2px', fontSize: '11px' } }, '…'));
+        pageButtons.push(h('span', { class: 'muted pager-gap' }, '…'));
       }
       pageButtons.push(h('button', {
-        class: 'btn btn-sm',
+        class: 'btn btn-sm page-num',
         type: 'button',
-        style: { minWidth: '28px', padding: '0 6px' },
         onclick: () => changePage(totalPages)
       }, String(totalPages)));
     }
 
     const pageSizeSelect = h('select', {
       class: 'select',
-      style: { height: '26px', padding: '0 20px 0 8px', fontSize: '11.5px', width: 'auto' },
+      'aria-label': 'Rows per page',
       onchange: (e) => {
         pageSize = Number(e.target.value);
         page = 1;
@@ -644,27 +637,9 @@ export function mount(root) {
       h('option', { value: '100', selected: pageSize === 100 }, '100 / page')
     );
 
-    const paginationBar = h('div', {
-      class: 'table-foot',
-      style: {
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        borderTop: '1px solid var(--border)',
-        padding: '10px 8px 6px',
-        flexWrap: 'wrap',
-        gap: '10px'
-      }
-    },
+    const paginationBar = h('div', { class: 'table-foot table-pager' },
       h('span', null, countInfo),
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
-        pageSizeSelect,
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: '4px' } },
-          prevBtn,
-          ...pageButtons,
-          nextBtn
-        )
-      )
+      h('div', { class: 'pager-pages' }, pageSizeSelect, prevBtn, ...pageButtons, nextBtn)
     );
 
     tableCard.replaceChildren(

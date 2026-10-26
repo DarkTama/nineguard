@@ -20,15 +20,49 @@ export function mount(root, initialParams) {
   const toggled = new Map(); // key id -> expanded (user choice beats the default)
 
   const cards = h('div', { class: 'grid grid-4 quota-summary' });
-  const search = h('input', { class: 'input', type: 'search', placeholder: 'Search key or model...', style: { width: '220px' } });
-  const modeSel = h('select', { class: 'select' }, [['all', 'Mode: all'], ['key', 'Key Quota'], ['model', 'Per Model']].map(([v, l]) => h('option', { value: v }, l)));
-  const statusSel = h('select', { class: 'select' }, [['all', 'Status: all'], ['near', 'Near limit'], ['exhausted', 'Exhausted'], ['inactive', 'Inactive']].map(([v, l]) => h('option', { value: v }, l)));
+  const search = h('input', {
+    type: 'search', placeholder: 'Search key or model...', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Search keys or models',
+    onkeydown: (e) => { if (e.key === 'Escape' && search.value) { search.value = ''; patchRoute({ q: '' }, { replace: true }); } },
+  });
+  const searchBox = h('label', { class: 'tool-search' }, icon('search'), search);
+  const modeSel = h('select', { class: 'select', 'aria-label': 'Filter by quota mode' },
+    [['all', 'All modes'], ['key', 'Key quota'], ['model', 'Per model']].map(([v, l]) => h('option', { value: v }, l)));
+  const STATUS_FILTERS = [
+    { id: 'all', label: 'All' },
+    { id: 'near', label: 'Near limit' },
+    { id: 'exhausted', label: 'Exhausted' },
+    { id: 'inactive', label: 'Inactive' },
+  ];
+  const statusCounts = new Map();
+  const statusButtons = new Map();
+  const statusSegmented = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Filter by quota status' },
+    ...STATUS_FILTERS.map((s) => {
+      const count = h('span', { class: 'seg-count' }, '0');
+      statusCounts.set(s.id, count);
+      const btn = h('button', {
+        type: 'button', 'aria-pressed': 'false',
+        onclick: () => patchRoute({ status: s.id === 'all' ? '' : s.id }),
+      }, s.label, count);
+      statusButtons.set(s.id, btn);
+      return btn;
+    })
+  );
   const unlimited = h('input', { type: 'checkbox' });
-  const body = h('div', { class: 'card table-card' });
+  const clearFiltersBtn = h('button', {
+    class: 'btn btn-sm', type: 'button', title: 'Reset search, mode, status and unlimited filters', hidden: true,
+    onclick: () => { search.value = ''; patchRoute({ q: '', mode: '', status: '', unlimited: '' }); },
+  }, icon('x'), 'Clear');
+  const matchInfo = h('span', { class: 'muted', style: { fontSize: '11.5px', whiteSpace: 'nowrap' } });
+  const toolbar = h('div', { class: 'toolbar card-toolbar' },
+    searchBox, modeSel, statusSegmented,
+    h('label', { class: 'muted quota-unlimited-toggle' }, unlimited, 'Show unlimited'),
+    clearFiltersBtn, h('span', { class: 'spacer' }), matchInfo);
+  // The toolbar stays put while only tableBody re-renders, so the search box keeps focus.
+  const tableBody = h('div');
+  const body = h('div', { class: 'card table-card mt' }, toolbar, tableBody);
 
   search.addEventListener('input', debounce(() => patchRoute({ q: search.value }, { replace: true }), 250));
   modeSel.addEventListener('change', () => patchRoute({ mode: modeSel.value === 'all' ? '' : modeSel.value }));
-  statusSel.addEventListener('change', () => patchRoute({ status: statusSel.value === 'all' ? '' : statusSel.value }));
   unlimited.addEventListener('change', () => patchRoute({ unlimited: unlimited.checked ? '1' : '' }));
 
   let activeTab = 'client';
@@ -47,12 +81,7 @@ export function mount(root, initialParams) {
   }, icon('server'), 'Upstream quotas');
   const tabSwitcher = h('div', { class: 'tabs', role: 'tablist' }, clientTabBtn, upstreamTabBtn);
 
-  const clientContainer = h('div', null,
-    cards,
-    h('div', { class: 'toolbar mt', style: { borderBottom: '0', paddingLeft: 0 } }, search, modeSel, statusSel,
-      h('label', { class: 'muted', style: { display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12px' } }, unlimited, 'Show unlimited')),
-    body
-  );
+  const clientContainer = h('div', null, cards, body);
   const upstreamContainer = h('div', { style: { display: 'none' } });
   // Global Reset Schedule (ADR 0010): applies to client key quotas only, so it hides with the Upstream tab.
   const scheduleBtn = h('button', {
@@ -195,26 +224,36 @@ export function mount(root, initialParams) {
 
   function render() {
     if (!alive) return;
-    if (error) { body.replaceChildren(emptyState('alert', 'Could not load quotas', error)); cards.replaceChildren(); return; }
+    if (error) { tableBody.replaceChildren(emptyState('alert', 'Could not load quotas', error)); cards.replaceChildren(); return; }
     if (!data) return;
     const s = data.summary;
     cards.replaceChildren(card('Keys with quotas', s.keys_with_quota), card('Model quotas', s.model_quotas),
       card(`Near limit (>=${data.warn_percent}%)`, s.near_limit, s.near_limit ? 'lvt-warn' : ''), card('Exhausted', s.exhausted, s.exhausted ? 'danger' : ''));
 
+    // Counts honour every filter except status, so each segment shows what picking it would list.
+    const total = filterQuotaKeys(data.keys, { ...filters, q: '', mode: 'all', status: 'all' }).length;
+    for (const st of STATUS_FILTERS) {
+      statusCounts.get(st.id).textContent = fmtNum(filterQuotaKeys(data.keys, { ...filters, status: st.id }).length);
+    }
     const list = filterQuotaKeys(data.keys, filters);
+    const isFiltered = !!(filters.q || filters.mode !== 'all' || filters.status !== 'all' || filters.unlimited === '1');
+    clearFiltersBtn.hidden = !isFiltered;
+    matchInfo.textContent = filters.q || filters.mode !== 'all' || filters.status !== 'all'
+      ? `${fmtNum(list.length)} of ${fmtNum(total)} ${total === 1 ? 'key' : 'keys'}`
+      : `${fmtNum(total)} ${total === 1 ? 'key' : 'keys'}`;
     if (!list.length) {
-      body.replaceChildren(emptyState('search', 'No keys match', filters.status !== 'all' || filters.q || filters.mode !== 'all'
+      tableBody.replaceChildren(emptyState('search', 'No keys match', filters.status !== 'all' || filters.q || filters.mode !== 'all'
         ? 'Clear the search or filters.' : 'No API key has a quota yet. Set one in Endpoints & keys.'));
       return;
     }
-    body.replaceChildren(h('div', { class: 'table-wrap' }, h('table', { class: 'table quota-table' },
+    tableBody.replaceChildren(h('div', { class: 'table-wrap' }, h('table', { class: 'table quota-table' },
       h('thead', null, h('tr', null, ['API key / model', 'Mode', 'Used / limit', 'Usage', 'Period', 'Resets', ''].map((t) => h('th', null, t)))),
       h('tbody', null, list.flatMap(keyRows)))));
   }
 
   function renderLoading() {
     cards.replaceChildren(...Array.from({ length: 4 }, () => h('div', { class: 'card' }, h('div', { class: 'skel', style: { height: '44px' } }))));
-    body.replaceChildren(...skeletonRows(6));
+    tableBody.replaceChildren(...skeletonRows(6));
   }
 
   async function load() {
@@ -225,7 +264,11 @@ export function mount(root, initialParams) {
   function applyFilters() {
     if (document.activeElement !== search) search.value = filters.q;
     modeSel.value = filters.mode;
-    statusSel.value = filters.status;
+    for (const st of STATUS_FILTERS) {
+      const btn = statusButtons.get(st.id);
+      btn.classList.toggle('active', st.id === filters.status);
+      btn.setAttribute('aria-pressed', String(st.id === filters.status));
+    }
     unlimited.checked = filters.unlimited === '1';
   }
 

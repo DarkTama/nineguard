@@ -1,6 +1,6 @@
 // User management (administrators): accounts, roles, and password resets. No 2FA.
 import { api } from '../api.js';
-import { h, icon, fmtAgo, toast, menu, confirmDialog, formDialog, emptyState } from '../ui.js';
+import { h, icon, fmtAgo, fmtNum, toast, menu, confirmDialog, formDialog, emptyState } from '../ui.js';
 import { store, setUser } from '../state.js';
 
 const ROLES = [['operator', 'Operator: access dashboard, models, and traffic'], ['admin', 'Administrator: also manages users']];
@@ -21,6 +21,72 @@ const recoveryBadge = (u) => u.has_recovery
 export function mount(root) {
   let alive = true;
   const box = h('div', { class: 'card table-card' });
+  let users = [];
+  let filterText = '';
+  let roleFilter = 'all';
+
+  const searchInput = h('input', {
+    type: 'search',
+    placeholder: 'Search users...',
+    autocomplete: 'off',
+    spellcheck: 'false',
+    'aria-label': 'Search users',
+    oninput: (e) => {
+      filterText = e.target.value.toLowerCase().trim();
+      renderTable();
+    },
+    onkeydown: (e) => {
+      if (e.key === 'Escape' && searchInput.value) {
+        searchInput.value = '';
+        filterText = '';
+        renderTable();
+      }
+    },
+  });
+
+  const ROLE_FILTERS = [
+    { id: 'all', label: 'All' },
+    { id: 'admin', label: 'Admin' },
+    { id: 'operator', label: 'Operator' },
+  ];
+  const roleCounts = new Map();
+  const roleButtons = new Map();
+  const roleSegmented = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Filter by role' },
+    ...ROLE_FILTERS.map((r) => {
+      const count = h('span', { class: 'seg-count' }, '0');
+      roleCounts.set(r.id, count);
+      const btn = h('button', {
+        type: 'button',
+        'aria-pressed': String(r.id === roleFilter),
+        onclick: () => {
+          roleFilter = r.id;
+          renderTable();
+        },
+      }, r.label, count);
+      roleButtons.set(r.id, btn);
+      return btn;
+    })
+  );
+
+  const clearBtn = h('button', {
+    class: 'btn btn-sm',
+    type: 'button',
+    title: 'Reset search and role filters',
+    onclick: () => {
+      searchInput.value = '';
+      filterText = '';
+      roleFilter = 'all';
+      renderTable();
+    },
+  }, icon('x'), 'Clear');
+
+  const matchInfo = h('span', { class: 'muted', style: { fontSize: '11.5px', whiteSpace: 'nowrap' } });
+  const toolbar = h('div', { class: 'toolbar card-toolbar' },
+    h('label', { class: 'tool-search' }, icon('search'), searchInput),
+    roleSegmented, clearBtn,
+    h('span', { class: 'spacer' }), matchInfo
+  );
+  const tableBody = h('div');
   const addBtn = store.role === 'admin'
     ? h('button', { class: 'btn btn-primary', type: 'button', onclick: addUser }, icon('plus'), 'Add User')
     : null;
@@ -44,15 +110,43 @@ export function mount(root) {
       if (alive) box.replaceChildren(emptyState('alert', 'Could not load users', e.message));
       return;
     }
-    if (alive) render(list || []);
+    if (alive) {
+      users = list || [];
+      box.replaceChildren(toolbar, tableBody);
+      renderTable();
+    }
   }
 
-  function render(list) {
-    box.replaceChildren(h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
+  // Admins have role 'admin'; every other role is shown (and counted) as Operator, matching roleBadge.
+  const roleOf = (u) => (u.role === 'admin' ? 'admin' : 'operator');
+
+  function renderTable() {
+    const base = users.filter((u) => !filterText ||
+      [u.username, u.display_name, roleOf(u)].some((v) => String(v || '').toLowerCase().includes(filterText)));
+    for (const r of ROLE_FILTERS) {
+      roleCounts.get(r.id).textContent = fmtNum(r.id === 'all' ? base.length : base.filter((u) => roleOf(u) === r.id).length);
+      const btn = roleButtons.get(r.id);
+      btn.classList.toggle('active', r.id === roleFilter);
+      btn.setAttribute('aria-pressed', String(r.id === roleFilter));
+    }
+    const list = roleFilter === 'all' ? base : base.filter((u) => roleOf(u) === roleFilter);
+    const isFiltered = Boolean(filterText || roleFilter !== 'all');
+    clearBtn.hidden = !isFiltered;
+    matchInfo.textContent = isFiltered
+      ? `${fmtNum(list.length)} of ${fmtNum(users.length)} ${users.length === 1 ? 'user' : 'users'}`
+      : `${fmtNum(users.length)} ${users.length === 1 ? 'user' : 'users'}`;
+
+    if (!list.length) {
+      tableBody.replaceChildren(isFiltered
+        ? emptyState('search', 'No users match these filters', 'Clear the search or role filter to see all users.')
+        : emptyState('users', 'No users yet', 'Use "Add User" to create the first account.'));
+      return;
+    }
+    tableBody.replaceChildren(h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
       h('thead', null, h('tr', null,
         h('th', null, 'User'),
         h('th', null, 'Role'),
-        h('th', null, 'Recovery Question'),
+        h('th', null, 'Recovery question'),
         h('th', null, 'Last sign-in'),
         h('th', null, 'Created'),
         h('th'))),

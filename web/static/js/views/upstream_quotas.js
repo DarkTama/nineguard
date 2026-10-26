@@ -330,19 +330,11 @@ export function renderUpstreamQuotas(container) {
       ? h('span', { class: 'badge' }, conn.plan)
       : null;
 
-    return h('div', {
-      style: {
-        background: isKeyAllowance ? 'color-mix(in srgb, var(--ok) 5%, var(--panel))' : 'var(--panel)',
-        border: isKeyAllowance ? '1.5px solid var(--ok)' : '1px solid var(--border)',
-        borderRadius: '8px',
-        padding: '12px 14px',
-        marginBottom: '12px'
-      }
-    },
-      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' } },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+    return h('section', { class: `uq-conn${isKeyAllowance ? ' uq-conn-allowance' : ''}` },
+      h('div', { class: 'uq-conn-head' },
+        h('div', { class: 'uq-conn-title' },
           icon(isKeyAllowance ? 'shield' : 'user'),
-          h('span', { style: { fontWeight: '700', fontSize: '13px' } }, conn.account_label || conn.connection_id),
+          h('h3', null, conn.account_label || conn.connection_id),
           tierBadge,
           planBadge,
           resetBtn
@@ -353,17 +345,17 @@ export function renderUpstreamQuotas(container) {
         ? h('div', { class: 'banner err', style: { padding: '6px 10px', fontSize: '11.5px', marginBottom: '8px' } }, conn.error_msg)
         : null,
       conn.buckets && conn.buckets.length > 0
-        ? h('table', { class: 'table', style: { width: '100%', fontSize: '12px', margin: 0 } },
+        ? h('div', { class: 'table-wrap' }, h('table', { class: 'table uq-table' },
             h('thead', null,
               h('tr', null,
-                h('th', { style: { width: '35%' } }, isKeyAllowance ? 'Model / Allowance Window' : 'Window / Bucket'),
-                h('th', { style: { width: '25%' } }, provider.source === 'sdk' ? 'Usage' : isKeyAllowance ? 'Tokens Consumed / Limit' : 'Used / Total'),
-                h('th', { style: { width: '25%' } }, 'Remaining'),
-                h('th', { style: { width: '15%' } }, 'Reset In')
+                h('th', null, isKeyAllowance ? 'Model / allowance window' : 'Window / bucket'),
+                h('th', null, provider.source === 'sdk' ? 'Usage' : isKeyAllowance ? 'Tokens consumed / limit' : 'Used / total'),
+                h('th', null, 'Remaining'),
+                h('th', null, 'Resets in')
               )
             ),
             h('tbody', null, ...conn.buckets.map(renderBucketRow))
-          )
+          ))
         : h('p', { class: 'muted', style: { margin: 0, fontSize: '12px' } }, conn.source === 'sdk' ? telemetryStateLabel(conn.observation_state) : 'No active quota buckets reported.'),
     );
   }

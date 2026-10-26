@@ -99,7 +99,7 @@ export function quotaSection(ctx) {
   // ── Model rows ──
   const tbody = h('tbody');
   const table = h('table', { class: 'table qk-table' },
-    h('thead', null, h('tr', null, h('th', null, 'Model'), h('th', null, 'Token limit'), h('th', null, 'Reset period'), h('th', null, 'Used (current window)'), h('th'))),
+    h('thead', null, h('tr', null, h('th', null, 'Model'), h('th', null, 'Token limit'), h('th', null, 'Reset period'), h('th', null, 'Used (current window)'), h('th', { class: 'num' }))),
     tbody);
   const empty = h('p', { class: 'muted', style: { fontSize: '12px', margin: '6px 0' } }, 'No Model Quotas. All models are unlimited for this key.');
   const loadErr = h('p', { class: 'muted', style: { fontSize: '12px', margin: '6px 0' } }, 'Could not load the saved Model Quotas. Saving will leave them unchanged.');
@@ -131,10 +131,10 @@ export function quotaSection(ctx) {
       h('td', null, r.limit),
       h('td', null, r.period),
       h('td', null, r.inactive ? h('span', { class: 'muted' }, 'not enforced') : (r.stored ? bar(r) : h('span', { class: 'muted' }, 'new'))),
-      h('td', { style: { textAlign: 'right' } },
+      h('td', { class: 'num' },
         h('button', { class: 'btn btn-sm', type: 'button', title: 'Remove', onclick: () => { rows.splice(rows.indexOf(r), 1); render(); } }, icon('x')))),
       // Usage history sits on its own full-width line so it never squeezes the model column.
-      h('tr', { class: 'qrow-velocity' }, h('td', { colspan: '5', style: { padding: '0 8px', border: '0' } }, r.velocity))]));
+      h('tr', { class: 'qrow-velocity' }, h('td', { colspan: '5' }, r.velocity))]));
     table.style.display = rows.length ? '' : 'none';
     empty.style.display = rows.length || !loaded ? 'none' : '';
     loadErr.style.display = !loaded && isEdit && !rows.length ? '' : 'none';

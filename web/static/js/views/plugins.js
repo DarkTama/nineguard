@@ -601,20 +601,22 @@ export function mount(root) {
             subText ? h('div', { class: 'muted', style: { fontSize: '10.5px', marginTop: '2px' } }, subText) : null
           ),
           h('td', null, stateSelect),
-          h('td', { style: { textAlign: 'right' } }, removeBtn)
+          h('td', { class: 'num' }, removeBtn)
         );
       });
 
       overridesContainer.replaceChildren(
-        h('table', { class: 'table', style: { width: '100%', fontSize: '12px' } },
-          h('thead', null,
-            h('tr', null,
-              h('th', null, 'Target'),
-              h('th', { style: { width: '110px' } }, 'State'),
-              h('th', { style: { width: '90px', textAlign: 'right' } }, 'Action')
-            )
-          ),
-          h('tbody', null, ...rows)
+        h('div', { class: 'table-wrap' },
+          h('table', { class: 'table' },
+            h('thead', null,
+              h('tr', null,
+                h('th', null, 'Target'),
+                h('th', { class: 'col-state' }, 'State'),
+                h('th', { class: 'num col-action' }, 'Action')
+              )
+            ),
+            h('tbody', null, ...rows)
+          )
         )
       );
     }
@@ -1248,26 +1250,28 @@ export function mount(root) {
             h('div', { style: { marginBottom: '8px', fontWeight: 'bold', fontSize: '12.5px' } },
               `Which plugins run for ${model || '(any model)'}:`
             ),
-            h('table', { class: 'table', style: { width: '100%', fontSize: '12px' } },
-              h('thead', null,
-                h('tr', null,
-                  h('th', null, 'Plugin'),
-                  h('th', null, 'Effective State'),
-                  h('th', null, 'Decided By'),
-                  h('th', null, 'Overridden Candidates')
+            h('div', { class: 'table-wrap' },
+              h('table', { class: 'table' },
+                h('thead', null,
+                  h('tr', null,
+                    h('th', null, 'Plugin'),
+                    h('th', null, 'Effective state'),
+                    h('th', null, 'Decided by'),
+                    h('th', null, 'Overridden candidates')
+                  )
+                ),
+                h('tbody', null,
+                  ...(res.plugins || []).map((rp) => {
+                    const runs = rp.effective_state === 'on';
+                    const overriddenText = (rp.overridden || []).map((o) => o.label).join(', ') || '—';
+                    return h('tr', null,
+                      h('td', null, h('b', null, rp.plugin.name)),
+                      h('td', null, h('span', { class: `badge${runs ? ' ok' : ''}` }, runs ? 'On' : 'Off')),
+                      h('td', null, rp.decided_by?.label || '—'),
+                      h('td', { class: 'muted' }, overriddenText)
+                    );
+                  })
                 )
-              ),
-              h('tbody', null,
-                ...(res.plugins || []).map((rp) => {
-                  const runs = rp.effective_state === 'on';
-                  const overriddenText = (rp.overridden || []).map((o) => o.label).join(', ') || '—';
-                  return h('tr', null,
-                    h('td', null, h('b', null, rp.plugin.name)),
-                    h('td', null, h('span', { class: `badge${runs ? ' ok' : ''}` }, runs ? 'On' : 'Off')),
-                    h('td', null, rp.decided_by?.label || '—'),
-                    h('td', { class: 'muted' }, overriddenText)
-                  );
-                })
               )
             )
           );

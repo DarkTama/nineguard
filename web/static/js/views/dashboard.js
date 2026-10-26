@@ -224,7 +224,8 @@ export function mount(root) {
           }))
         )
       );
-    } catch {
+    } catch (err) {
+      console.warn('loadUpstreamQuotaCard error:', err);
       // Optional card: never let it break the dashboard.
       if (alive) {
         upstreamQuotaCard.style.display = 'none';

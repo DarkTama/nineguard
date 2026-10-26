@@ -1,6 +1,6 @@
 # 0011. The proxy core asks upstream for streaming usage
 
-- Status: Accepted
+- Status: Accepted; amended by ADR 0015 for explicitly SDK-backed provider execution
 - Date: 2026-10-19
 
 ## Context

@@ -1663,6 +1663,9 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 		UpstreamTokenSavingNote string  `json:"upstream_token_saving_note"`
 		QuotaType               string  `json:"quota_type"`
 		QuotaAuthSecret         *string `json:"quota_auth_secret"`
+		Icon                    *string `json:"icon"`
+		Backend                 *string `json:"backend"`
+		Family                  *string `json:"family"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid payload")
@@ -1680,6 +1683,9 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 		UpstreamTokenSavingNote: body.UpstreamTokenSavingNote,
 		QuotaType:               body.QuotaType,
 		QuotaAuthSecret:         body.QuotaAuthSecret,
+		Icon:                    body.Icon,
+		Backend:                 body.Backend,
+		Family:                  body.Family,
 	})
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
@@ -1712,6 +1718,9 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 		UpstreamTokenSavingNote string  `json:"upstream_token_saving_note"`
 		QuotaType               string  `json:"quota_type"`
 		QuotaAuthSecret         *string `json:"quota_auth_secret"`
+		Icon                    *string `json:"icon"`
+		Backend                 *string `json:"backend"`
+		Family                  *string `json:"family"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid payload")
@@ -1736,6 +1745,9 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 		UpstreamTokenSavingNote: body.UpstreamTokenSavingNote,
 		QuotaType:               body.QuotaType,
 		QuotaAuthSecret:         body.QuotaAuthSecret,
+		Icon:                    body.Icon,
+		Backend:                 body.Backend,
+		Family:                  body.Family,
 	})
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
@@ -1807,6 +1819,10 @@ func (h *Handler) DeleteProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	if p, err := h.providers.GetProvider(id); err == nil && p.Backend == "cliproxy" {
+		u := auth.UserFromContext(r.Context())
+		if u == nil || u.Role != "admin" { jsonError(w, http.StatusForbidden, "Only administrators can delete OAuth providers"); return }
+	}
 	if err := h.providers.DeleteProvider(id); err != nil {
 		slog.Error("failed to delete provider", "id", id, "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to delete provider")

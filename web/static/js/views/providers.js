@@ -1,474 +1,122 @@
-// Providers view: Manage multiple OpenAI-compatible upstream providers with custom routing prefixes.
+// Provider connections: custom upstream gateways and embedded OAuth accounts.
 import { api } from '../api.js';
-import { h, icon, toast, emptyState, formDialog, confirmDialog, passwordField } from '../ui.js';
+import { h, icon, toast, emptyState, formDialog, confirmDialog, passwordField, fmtDateTime } from '../ui.js';
+import { PROVIDER_ICONS, providerMark } from '../providericons.js';
+import { openProviderLogin } from '../provideroauth.js';
 
 export function mount(root) {
   let alive = true;
-  let providersList = [];
-
-  const listContainer = h('div', { class: 'mt' },
-    h('div', { class: 'skel', style: { height: '120px', borderRadius: '8px' } })
-  );
-
-  // ── Header ──
-  const addBtn = h('button', {
-    class: 'btn btn-primary',
-    type: 'button',
-    onclick: () => openProviderModal()
-  }, icon('plus'), 'Add Provider');
-
-  const header = h('div', { class: 'page-head' },
-    h('div', null,
-      h('h1', null, 'Upstream Providers (OpenAI-Compatible)'),
-      h('p', null, 'Configure multiple OpenAI-compatible upstream providers. Set custom prefixes (e.g. openrouter, local) to group models as prefix/model-name.')
-    ),
-    h('div', { class: 'page-actions' }, addBtn)
-  );
-
-  // ── Flow Explanation Card ──
-  function renderFlowCard() {
-    return h('div', { class: 'card' },
-      h('div', { class: 'card-head' },
-        h('div', null,
-          h('h2', null, 'Multi-Provider Routing & Prefix Grouping'),
-          h('p', { class: 'card-sub' }, 'NineGuard automatically prefixes model lists and strips prefixes when forwarding to each provider')
-        )
-      ),
-      h('div', { style: { padding: '14px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' } },
-        h('div', { style: { padding: '12px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--panel)' } },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', fontWeight: 'bold' } },
-            icon('box'), '1. Model Discovery (GET /v1/models)'
-          ),
-          h('p', { class: 'muted', style: { fontSize: '11.5px', margin: 0, lineHeight: '1.5' } },
-            'NineGuard aggregates models from all providers. A provider with prefix ',
-            h('code', null, 'openrouter'), ' exposes models as ', h('code', { style: { color: 'var(--accent)' } }, 'openrouter/anthropic/claude-3.5-sonnet'), '.'
-          )
-        ),
-        h('div', { style: { padding: '12px', borderRadius: '8px', border: '1.5px solid var(--accent)', background: 'var(--hover)' } },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', fontWeight: 'bold', color: 'var(--accent)' } },
-            icon('shield'), '2. Intelligent Router'
-          ),
-          h('p', { style: { fontSize: '11.5px', margin: 0, lineHeight: '1.5' } },
-            'When an agent calls ', h('code', null, 'openrouter/...'), ', NineGuard strips ', h('code', null, 'openrouter/'), ', injects that provider\'s API key, and routes to its endpoint.'
-          )
-        ),
-        h('div', { style: { padding: '12px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--panel)' } },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', fontWeight: 'bold' } },
-            icon('server'), '3. Upstream Dispatch'
-          ),
-          h('p', { class: 'muted', style: { fontSize: '11.5px', margin: 0, lineHeight: '1.5' } },
-            'Requests with no prefix fall back to the Default Provider. Tokens and requests are tracked accurately per agent key.'
-          )
-        )
-      )
-    );
-  }
-
-  // ── Render Providers List ──
-  function renderProviders() {
-    if (!providersList.length) {
-      listContainer.replaceChildren(
-        emptyState(
-          'server',
-          'No Upstream Providers Configured',
-          'No upstream OpenAI-compatible providers registered yet. Click "Add Provider" to connect your first provider (e.g. OpenRouter, Ollama, OpenAI).',
-          h('button', {
-            class: 'btn btn-primary',
-            type: 'button',
-            style: { marginTop: '12px' },
-            onclick: () => openProviderModal()
-          }, icon('plus'), 'Add Provider')
-        )
-      );
-      return;
-    }
-
-    const cards = providersList.map((p) => {
-      const probeResult = h('div', { style: { display: 'none', marginTop: '10px', padding: '8px 12px', borderRadius: '6px', fontSize: '11.5px' } });
-
-      const testBtn = h('button', {
-        class: 'btn btn-sm',
-        type: 'button',
-        onclick: async () => {
-          testBtn.disabled = true;
-          testBtn.textContent = 'Testing...';
-          probeResult.style.display = 'block';
-          probeResult.style.background = 'var(--hover)';
-          probeResult.replaceChildren(h('span', { class: 'muted' }, 'Pinging ', p.route, '...'));
-
-          try {
-            const res = await api.post('/providers/test', { id: p.id, route: p.route, api_key: p.api_key || '' });
-            if (res.ok) {
-              probeResult.style.background = 'color-mix(in srgb, var(--ok) 12%, var(--panel))';
-              probeResult.style.border = '1px solid var(--ok)';
-              probeResult.replaceChildren(
-                h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                  h('span', { style: { color: 'var(--ok)', fontWeight: 'bold' } }, icon('check'), ' Connected (HTTP 200 OK)'),
-                  h('span', { class: 'muted' }, `Latency: ${res.latency_ms}ms · Models: ${res.models_count || 0}`)
-                )
-              );
-            } else {
-              probeResult.style.background = 'color-mix(in srgb, var(--danger) 12%, var(--panel))';
-              probeResult.style.border = '1px solid var(--danger)';
-              probeResult.replaceChildren(
-                h('span', { style: { color: 'var(--danger)', fontWeight: 'bold' } }, icon('alert'), ' Failed: '),
-                h('span', null, res.error || `HTTP ${res.status}`)
-              );
-            }
-          } catch (err) {
-            probeResult.style.background = 'color-mix(in srgb, var(--danger) 12%, var(--panel))';
-            probeResult.replaceChildren(h('span', { style: { color: 'var(--danger)' } }, `Error: ${err.message}`));
-          } finally {
-            testBtn.disabled = false;
-            testBtn.replaceChildren(icon('refresh'), 'Test Probe');
-          }
-        }
-      }, icon('refresh'), 'Test Probe');
-
-      const statusBadge = h('button', {
-        class: `badge ${p.is_active ? 'ok' : 'muted'} badge-btn`,
-        type: 'button',
-        onclick: async () => {
-          try {
-            await api.post(`/providers/${p.id}/toggle`, { active: !p.is_active });
-            toast(`Provider ${p.is_active ? 'disabled' : 'enabled'}`);
-            load();
-          } catch (e) {
-            toast(`Failed: ${e.message}`, 'error');
-          }
-        }
-      }, p.is_active ? 'Active' : 'Disabled');
-
-      const prefixTag = p.prefix
-        ? h('span', { class: 'badge', style: { background: 'var(--accent-soft)', color: 'var(--accent-text)', fontWeight: 'bold' } },
-            `prefix: ${p.prefix}/`
-          )
-        : h('span', { class: 'badge muted' }, 'no prefix');
-
-      const defaultTag = p.is_default
-        ? h('span', {
-            class: 'badge ok',
-            style: { fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }
-          }, icon('check'), 'Default Fallback')
-        : h('button', {
-            class: 'badge muted badge-btn',
-            type: 'button',
-            title: 'Set this provider as the default fallback for non-prefixed models',
-            onclick: async () => {
-              try {
-                await api.post(`/providers/${p.id}/default`);
-                toast(`"${p.name}" is now the default provider`, 'ok');
-                await load();
-              } catch (e) {
-                toast(`Failed: ${e.message}`, 'error');
-              }
-            }
-          }, 'Set as Default');
-
-      const tokenSavingTag = p.upstream_token_saving
-        ? h('span', { class: 'badge', style: { background: 'rgba(234, 179, 8, 0.15)', color: '#ca8a04', border: '1px solid #ca8a04' }, title: p.upstream_token_saving_note || 'Upstream applies token saving' }, 'Token Saver Upstream')
-        : null;
-
-      const quotaTag = p.quota_type === '9router'
-        ? h('span', { class: 'badge', style: { background: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6', border: '1px solid #3b82f6' } }, 'Router Protocol')
-        : p.quota_type === 'nineguard'
-        ? h('span', { class: 'badge', style: { background: 'rgba(168, 85, 247, 0.15)', color: '#a855f7', border: '1px solid #a855f7' } }, 'Cascaded Quotas')
-        : null;
-
-      return h('div', { class: 'card', style: { marginBottom: '12px' } },
-        h('div', { class: 'card-head', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' } },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
-            icon('server'),
-            h('h2', { style: { margin: 0, fontSize: '14px' } }, p.name),
-            prefixTag,
-            defaultTag,
-            tokenSavingTag,
-            quotaTag
-          ),
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
-            statusBadge,
-            h('button', {
-              class: 'btn btn-sm',
-              type: 'button',
-              onclick: () => openProviderModal(p)
-            }, icon('pencil'), 'Edit'),
-            h('button', {
-              class: 'btn btn-sm btn-danger',
-              type: 'button',
-              onclick: () => confirmDeleteProvider(p)
-            }, icon('trash'))
-          )
-        ),
-        h('div', { style: { padding: '12px 16px', background: 'var(--hover)', borderRadius: '6px', margin: '8px 0 0 0', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '10px' } },
-          h('div', null,
-            h('span', { class: 'muted', style: { fontSize: '11px', display: 'block', textTransform: 'uppercase' } }, 'Endpoint Route'),
-            h('code', { style: { fontWeight: 'bold' } }, p.route)
-          ),
-          h('div', null,
-            h('span', { class: 'muted', style: { fontSize: '11px', display: 'block', textTransform: 'uppercase' } }, 'Upstream API Key'),
-            h('code', { class: 'muted' }, p.masked_key || '(None required)')
-          ),
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
-            testBtn
-          )
-        ),
-        probeResult
-      );
-    });
-
-    listContainer.replaceChildren(...cards);
-  }
-
-  // ── Add / Edit Provider Modal ──
-  function openProviderModal(existing = null) {
-    const isEdit = !!existing;
-
-    const nameInput = h('input', {
-      class: 'input',
-      type: 'text',
-      placeholder: 'e.g. OpenRouter, Ollama Server, vLLM',
-      value: existing ? existing.name : ''
-    });
-
-    const prefixInput = h('input', {
-      class: 'input',
-      type: 'text',
-      placeholder: 'e.g. openrouter, local, ollama (leave blank for root)',
-      value: existing ? existing.prefix : ''
-    });
-
-    const routeInput = h('input', {
-      class: 'input',
-      type: 'text',
-      placeholder: 'e.g. https://api.openai.com or http://localhost:11434',
-      value: existing ? existing.route : ''
-    });
-
-    const keyField = passwordField({
-      placeholder: existing ? 'Leave blank to keep current key, or enter new key' : 'Paste upstream API key (leave empty if not needed)',
-      value: ''
-    });
-
-    const defaultCheck = h('input', {
-      type: 'checkbox',
-      checked: existing ? Boolean(existing.is_default) : (providersList.length === 0)
-    });
-
-    const defaultLabel = h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12px' } },
-      defaultCheck,
-      h('span', null, 'Set as Default Provider (fallback for models without prefix)')
-    );
-
-    const quotaTypeSelect = h('select', { class: 'select' }, [
-      ['disabled', 'Disabled / Direct LLM (e.g. OpenAI, NanoGPT)'],
-      ['9router', 'Router / Aggregator Protocol (9router, OmniRouter, CLI Proxy)'],
-      ['nineguard', 'NineGuard Cascaded (upstream NineGuard gateway)'],
-    ].map(([v, l]) => h('option', { value: v, selected: (existing?.quota_type || 'disabled') === v }, l)));
-
-    const quotaSecretField = passwordField({
-      placeholder: existing?.has_quota_auth_secret
-        ? 'Leave blank to keep existing password, or enter new password'
-        : 'Dashboard password (leave empty if login not required)',
-      value: ''
-    });
-
-    const quotaSecretContainer = h('div', { class: 'field', style: { display: (existing?.quota_type === '9router') ? 'block' : 'none' } },
-      h('span', null, 'Router Dashboard Password'),
-      quotaSecretField.wrap,
-      h('p', { class: 'muted', style: { fontSize: '11px', margin: '2px 0 0' } },
-        'Required if the router has password protection enabled. Leave blank if login is not required.'
-      )
-    );
-
-    quotaTypeSelect.addEventListener('change', () => {
-      quotaSecretContainer.style.display = quotaTypeSelect.value === '9router' ? 'block' : 'none';
-    });
-
-    const tokenSavingCheck = h('input', {
-      type: 'checkbox',
-      checked: existing ? Boolean(existing.upstream_token_saving) : false
-    });
-    const tokenSavingNoteInput = h('input', {
-      class: 'input',
-      type: 'text',
-      placeholder: 'e.g. 9router RTK enabled, another NineGuard',
-      value: existing ? (existing.upstream_token_saving_note || '') : '',
-      style: { fontSize: '12px' }
-    });
-    const tokenSavingSection = h('div', { class: 'field', style: { padding: '8px 12px', background: 'var(--hover)', borderRadius: '6px' } },
-      h('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' } },
-        tokenSavingCheck,
-        h('span', null, 'Upstream already applies token saving')
-      ),
-      h('p', { class: 'muted', style: { fontSize: '11px', margin: '4px 0 6px' } },
-        'Tick this if the provider does its own token saving (for example 9router RTK or another NineGuard with plugins on). NineGuard will warn when its own token savers stack on top.'
-      ),
-      h('div', null,
-        h('span', { class: 'muted', style: { fontSize: '11px', display: 'block', marginBottom: '2px' } }, 'Note / details (optional, max 200 chars):'),
-        tokenSavingNoteInput
-      )
-    );
-
-    const leftCol = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px' } },
-      h('div', { class: 'field' },
-        h('span', null, 'Provider Name'),
-        nameInput
-      ),
-      h('div', { class: 'field' },
-        h('span', null, 'Model Routing Prefix'),
-        prefixInput,
-        h('p', { class: 'muted', style: { fontSize: '11px', margin: '2px 0 0' } },
-          'Models from this provider will be grouped with this prefix, e.g. ',
-          h('code', null, 'openrouter/anthropic/claude-3.5-sonnet'), '. When an agent calls that model, NineGuard routes here.'
-        )
-      ),
-      h('div', { class: 'field' },
-        h('span', null, 'Route / Target URL'),
-        routeInput,
-        h('p', { class: 'muted', style: { fontSize: '11px', margin: '2px 0 0' } },
-          'The HTTP base endpoint where this OpenAI-compatible server is listening (e.g. https://api.openai.com or http://localhost:11434).'
-        )
-      ),
-      h('div', { class: 'field' },
-        h('span', null, 'Upstream API Key'),
-        keyField.wrap,
-        h('p', { class: 'muted', style: { fontSize: '11px', margin: '2px 0 0' } },
-          'The API key required by this upstream provider. NineGuard injects this key when relaying requests.'
-        )
-      ),
-      defaultLabel
-    );
-
-    const rightCol = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '14px' } },
-      h('div', { class: 'field' },
-        h('span', null, 'Quota Tracker Protocol'),
-        quotaTypeSelect,
-        h('p', { class: 'muted', style: { fontSize: '11px', margin: '2px 0 0' } },
-          'Enable live capacity and rolling session quota tracking from this upstream provider.'
-        )
-      ),
-      quotaSecretContainer,
-      tokenSavingSection
-    );
-
-    const formGrid = h('div', {
-      style: {
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-        gap: '20px',
-        margin: '6px 0'
-      }
-    }, leftCol, rightCol);
-
-    formDialog({
-      title: isEdit ? `Edit Provider: ${existing.name}` : 'Add OpenAI-Compatible Provider',
-      submitText: isEdit ? 'Save Changes' : 'Add Provider',
-      extraWide: true,
-      fields: [
-        { node: formGrid }
-      ],
-      onSubmit: async () => {
-        const name = nameInput.value.trim();
-        const route = routeInput.value.trim();
-        const prefix = prefixInput.value.trim();
-        const apiKey = keyField.input.value.trim();
-        const isDef = Boolean(defaultCheck.checked);
-        const upstream_token_saving = Boolean(tokenSavingCheck.checked);
-        const upstream_token_saving_note = tokenSavingNoteInput.value.trim();
-        const quota_type = quotaTypeSelect.value;
-        const quotaSecretVal = quotaSecretField.input.value.trim();
-
-        if (!name) throw new Error('Provider name is required');
-        if (!route) throw new Error('Route target URL is required');
-
-        if (isEdit) {
-          const payload = {
-            name, route, prefix, is_default: isDef, is_active: existing.is_active,
-            upstream_token_saving, upstream_token_saving_note,
-            quota_type
-          };
-          if (apiKey !== '') {
-            payload.api_key = apiKey;
-          }
-          if (quotaSecretVal !== '') {
-            payload.quota_auth_secret = quotaSecretVal;
-          }
-          await api.put(`/providers/${existing.id}`, payload);
-          toast(`Provider "${name}" updated`, 'ok');
-        } else {
-          const payload = {
-            name, route, prefix, api_key: apiKey, is_default: isDef, is_active: true,
-            upstream_token_saving, upstream_token_saving_note,
-            quota_type
-          };
-          if (quotaSecretVal !== '') {
-            payload.quota_auth_secret = quotaSecretVal;
-          }
-          await api.post('/providers', payload);
-          toast(`Provider "${name}" added`, 'ok');
-        }
-        await load();
-      }
-    });
-  }
-
-  async function confirmDeleteProvider(p) {
-    const ok = await confirmDialog({
-      title: `Delete Provider "${p.name}"?`,
-      body: `Requests using prefix "${p.prefix}/" will no longer be routed. Are you sure you want to delete this provider?`,
-      confirmText: 'Delete Provider',
-      danger: true,
-    });
-    if (!ok) return;
-
-    try {
-      await api.del(`/providers/${p.id}`);
-      toast(`Provider "${p.name}" deleted`, 'ok');
-      await load();
-    } catch (e) {
-      toast(`Failed: ${e.message}`, 'error');
-    }
-  }
-
-  // ── Load Providers ──
-  async function load() {
-    try {
-      const res = await api.get('/providers');
-      providersList = (res && Array.isArray(res.providers)) ? res.providers : [];
-    } catch (err) {
-      providersList = [];
-      toast(`Failed to load providers: ${err.message || 'Server error'}`, 'error');
-      if (!alive) return;
-      listContainer.replaceChildren(
-        emptyState(
-          'alert',
-          'Could Not Load Providers',
-          err.message || 'Failed to fetch upstream providers from server.',
-          h('button', {
-            class: 'btn btn-sm',
-            type: 'button',
-            style: { marginTop: '10px' },
-            onclick: load
-          }, icon('refresh'), 'Retry')
-        )
-      );
-      return;
-    }
-    if (!alive) return;
-    renderProviders();
-  }
-
+  let providers = [];
+  let connectors = [];
+  let query = '';
+  const body = h('div', { class: 'provider-list' });
+  const search = h('input', { type: 'search', placeholder: 'Find a provider...', 'aria-label': 'Find a provider', oninput: (e) => { query = e.target.value.toLowerCase().trim(); render(); } });
   root.append(h('div', { class: 'page' },
-    header,
-    renderFlowCard(),
-    listContainer
+    h('div', { class: 'page-head' }, h('div', null, h('h1', null, 'Providers'), h('p', null, 'Connect an account or route requests through your own upstream gateway.')),
+      h('button', { class: 'btn btn-primary', type: 'button', onclick: () => edit() }, icon('plus'), 'Add provider')),
+    h('div', { class: 'provider-toolbar' }, h('label', { class: 'tool-search' }, icon('search'), search),
+      h('details', { class: 'provider-routing' }, h('summary', null, 'How routing works'), h('p', null, 'Models use prefix/model-id. NineGuard removes the prefix before forwarding. Requests without a prefix use the default provider. OAuth accounts run through the embedded engine; custom URLs keep their existing protocol.'))),
+    body
   ));
+  async function action(fn) { try { await fn(); await load(); } catch (err) { toast(err.message, 'error'); } }
+  function render() {
+    const list = providers.filter(p => `${p.name} ${p.prefix} ${p.family || ''} ${p.route}`.toLowerCase().includes(query));
+    if (!list.length) { body.replaceChildren(emptyState('server', providers.length ? 'No matching providers' : 'No providers connected', providers.length ? 'Try another provider name or prefix.' : 'Add a custom URL or connect a Claude / Codex account.')); return; }
+    body.replaceChildren(...list.map(p => {
+      const sdk = p.backend === 'cliproxy';
+      const accountsBody = h('div', { class: 'provider-accounts', hidden: !sdk });
+      const probe = h('p', { class: 'provider-probe', role: 'status', hidden: true });
+      const test = h('button', { class: 'btn btn-sm', type: 'button', onclick: async () => {
+        test.disabled = true; probe.hidden = false; probe.textContent = 'Checking connection...';
+        try {
+          if (sdk) { const r = await api.get(`/providers/${p.id}/accounts`); probe.textContent = `${r.accounts.length} connected account(s). Send a model request to verify inference.`; }
+          else { const r = await api.post('/providers/test', { id: p.id, route: p.route }); probe.textContent = r.ok && r.status >= 200 && r.status < 300 ? `Connected: ${r.models_count || 0} models, ${r.latency_ms} ms.` : (r.error || `Upstream returned HTTP ${r.status}.`); }
+        } catch (err) { probe.textContent = err.message; } finally { test.disabled = false; }
+      } }, icon('refresh'), 'Check connection');
+      const controls = h('div', { class: 'provider-actions' },
+        sdk ? h('button', { class: 'btn btn-sm btn-primary', type: 'button', onclick: () => openProviderLogin(p, null, load) }, icon('plus'), 'Connect account') : test,
+        h('button', { class: 'btn btn-sm', type: 'button', onclick: () => edit(p) }, icon('pencil'), 'Edit'),
+        h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Delete ${p.name}`, title: 'Delete provider', onclick: async () => {
+          if (await confirmDialog({ title: `Delete ${p.name}?`, body: 'This removes its route and model catalog. Disconnect its OAuth accounts first. Historical traffic is kept.', danger: true, confirmText: 'Delete provider' })) action(() => api.del(`/providers/${p.id}`));
+        } }, icon('trash'))
+      );
+      const node = h('section', { class: `provider-row ${p.is_active ? '' : 'provider-off'}` },
+        h('div', { class: 'provider-identity' }, providerMark(p), h('div', { class: 'provider-name' }, h('h2', null, p.name), h('div', { class: 'provider-meta' }, h('code', null, p.prefix ? `${p.prefix}/` : 'root'), h('span', null, sdk ? `${connectors.find(c => c.id === p.family)?.label || p.family} OAuth` : 'Custom URL'), p.is_default ? h('span', { class: 'badge' }, 'Default') : null))),
+        controls,
+        h('div', { class: 'provider-connection' },
+          h('div', null, h('span', { class: 'muted' }, sdk ? 'Authentication' : 'Upstream URL'), h('code', null, sdk ? 'Encrypted account credentials; automatic refresh' : p.route)),
+          !sdk ? h('div', null, h('span', { class: 'muted' }, 'API key'), h('code', null, p.masked_key || 'Not required')) : null,
+          h('div', { class: 'provider-actions' },
+            h('button', { class: `badge badge-btn ${p.is_active ? 'ok' : 'muted'}`, type: 'button', onclick: () => action(() => api.post(`/providers/${p.id}/toggle`, { active: !p.is_active })) }, p.is_active ? 'Enabled' : 'Disabled'),
+            !p.is_default ? h('button', { class: 'btn btn-sm', type: 'button', onclick: () => action(() => api.post(`/providers/${p.id}/default`)) }, 'Make default') : null,
+            p.upstream_token_saving ? h('span', { class: 'badge warn', title: p.upstream_token_saving_note }, 'Upstream token saving') : null,
+            p.quota_type !== 'disabled' ? h('span', { class: 'badge' }, `${p.quota_type} capacity`) : null
+          )
+        ), probe, accountsBody
+      );
+      if (sdk) {
+        accountsBody.append(h('p', { class: 'muted' }, 'Loading accounts...'));
+        api.get(`/providers/${p.id}/accounts`).then(res => {
+          if (!alive || !node.isConnected) return;
+          const accounts = res.accounts || [];
+          accountsBody.replaceChildren(...(accounts.length ? accounts.map(a => h('div', { class: 'provider-account' },
+            h('div', { class: 'provider-account-name' }, h('strong', null, a.label), h('span', { class: 'muted' }, a.expires_at ? `Token expires ${fmtDateTime(Date.parse(a.expires_at))}` : 'Expiry available after login'), a.last_refreshed_at ? h('span', { class: 'muted' }, `Last refreshed ${fmtDateTime(Date.parse(a.last_refreshed_at))}`) : null),
+            h('span', { class: `badge ${a.status === 'connected' ? 'ok' : 'warn'}`, title: a.last_error || '' }, a.status.replaceAll('_', ' ')),
+            h('div', { class: 'provider-actions' },
+              h('button', { class: 'btn btn-sm', type: 'button', onclick: () => action(() => api.post(`/providers/${p.id}/accounts/${a.id}/refresh`, {})) }, 'Refresh token'),
+              h('button', { class: 'btn btn-sm', type: 'button', onclick: () => openProviderLogin(p, a, load) }, 'Login again'),
+              h('button', { class: 'btn btn-sm', type: 'button', onclick: () => action(() => api.patch(`/providers/${p.id}/accounts/${a.id}`, { disabled: a.status !== 'disabled' })) }, a.status === 'disabled' ? 'Enable' : 'Disable'),
+              h('button', { class: 'btn btn-sm btn-danger', type: 'button', onclick: async () => { if (await confirmDialog({ title: 'Disconnect account?', body: 'Forgets the encrypted credential in NineGuard. This does not necessarily revoke access at the provider.', confirmText: 'Disconnect', danger: true })) action(() => api.del(`/providers/${p.id}/accounts/${a.id}`)); } }, 'Disconnect')
+            )
+          )) : [h('p', { class: 'muted' }, 'No account connected. Connect one to make models available.')]));
+        }).catch(err => { accountsBody.replaceChildren(h('p', { class: 'muted' }, err.message)); });
+      }
+      return node;
+    }));
+  }
 
+  function edit(existing) {
+    const name = h('input', { class: 'input', value: existing?.name || '', placeholder: 'Provider name', 'aria-label': 'Provider name' });
+    const prefix = h('input', { class: 'input', value: existing?.prefix || '', placeholder: 'e.g. claude, codex, router', 'aria-label': 'Routing prefix' });
+    const type = h('select', { class: 'select wide', 'aria-label': 'Connection type', disabled: !!existing }, h('option', { value: 'http' }, 'Custom URL (OpenAI-compatible)'), ...connectors.map(c => h('option', { value: c.id }, `${c.label} — OAuth`)));
+    type.value = existing?.backend === 'cliproxy' ? existing.family : 'http';
+    const route = h('input', { class: 'input', value: existing?.route || '', type: 'url', placeholder: 'https://gateway.example/v1', 'aria-label': 'Upstream URL' });
+    const key = passwordField({ placeholder: existing ? 'Leave empty to keep current key' : 'Upstream API key (if required)' });
+    const customIcon = /^https?:\/\//.test(existing?.icon || '');
+    const iconSelect = h('select', { class: 'select wide', 'aria-label': 'Provider icon' }, ...PROVIDER_ICONS.map(([id, label]) => h('option', { value: id }, label))); iconSelect.value = customIcon ? 'custom' : (existing?.icon || '');
+    const iconURL = h('input', { class: 'input', type: 'url', value: customIcon ? existing.icon : '', placeholder: 'https://example.com/logo.png', 'aria-label': 'Custom icon URL', hidden: !customIcon });
+    const preview = h('div', { class: 'provider-icon-preview' });
+    const paint = () => { iconURL.hidden = iconSelect.value !== 'custom'; preview.replaceChildren(providerMark({ name: name.value, family: type.value === 'http' ? '' : type.value, route: route.value, icon: iconSelect.value === 'custom' ? iconURL.value : iconSelect.value })); };
+    iconSelect.addEventListener('change', paint); iconURL.addEventListener('input', paint); name.addEventListener('input', paint);
+    const def = h('input', { type: 'checkbox', checked: existing?.is_default || !providers.length });
+    const quota = h('select', { class: 'select wide', 'aria-label': 'Capacity tracker' }, ...[['disabled','No capacity tracker'],['9router','9router / OmniRoute protocol'],['nineguard','Upstream NineGuard']].map(([v,l]) => h('option', { value:v },l))); quota.value = existing?.quota_type || 'disabled';
+    const password = passwordField({ placeholder: 'Router dashboard password (leave empty to keep)' });
+    const saving = h('input', { type: 'checkbox', checked: existing?.upstream_token_saving });
+    const savingNote = h('input', { class: 'input', value: existing?.upstream_token_saving_note || '', maxlength: '200', placeholder: 'Optional note about upstream token saving' });
+    const field = (label, node, hint) => h('label', { class: 'field' }, h('span', null, label), node, hint ? h('small', { class: 'muted' }, hint) : null);
+    const httpFields = h('div', { class: 'provider-form-stack' }, field('Upstream URL', route), field('Upstream API key', key.wrap));
+    const oauthHint = h('p', { class: 'note', hidden: type.value === 'http' }, 'Save this provider, then use Connect account. OAuth tokens are encrypted and refreshed by NineGuard.');
+    const change = () => { httpFields.hidden = type.value !== 'http'; oauthHint.hidden = type.value === 'http'; paint(); }; type.addEventListener('change', change);change();
+    formDialog({ title: existing ? `Edit ${existing.name}` : 'Add provider', submitText: existing ? 'Save changes' : 'Add provider', extraWide: true,
+      fields: [{ node: h('div', { class: 'provider-form' },
+        h('div', { class: 'provider-form-stack' }, field('Connection type', type), field('Provider name', name), field('Routing prefix', prefix, 'Models appear as prefix/model-id. Leave empty for the root provider.'), httpFields, oauthHint, h('label', { class: 'provider-check' }, def, 'Default for models without a prefix')),
+        h('div', { class: 'provider-form-stack' }, field('Provider icon', h('div', null, h('div', { class: 'provider-icon-control' }, preview, iconSelect), iconURL), 'Custom image hosts receive browser requests; no referrer is sent.'),
+          h('details', { class: 'provider-advanced' }, h('summary', null, 'Advanced settings'), field('Capacity tracker', quota), field('Router dashboard password', password.wrap), h('label', { class: 'provider-check' }, saving, 'Upstream already saves tokens'), savingNote))
+      ) }], onSubmit: async () => {
+        if (!name.value.trim()) throw Error('Provider name is required');
+        const sdk = type.value !== 'http';
+        const payload = { name:name.value.trim(),prefix:prefix.value.trim(),route:sdk ? '' : route.value.trim(),backend:sdk ? 'cliproxy' : 'http',family:sdk ? type.value : '',icon:iconSelect.value === 'custom' ? iconURL.value.trim() : iconSelect.value,is_default:def.checked,is_active:existing?.is_active ?? true,quota_type:quota.value,upstream_token_saving:saving.checked,upstream_token_saving_note:savingNote.value.trim() };
+        if (!sdk && (!existing || key.input.value.trim())) payload.api_key = key.input.value.trim();
+        if (password.input.value.trim()) payload.quota_auth_secret = password.input.value.trim();
+        if (existing) await api.put(`/providers/${existing.id}`, payload); else await api.post('/providers',payload);
+        toast(existing ? 'Provider updated' : 'Provider added');await load();
+      }
+    });
+  }
+  async function load() {
+    try { const [p,c] = await Promise.all([api.get('/providers'),api.get('/provider-connectors').catch(() => ({connectors:[]}))]); if (!alive) return;providers = p.providers || [];connectors = c.connectors || [];render(); }
+    catch(err) { if (alive) body.replaceChildren(emptyState('alert','Could not load providers',err.message,h('button',{class:'btn',onclick:load},'Try again'))); }
+  }
   load();
-
-  return {
-    update() {},
-    refresh: load,
-    destroy() { alive = false; }
-  };
+  return { update(){},refresh:load,destroy(){alive=false;} };
 }

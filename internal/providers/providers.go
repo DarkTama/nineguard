@@ -29,6 +29,9 @@ type Provider struct {
 	QuotaType               string    `json:"quota_type"`
 	QuotaAuthSecret         string    `json:"-"`
 	HasQuotaAuthSecret      bool      `json:"has_quota_auth_secret"`
+	Icon                    string    `json:"icon"`
+	Backend                 string    `json:"backend"`
+	Family                  string    `json:"family"`
 	CreatedAt               time.Time `json:"created_at"`
 	UpdatedAt               time.Time `json:"updated_at"`
 }
@@ -44,12 +47,23 @@ type ProviderOptions struct {
 	UpstreamTokenSavingNote string
 	QuotaType               string
 	QuotaAuthSecret         *string // nil keeps existing on update
+	Icon                    *string // nil keeps existing on update; "" = auto
+	Backend                 *string // nil preserves existing backend on update
+	Family                  *string // nil preserves existing family on update
+}
+
+type EngineCatalog interface {
+	Models(context.Context, string) ([]map[string]interface{}, error)
+	RemoveProvider(context.Context, string) error
 }
 
 type Manager struct {
 	db *db.DB
 	mu sync.RWMutex
+	engine EngineCatalog
 }
+
+func (m *Manager) SetEngine(engine EngineCatalog) { m.engine = engine }
 
 func normalizeQuotaType(t string) string {
 	switch strings.ToLower(strings.TrimSpace(t)) {
@@ -93,7 +107,7 @@ func (m *Manager) ListProviders() ([]Provider, error) {
 		SELECT id, name, route, COALESCE(api_key, ''), prefix, is_default, is_active,
 		       COALESCE(upstream_token_saving, 0), COALESCE(upstream_token_saving_note, ''),
 		       COALESCE(quota_type, 'disabled'), COALESCE(quota_auth_secret, ''),
-		       created_at, updated_at
+		       COALESCE(icon, ''), COALESCE(backend, 'http'), COALESCE(family, ''), created_at, updated_at
 		FROM providers
 		ORDER BY is_default DESC, is_active DESC, name ASC
 	`)
@@ -109,7 +123,7 @@ func (m *Manager) ListProviders() ([]Provider, error) {
 		if err := rows.Scan(
 			&p.ID, &p.Name, &p.Route, &p.APIKey, &p.Prefix,
 			&defInt, &actInt, &utsInt, &p.UpstreamTokenSavingNote,
-			&p.QuotaType, &p.QuotaAuthSecret,
+			&p.QuotaType, &p.QuotaAuthSecret, &p.Icon, &p.Backend, &p.Family,
 			&p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -142,9 +156,9 @@ func (m *Manager) getProviderUnlocked(id string) (*Provider, error) {
 		SELECT id, name, route, COALESCE(api_key, ''), prefix, is_default, is_active,
 		       COALESCE(upstream_token_saving, 0), COALESCE(upstream_token_saving_note, ''),
 		       COALESCE(quota_type, 'disabled'), COALESCE(quota_auth_secret, ''),
-		       created_at, updated_at
+		       COALESCE(icon, ''), COALESCE(backend, 'http'), COALESCE(family, ''), created_at, updated_at
 		FROM providers WHERE id = ?
-	`, id).Scan(&p.ID, &p.Name, &p.Route, &p.APIKey, &p.Prefix, &defInt, &actInt, &utsInt, &p.UpstreamTokenSavingNote, &p.QuotaType, &p.QuotaAuthSecret, &p.CreatedAt, &p.UpdatedAt)
+	`, id).Scan(&p.ID, &p.Name, &p.Route, &p.APIKey, &p.Prefix, &defInt, &actInt, &utsInt, &p.UpstreamTokenSavingNote, &p.QuotaType, &p.QuotaAuthSecret, &p.Icon, &p.Backend, &p.Family, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -200,13 +214,22 @@ func (m *Manager) CreateProviderWithOptions(opts ProviderOptions) (*Provider, er
 	if opts.QuotaAuthSecret != nil {
 		quotaSecret = strings.TrimSpace(*opts.QuotaAuthSecret)
 	}
+	icon := ""
+	if opts.Icon != nil {
+		var err error
+		if icon, err = normalizeIcon(*opts.Icon); err != nil {
+			return nil, err
+		}
+	}
 
 	if name == "" {
 		return nil, fmt.Errorf("provider name is required")
 	}
-	if route == "" {
-		return nil, fmt.Errorf("route endpoint URL is required")
-	}
+	backend, family := "http", ""
+	if opts.Backend != nil { backend = *opts.Backend }
+	if opts.Family != nil { family = *opts.Family }
+	backend, family, identityErr := normalizeBackend(backend, family, route, apiKey)
+	if identityErr != nil { return nil, identityErr }
 
 	idBytes := make([]byte, 8)
 	_, _ = rand.Read(idBytes)
@@ -261,9 +284,9 @@ func (m *Manager) CreateProviderWithOptions(opts ProviderOptions) (*Provider, er
 	encAPIKey, _ := vault.Encrypt(apiKey)
 	encQuotaSecret, _ := vault.Encrypt(quotaSecret)
 	_, err = tx.Exec(`
-		INSERT INTO providers (id, name, route, api_key, prefix, is_default, is_active, upstream_token_saving, upstream_token_saving_note, quota_type, quota_auth_secret, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, id, name, route, encAPIKey, prefix, defInt, actInt, utsInt, upstreamTokenSavingNote, quotaType, encQuotaSecret, now, now)
+		INSERT INTO providers (id, name, route, api_key, prefix, is_default, is_active, upstream_token_saving, upstream_token_saving_note, quota_type, quota_auth_secret, icon, backend, family, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, name, route, encAPIKey, prefix, defInt, actInt, utsInt, upstreamTokenSavingNote, quotaType, encQuotaSecret, icon, backend, family, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -286,6 +309,9 @@ func (m *Manager) CreateProviderWithOptions(opts ProviderOptions) (*Provider, er
 		QuotaType:               quotaType,
 		QuotaAuthSecret:         quotaSecret,
 		HasQuotaAuthSecret:      quotaSecret != "",
+		Icon:                    icon,
+		Backend:                 backend,
+		Family:                  family,
 		CreatedAt:               now,
 		UpdatedAt:               now,
 	}, nil
@@ -341,12 +367,23 @@ func (m *Manager) UpdateProviderWithOptions(id string, opts ProviderOptions) (*P
 	if opts.QuotaAuthSecret != nil {
 		quotaSecret = strings.TrimSpace(*opts.QuotaAuthSecret)
 	}
+	icon := curr.Icon
+	if opts.Icon != nil {
+		if icon, err = normalizeIcon(*opts.Icon); err != nil {
+			return nil, err
+		}
+	}
 
 	if name == "" {
 		return nil, fmt.Errorf("provider name is required")
 	}
-	if route == "" {
-		return nil, fmt.Errorf("route endpoint URL is required")
+	backend, family := curr.Backend, curr.Family
+	if opts.Backend != nil { backend = *opts.Backend }
+	if opts.Family != nil { family = *opts.Family }
+	backend, family, err = normalizeBackend(backend, family, route, apiKey)
+	if err != nil { return nil, err }
+	if curr.Backend != backend || curr.Family != family {
+		return nil, fmt.Errorf("provider connection type cannot be changed; create a separate provider")
 	}
 
 	tx, err := m.db.Begin()
@@ -387,9 +424,9 @@ func (m *Manager) UpdateProviderWithOptions(id string, opts ProviderOptions) (*P
 	encAPIKey, _ := vault.Encrypt(apiKey)
 	encQuotaSecret, _ := vault.Encrypt(quotaSecret)
 	_, err = tx.Exec(`
-		UPDATE providers SET name = ?, route = ?, api_key = ?, prefix = ?, is_default = ?, is_active = ?, upstream_token_saving = ?, upstream_token_saving_note = ?, quota_type = ?, quota_auth_secret = ?, updated_at = CURRENT_TIMESTAMP
+		UPDATE providers SET name = ?, route = ?, api_key = ?, prefix = ?, is_default = ?, is_active = ?, upstream_token_saving = ?, upstream_token_saving_note = ?, quota_type = ?, quota_auth_secret = ?, icon = ?, backend = ?, family = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, name, route, encAPIKey, prefix, defInt, actInt, utsInt, upstreamTokenSavingNote, quotaType, encQuotaSecret, id)
+	`, name, route, encAPIKey, prefix, defInt, actInt, utsInt, upstreamTokenSavingNote, quotaType, encQuotaSecret, icon, backend, family, id)
 	if err != nil {
 		return nil, err
 	}
@@ -440,6 +477,7 @@ func (m *Manager) DeleteProvider(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if m.engine != nil { if err := m.engine.RemoveProvider(context.Background(), id); err != nil { return err } }
 	// 1. Get provider info (prefix, is_default) before deleting
 	var prefix string
 	var isDef int
@@ -557,6 +595,12 @@ func (m *Manager) AggregateModels(ctx context.Context) ([]map[string]interface{}
 		wg.Add(1)
 		go func(prov Provider) {
 			defer wg.Done()
+			if prov.Backend == "cliproxy" {
+				if m.engine != nil {
+					if items, err := m.engine.Models(ctx, prov.ID); err == nil { resultsChan <- modelResult{providerID: prov.ID, prefix: prov.Prefix, models: items} }
+				}
+				return
+			}
 			reqURL := prov.Route
 			if !strings.HasSuffix(reqURL, "/v1") {
 				reqURL += "/v1"

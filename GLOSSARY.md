@@ -17,7 +17,13 @@ A named set of model IDs or patterns. Serves two independent roles:
 2. *Plugin scope* — plugins bound to a group apply to any request whose model belongs to that group, regardless of which API Key sent it.
 
 **Provider**
-An upstream OpenAI-compatible endpoint, addressed through its routing prefix (e.g. `9router/...`).
+An upstream routing target, either a custom HTTP endpoint or a connected provider account backend, addressed through its routing prefix (e.g. `9router/...`).
+
+**OAuth Account**
+A provider account connected by an administrator's authorization flow. Distinct from a NineGuard client API key and from a provider API key.
+
+**Provider Backend**
+The connection method of a Provider: custom HTTP endpoint or embedded account-backed engine. Independent of its name, prefix and icon.
 
 **Model**
 A model ID NineGuard knows about, prefixed by its Provider (e.g. `9router/gpt-4o`). The ID is unique across Providers.

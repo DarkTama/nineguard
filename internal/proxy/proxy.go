@@ -36,8 +36,10 @@ type Proxy struct {
 	fallbackAlerter *FallbackAlerter
 	pricingResolver *pricing.Resolver
 	pricingManager  *pricing.Manager
+	providerEngine interface { RoundTrip(context.Context, string, string, *http.Request) (*http.Response, error) }
 }
 
+func (p *Proxy) SetProviderEngine(engine interface { RoundTrip(context.Context, string, string, *http.Request) (*http.Response, error) }) { p.providerEngine = engine }
 func (p *Proxy) SetPricingResolver(r *pricing.Resolver) {
 	p.pricingResolver = r
 }
@@ -599,6 +601,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Build target URL
 	targetBase := strings.TrimRight(provider.Route, "/")
+	if provider.Backend == "cliproxy" { targetBase = "http://nineguard-engine.invalid" }
 	forwardPath := r.URL.Path
 	if strings.HasSuffix(targetBase, "/v1") && strings.HasPrefix(forwardPath, "/v1") {
 		forwardPath = strings.TrimPrefix(forwardPath, "/v1")
@@ -671,7 +674,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Timeout:   15 * time.Minute,
 		}
 	}
-	resp, err := client.Do(outReq)
+	var resp *http.Response
+	if provider.Backend == "cliproxy" {
+		if p.providerEngine == nil { err = fmt.Errorf("OAuth engine unavailable") } else { resp, err = p.providerEngine.RoundTrip(r.Context(), provider.ID, "", outReq) }
+	} else {
+		resp, err = client.Do(outReq)
+	}
 	if err != nil {
 		slog.Error("error forwarding to upstream provider", "provider", provider.ID, "error", err)
 		writeProxyError(w, r, http.StatusBadGateway, "api_error", "bad_gateway", fmt.Sprintf("NineGuard could not reach upstream provider '%s': %v", provider.Name, err), "")

@@ -106,6 +106,8 @@ NineGuard acts as a unified gateway between AI Coding Agents and Upstream Provid
 | Feature | Description |
 |---|---|
 | **Multi-Provider Routing** | Register upstream OpenAI-compatible routes and namespace models with custom prefixes (e.g. `openrouter/model-id`). |
+| **OAuth Provider Accounts** | Connect Claude and OpenAI/Codex accounts in Providers using an embedded CLIProxyAPI SDK engine. Tokens are encrypted locally and refreshed automatically; administrators can reconnect, disable, or disconnect individual accounts. Custom HTTP upstreams remain supported. See [Provider Guide](docs/PROVIDERS.md). |
+| **Provider Identity Icons** | Choose bundled provider/router icons, automatic identity, or an HTTP(S) image URL. The Providers page groups connection details and account lifecycle actions in a mobile-friendly layout. |
 | **Dual-Header & Anthropic Messages** | Native Anthropic `/v1/messages` protocol support alongside OpenAI `/v1/chat/completions`. Single unified `sk-ng-...` API key works across both `Authorization: Bearer` and Anthropic `x-api-key` headers with zero translation loss for extended thinking and prompt caching. |
 | **Client Key Management** | Issue and revoke scoped NineGuard API keys (`sk-ng-...`) to track consumption per agent. |
 | **Per-Key Model Access Control** | Enforce model permissions per API key (global wildcard `*`, dynamic Model Groups, or manual whitelist). |

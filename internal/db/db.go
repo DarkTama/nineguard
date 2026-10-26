@@ -305,6 +305,21 @@ func (d *DB) migrate() error {
 	// Upstream quotas (ADR 0009)
 	_, _ = d.Exec("ALTER TABLE providers ADD COLUMN quota_type TEXT DEFAULT 'disabled'")
 	_, _ = d.Exec("ALTER TABLE providers ADD COLUMN quota_auth_secret TEXT DEFAULT ''")
+	// Provider icon: "" (auto), a bundled preset id, or an http(s) image URL.
+	_, _ = d.Exec("ALTER TABLE providers ADD COLUMN icon TEXT DEFAULT ''")
+	_, _ = d.Exec("ALTER TABLE providers ADD COLUMN backend TEXT NOT NULL DEFAULT 'http'")
+	_, _ = d.Exec("ALTER TABLE providers ADD COLUMN family TEXT NOT NULL DEFAULT ''")
+	if _, err := d.Exec(`CREATE TABLE IF NOT EXISTS provider_accounts (
+		id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, family TEXT NOT NULL, label TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL DEFAULT 'connected', version INTEGER NOT NULL DEFAULT 1, disconnected INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX IF NOT EXISTS idx_provider_accounts_provider ON provider_accounts(provider_id);
+	CREATE TABLE IF NOT EXISTS provider_credentials (
+		account_id TEXT PRIMARY KEY, payload TEXT NOT NULL, credential_version INTEGER NOT NULL DEFAULT 0,
+		generation INTEGER NOT NULL DEFAULT 0, registration_epoch INTEGER NOT NULL DEFAULT 0
+	);`); err != nil {
+		return fmt.Errorf("migrate OAuth credentials: %w", err)
+	}
 	_, _ = d.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('chat_commands_enabled', 'true')")
 	_, _ = d.Exec("INSERT OR IGNORE INTO settings (key, value) VALUES ('upstream_quota_sync_interval', '10m')")
 

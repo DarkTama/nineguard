@@ -287,4 +287,46 @@ func TestProvidersQuotaOptions(t *testing.T) {
 	}
 }
 
+func TestProviderIconOptions(t *testing.T) {
+	database, err := db.InitDB(filepath.Join(t.TempDir(), "icon.db"))
+	if err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	defer database.Close()
+	mgr := providers.NewManager(database)
+	str := func(s string) *string { return &s }
 
+	p, err := mgr.CreateProviderWithOptions(providers.ProviderOptions{Name: "Router", Route: "http://r:20128/v1", Prefix: "r", IsActive: true, Icon: str(" 9router ")})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if p.Icon != "9router" {
+		t.Fatalf("preset icon not stored: %q", p.Icon)
+	}
+
+	// nil keeps the stored icon on update.
+	p, err = mgr.UpdateProviderWithOptions(p.ID, providers.ProviderOptions{Name: "Router", Route: "http://r:20128/v1", Prefix: "r", IsActive: true})
+	if err != nil || p.Icon != "9router" {
+		t.Fatalf("icon must survive an update without icon: %q, %v", p.Icon, err)
+	}
+
+	p, err = mgr.UpdateProviderWithOptions(p.ID, providers.ProviderOptions{Name: "Router", Route: "http://r:20128/v1", Prefix: "r", IsActive: true, Icon: str("https://cdn.example.com/logo.svg")})
+	if err != nil || p.Icon != "https://cdn.example.com/logo.svg" {
+		t.Fatalf("custom URL icon: %q, %v", p.Icon, err)
+	}
+
+	// Empty means auto (picked by the UI from the route and name).
+	p, err = mgr.UpdateProviderWithOptions(p.ID, providers.ProviderOptions{Name: "Router", Route: "http://r:20128/v1", Prefix: "r", IsActive: true, Icon: str("")})
+	if err != nil || p.Icon != "" {
+		t.Fatalf("clearing icon: %q, %v", p.Icon, err)
+	}
+
+	for _, bad := range []string{"javascript:alert(1)", "data:image/svg+xml,<svg/>", "unknown-brand", "https://", "ftp://x/y.png", "https://x/" + strings.Repeat("a", 600)} {
+		if _, err := mgr.UpdateProviderWithOptions(p.ID, providers.ProviderOptions{Name: "Router", Route: "http://r:20128/v1", Prefix: "r", IsActive: true, Icon: str(bad)}); err == nil {
+			t.Errorf("icon %q must be rejected", bad)
+		}
+		if _, err := mgr.CreateProviderWithOptions(providers.ProviderOptions{Name: "X", Route: "http://x", Icon: str(bad)}); err == nil {
+			t.Errorf("create with icon %q must be rejected", bad)
+		}
+	}
+}

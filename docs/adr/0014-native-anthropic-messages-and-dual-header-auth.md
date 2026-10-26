@@ -1,6 +1,6 @@
 # 0014. Native Anthropic Messages Protocol and Dual-Header Authentication
 
-- Status: Accepted
+- Status: Accepted; amended by ADR 0015 for explicitly SDK-backed provider execution
 - Date: 2026-10-21
 - Related: [0001](0001-http-plugins.md) (Plugins), [0005](0005-token-quotas-utc-windows.md) (Key Quotas), [0007](0007-model-quotas-per-key.md) (Model Quotas), [0011](0011-proxy-requests-stream-usage.md) (Streaming Usage)
 

@@ -1,6 +1,6 @@
 # Panduan Manajemen Upstream Providers
 
-NineGuard mendukung integrasi dengan semua server dan platform yang kompatibel dengan protokol **OpenAI REST API v1**.
+NineGuard mendukung **Custom URL** untuk server kompatibel OpenAI REST API v1, serta akun **Claude** dan **OpenAI/Codex** melalui OAuth engine CLIProxyAPI tertanam. Tidak perlu menjalankan service CLIProxyAPI terpisah.
 
 ---
 
@@ -21,7 +21,7 @@ Buka antarmuka NineGuard pada browser di menu **Gateway $\rightarrow$ Providers*
    * **Upstream API Key:** Master API key yang dibutuhkan provider tersebut.
    * **Set as Default Provider:** Centang opsi ini jika provider ini ingin dijadikan tujuan cadangan (*fallback*) untuk request tanpa prefix.
 3. Klik **Add Provider** (atau **Save Changes** jika mengedit provider yang sudah ada).
-4. Setelah provider tersimpan dan kartunya muncul di daftar, klik tombol **Test Probe** pada kartu tersebut untuk memvalidasi bahwa route dan API key berfungsi (status 200 OK).
+4. Setelah provider tersimpan, klik **Check connection** untuk memvalidasi endpoint custom. Untuk provider OAuth, gunakan **Connect account**.
 
 ---
 
@@ -48,3 +48,22 @@ Misalkan Anda memiliki 2 provider terdaftar:
 * **Otomatis:** Setiap kali NineGuard dinyalakan dan setiap 30 menit, NineGuard memanggil endpoint `/v1/models` ke seluruh provider aktif di background dan menyinkronkan daftar model.
 * **Manual:** Pada menu **Gateway $\rightarrow$ Models**, klik tombol **Fetch from Providers** untuk memperbarui daftar model secara instan.
 * **Pembersihan Otomatis:** Jika suatu provider dihapus dari daftar, seluruh model yang terkait dengan prefix provider tersebut akan otomatis dihapus dari database NineGuard. Begitu pula model-model tanpa provider akan otomatis dibersihkan saat sinkronisasi berjalan.
+
+## 4. Menghubungkan akun OAuth
+
+1. Masuk sebagai administrator, buka **Providers → Add provider**.
+2. Pilih **Claude — OAuth** atau **OpenAI / Codex — OAuth**, isi nama dan prefix, lalu simpan. Codex OAuth bukan API key OpenAI Platform; model tersedia mengikuti hak akses akun.
+3. Klik **Connect account**, lalu **Open authorization** bila tab login tidak terbuka. Selesaikan persetujuan di situs provider.
+4. Jika NineGuard berjalan pada server remote dan browser berhenti di alamat localhost yang gagal dibuka, salin **URL lengkap** dari address bar ke kolom callback, lalu klik **Finish login**. URL tersebut berisi kode sekali pakai; jangan dibagikan atau disimpan di log.
+5. Setelah akun terhubung, sinkronkan model di halaman Models. Gunakan prefix yang ditampilkan NineGuard pada client. Untuk Claude, protokol Messages direkomendasikan.
+
+Tindakan akun: **Refresh token**, **Login again**, **Disable/Enable**, dan **Disconnect**. Disconnect menghapus kredensial lokal; pencabutan grant pada provider tidak selalu otomatis. Token yang kedaluwarsa atau dicabut mungkin memerlukan login ulang. Ketentuan provider tetap berlaku; tidak ada jaminan anti-ban.
+
+Kredensial tersimpan terenkripsi di SQLite. Backup database bersama master key vault (`data/.master.key` atau `NINEGUARD_ENCRYPTION_KEY` yang digunakan). Jangan membagikan file database atau master key. Dashboard tidak menyediakan ekspor access/refresh token.
+
+## 5. Ikon provider
+
+Form Add/Edit menyediakan Auto, ikon bawaan (9router, OmniRoute, NineGuard, Claude, Anthropic, OpenAI, OpenRouter, Ollama, Gemini), Generic, atau Custom image URL. URL hanya menerima HTTP(S); browser memuat gambar tanpa referrer dan memakai fallback bila gambar gagal. Host gambar eksternal tetap dapat melihat IP browser.
+
+Brand marks diambil dari Simple Icons (CC0; OpenAI v15.0.0, lainnya v16.35.0), 9router dan OmniRoute (MIT). Logo tetap milik pemegang mereknya. Engine menggunakan [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) v8.0.43 (MIT), dipin untuk kompatibilitas.
+

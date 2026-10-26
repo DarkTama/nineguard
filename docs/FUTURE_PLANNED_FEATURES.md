@@ -2,6 +2,8 @@
 
 Planned enhancements discussed for post-plugin roadmap.
 
+Embedded provider connections now include Claude and OpenAI/Codex browser OAuth, encrypted credential storage, and provider identity icons (ADR 0015). Other account connectors and device-code login modes remain future work unless verified through the pinned SDK public interfaces; they are not advertised as working buttons.
+
 ---
 
 ## 1. Image Detection & Multimodal Logging

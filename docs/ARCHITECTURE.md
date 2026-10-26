@@ -78,6 +78,8 @@ NineGuard dirancang berdasarkan prinsip:
 2. **`internal/providers`:**
    * Mengelola registrasi provider upstream (Route, Master Key, Prefix, Default Fallback).
    * Menjalankan agregasi model multi-provider untuk endpoint `GET /v1/models`.
+   * Provider `http` tetap diteruskan langsung. Provider `cliproxy` memakai engine CLIProxyAPI tertanam setelah pemeriksaan izin, firewall, kuota, dan plugin NineGuard; konversi protokol ada di batas engine, bukan di core proxy (ADR 0015).
+   * `internal/providerengine` mengelola login OAuth Claude/Codex, akun terikat provider, katalog model, serta refresh token. Kredensial disimpan terenkripsi melalui vault/SQLite, bukan file token plaintext. Listener engine hanya loopback dengan secret internal; endpoint pengelolaan publik tetap memerlukan admin NineGuard.
 3. **`internal/keys`:**
    * Mengelola siklus hidup API key client NineGuard (`sk-ng-...`).
    * Melakukan verifikasi token cepat berbasis memory cache.

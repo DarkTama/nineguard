@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -23,6 +24,7 @@ import (
 	"nineguard/internal/models"
 	"nineguard/internal/plugins"
 	"nineguard/internal/pricing"
+	"nineguard/internal/providerengine"
 	"nineguard/internal/providers"
 	"nineguard/internal/proxy"
 	"nineguard/internal/syslog"
@@ -137,6 +139,11 @@ func main() {
 		slog.Error("failed to initialize pricing manager", "error", err)
 	}
 
+	providerEngine, err := providerengine.New(database, filepath.Dir(cfg.DBFile))
+	if err != nil { slog.Error("failed to initialize OAuth engine", "error", err); os.Exit(1) }
+	if err = providerEngine.Start(context.Background()); err != nil { slog.Error("failed to start OAuth engine", "error", err); os.Exit(1) }
+	defer func() { ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second); defer cancel(); _ = providerEngine.Close(ctx) }()
+	providersMgr.SetEngine(providerEngine)
 	// 3. Initialize Reverse Proxy
 	revProxy, err := proxy.NewProxy(modelsMgr, trafficMgr, keysMgr, providersMgr, pluginsMgr)
 	if err != nil {
@@ -146,6 +153,7 @@ func main() {
 	if pricingMgr != nil {
 		revProxy.SetPricingResolver(pricingMgr.Resolver())
 	}
+	revProxy.SetProviderEngine(providerEngine)
 
 	// 4. Handlers
 	h := handler.New(authMgr, modelsMgr, trafficMgr, syslogMgr, keysMgr, providersMgr, revProxy, routerTarget)
@@ -222,6 +230,7 @@ func main() {
 	go h.RunUpstreamQuotaSync(context.Background())
 
 	mux := http.NewServeMux()
+	handler.RegisterProviderOAuth(mux, providerEngine)
 
 	// Public Health Probe
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {

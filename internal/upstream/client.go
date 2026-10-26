@@ -23,6 +23,7 @@ type cachedQuota struct {
 type Manager struct {
 	router9       *Router9Adapter
 	nineguard     *NineGuardAdapter
+	sdk SDKQuotaSource
 	instanceID    string
 	lastForce     map[string]time.Time
 	forceCooldown time.Duration
@@ -75,6 +76,7 @@ func (m *Manager) InvalidateCache(providerID string) {
 // GetCachedQuota returns the cached quota for a provider without making any network calls.
 // Returns nil when nothing is cached or the entry is past its TTL, so callers fall back to a fetch.
 func (m *Manager) GetCachedQuota(p providers.Provider) *ProviderQuotaResult {
+	if p.Backend == "cliproxy" { return nil }
 	m.cacheMu.RLock()
 	cached, ok := m.cache[p.ID]
 	m.cacheMu.RUnlock()
@@ -97,6 +99,10 @@ func countBuckets(r *ProviderQuotaResult) int {
 
 // GetProviderQuotas retrieves quotas for a provider, using cache unless force=true or expired.
 func (m *Manager) GetProviderQuotas(ctx context.Context, p providers.Provider, force bool) (*ProviderQuotaResult, error) {
+	if p.Backend == "cliproxy" {
+		if m.sdk != nil { return m.sdk.SDKQuotas(ctx, p, time.Now()) }
+		return &ProviderQuotaResult{ProviderID:p.ID,ProviderName:p.Name,QuotaType:"sdk",Source:"sdk",Status:"degraded",ObservationState:"waiting",ErrorMsg:"SDK quota source is not ready",Connections:[]ConnectionQuota{}}, nil
+	}
 	if p.QuotaType == "disabled" || p.QuotaType == "" {
 		return &ProviderQuotaResult{
 			ProviderID:   p.ID,

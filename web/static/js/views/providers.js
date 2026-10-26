@@ -50,7 +50,7 @@ export function mount(root) {
             h('button', { class: `badge badge-btn ${p.is_active ? 'ok' : 'muted'}`, type: 'button', onclick: () => action(() => api.post(`/providers/${p.id}/toggle`, { active: !p.is_active })) }, p.is_active ? 'Enabled' : 'Disabled'),
             !p.is_default ? h('button', { class: 'btn btn-sm', type: 'button', onclick: () => action(() => api.post(`/providers/${p.id}/default`)) }, 'Make default') : null,
             p.upstream_token_saving ? h('span', { class: 'badge warn', title: p.upstream_token_saving_note }, 'Upstream token saving') : null,
-            p.quota_type !== 'disabled' ? h('span', { class: 'badge' }, `${p.quota_type} capacity`) : null
+            sdk ? h('span', { class: 'badge' }, 'Automatic SDK telemetry') : p.quota_type !== 'disabled' ? h('span', { class: 'badge' }, `${p.quota_type} capacity`) : null
           )
         ), probe, accountsBody
       );
@@ -94,14 +94,16 @@ export function mount(root) {
     const saving = h('input', { type: 'checkbox', checked: existing?.upstream_token_saving });
     const savingNote = h('input', { class: 'input', value: existing?.upstream_token_saving_note || '', maxlength: '200', placeholder: 'Optional note about upstream token saving' });
     const field = (label, node, hint) => h('label', { class: 'field' }, h('span', null, label), node, hint ? h('small', { class: 'muted' }, hint) : null);
+    const trackerFields = h('div', { class: 'provider-form-stack' }, field('Capacity tracker', quota), field('Router dashboard password', password.wrap));
+    const sdkTelemetryHint = h('p', { class: 'note' }, 'Automatic SDK telemetry. Limit percentages and reset times come from upstream response headers; Refresh reads the latest snapshot without sending a prompt.');
     const httpFields = h('div', { class: 'provider-form-stack' }, field('Upstream URL', route), field('Upstream API key', key.wrap));
     const oauthHint = h('p', { class: 'note', hidden: type.value === 'http' }, 'Save this provider, then use Connect account. OAuth tokens are encrypted and refreshed by NineGuard.');
-    const change = () => { httpFields.hidden = type.value !== 'http'; oauthHint.hidden = type.value === 'http'; paint(); }; type.addEventListener('change', change);change();
+    const change = () => { const sdk = type.value !== 'http'; httpFields.hidden = sdk; oauthHint.hidden = !sdk; trackerFields.hidden = sdk; sdkTelemetryHint.hidden = !sdk; paint(); }; type.addEventListener('change', change);change();
     formDialog({ title: existing ? `Edit ${existing.name}` : 'Add provider', submitText: existing ? 'Save changes' : 'Add provider', extraWide: true,
       fields: [{ node: h('div', { class: 'provider-form' },
         h('div', { class: 'provider-form-stack' }, field('Connection type', type), field('Provider name', name), field('Routing prefix', prefix, 'Models appear as prefix/model-id. Leave empty for the root provider.'), httpFields, oauthHint, h('label', { class: 'provider-check' }, def, 'Default for models without a prefix')),
         h('div', { class: 'provider-form-stack' }, field('Provider icon', h('div', null, h('div', { class: 'provider-icon-control' }, preview, iconSelect), iconURL), 'Custom image hosts receive browser requests; no referrer is sent.'),
-          h('details', { class: 'provider-advanced' }, h('summary', null, 'Advanced settings'), field('Capacity tracker', quota), field('Router dashboard password', password.wrap), h('label', { class: 'provider-check' }, saving, 'Upstream already saves tokens'), savingNote))
+          h('details', { class: 'provider-advanced' }, h('summary', null, 'Advanced settings'), trackerFields, sdkTelemetryHint, h('label', { class: 'provider-check' }, saving, 'Upstream already saves tokens'), savingNote))
       ) }], onSubmit: async () => {
         if (!name.value.trim()) throw Error('Provider name is required');
         const sdk = type.value !== 'http';

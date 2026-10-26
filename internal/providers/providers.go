@@ -65,6 +65,16 @@ type Manager struct {
 
 func (m *Manager) SetEngine(engine EngineCatalog) { m.engine = engine }
 
+// SDKModelIDs returns only this SDK provider's public catalog for quota visibility checks.
+func (m *Manager) SDKModelIDs(ctx context.Context, p Provider) []string {
+	if p.Backend != "cliproxy" || m.engine == nil { return nil }
+	items, err := m.engine.Models(ctx, p.ID)
+	if err != nil { return nil }
+	ids := make([]string, 0, len(items))
+	for _, item := range items { if id, ok := item["id"].(string); ok { if p.Prefix != "" { id = p.Prefix + "/" + id }; ids = append(ids, id) } }
+	return ids
+}
+
 func normalizeQuotaType(t string) string {
 	switch strings.ToLower(strings.TrimSpace(t)) {
 	case "9router":

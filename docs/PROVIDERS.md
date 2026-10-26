@@ -67,3 +67,12 @@ Form Add/Edit menyediakan Auto, ikon bawaan (9router, OmniRoute, NineGuard, Clau
 
 Brand marks diambil dari Simple Icons (CC0; OpenAI v15.0.0, lainnya v16.35.0), 9router dan OmniRoute (MIT). Logo tetap milik pemegang mereknya. Engine menggunakan [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) v8.0.43 (MIT), dipin untuk kompatibilitas.
 
+
+## 6. Limit provider langsung SDK
+
+Provider OAuth Claude/Codex otomatis memakai **SDK account telemetry**; jangan memilih tracker 9router. Claude dapat melaporkan jendela 5 jam/7 hari dan reset; Codex memakai window yang dikirim upstream. Nilainya persentase, bukan jumlah token absolut.
+
+Data berasal dari header respons normal. Tombol **Refresh** hanya membaca snapshot SDK terbaru tanpa inferensi, biaya prompt, atau refresh token. Jika header belum tersedia, UI menampilkan **Waiting for upstream telemetry**, bukan unlimited/0%. Snapshot lebih dari 5 menit atau melewati reset ditandai **Stale snapshot**; reset tidak diasumsikan mengosongkan penggunaan.
+
+Dashboard admin menampilkan per akun. Portal dan `/quota` hanya menerima ringkasan tanpa email/ID akun: **most constrained observed account**, bukan total kapasitas seluruh akun. Data parsial diberi label incomplete; akun lain mungkin masih memiliki kapasitas. Limit ini tidak ditambahkan ke budget key NineGuard dan tidak mengubah enforcement token client.
+

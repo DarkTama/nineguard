@@ -106,13 +106,17 @@ func (a *QuotaAlerter) Observe(res *ProviderQuotaResult, now time.Time) []string
 		// Notice: "degraded" is treated as not-error, no alert emitted.
 
 		for _, b := range conn.Buckets {
+			if b.Unit == "percent" && !PercentBucketFresh(b, now) { continue }
 			bKey := fmt.Sprintf("%s|%s|%s", res.ProviderID, conn.ConnectionID, b.Name)
+			if b.Unit == "percent" { bKey = fmt.Sprintf("%s|%s|%s|%s|%d", res.ProviderID, conn.ConnectionID, b.Name, b.Scope, b.WindowMinutes) }
 			wasWarned, exists := a.bucketWarned[bKey]
 
 			var resetAtStr string
 			if b.ResetAt != nil {
 				resetAtStr = b.ResetAt.Format(time.RFC3339)
 			}
+			percentage := b.RemainingPercentage
+			if b.Unit == "percent" && b.RemainingPercent != nil { percentage = int(*b.RemainingPercent) }
 
 			if b.Warning {
 				// Alert if first seen warning (!exists) or transitioning false -> true (!wasWarned)
@@ -128,7 +132,7 @@ func (a *QuotaAlerter) Observe(res *ProviderQuotaResult, now time.Time) []string
 						"provider", provName,
 						"account", conn.AccountLabel,
 						"bucket", b.Name,
-						"remaining_percentage", b.RemainingPercentage,
+						"remaining_percentage", percentage,
 						"reset_at", resetAtStr,
 					)
 					emitted = append(emitted, msg)
@@ -148,7 +152,7 @@ func (a *QuotaAlerter) Observe(res *ProviderQuotaResult, now time.Time) []string
 						"provider", provName,
 						"account", conn.AccountLabel,
 						"bucket", b.Name,
-						"remaining_percentage", b.RemainingPercentage,
+						"remaining_percentage", percentage,
 						"reset_at", resetAtStr,
 					)
 					emitted = append(emitted, msg)

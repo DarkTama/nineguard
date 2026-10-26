@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { h, icon, toast, emptyState, fmtNum, confirmDialog } from '../ui.js';
 import { formatResetIn } from '../modelquotas.js';
 import { formatTokensCompact } from '../quotahelpers.js';
+import { isPercentBucket, remainingLabel, observationLabel, telemetryStateLabel, freshPercent } from '../upstreamtelemetry.js';
 
 export function upstreamBarTone(pct) {
   if (pct > 70) return 'ok';
@@ -75,10 +76,11 @@ export function upstreamAlertRows(providers, max = 6) {
       const buckets = Array.isArray(conn.buckets) ? conn.buckets : [];
       for (const b of buckets) {
         if (!b) continue;
+        if (isPercentBucket(b) && !freshPercent(b)) continue;
         if (b.warning === true) {
           const isCredit = Boolean(b.is_credit_balance);
           const remaining = typeof b.remaining === 'number' ? b.remaining : 0;
-          const rawPct = typeof b.remaining_percentage === 'number' ? b.remaining_percentage : 0;
+          const rawPct = isPercentBucket(b) ? (b.remaining_percent ?? 0) : (typeof b.remaining_percentage === 'number' ? b.remaining_percentage : 0);
           const percent = Math.max(0, Math.min(100, Math.round(rawPct)));
           let tone = upstreamBarTone(percent);
           if (isCredit && remaining <= 0) {
@@ -195,6 +197,15 @@ export function renderUpstreamQuotas(container) {
   }
 
   function renderBucketRow(b) {
+    if (isPercentBucket(b)) {
+      const state = `${telemetryStateLabel(b.observation_state)}${b.incomplete ? ' · incomplete' : ''}`;
+      return h('tr', null,
+        h('td', null, b.name, b.scope && b.scope !== 'account' ? h('div', { class: 'muted' }, b.scope) : null),
+        h('td', { class: 'muted' }, b.used_percent == null ? '—' : `${b.used_percent.toFixed(1)}% used`),
+        h('td', null, h('strong', null, remainingLabel(b)), h('div', { class: 'muted', style: { fontSize: '11px' } }, state)),
+        h('td', { class: 'muted' }, b.reset_at ? `in ${formatResetIn(b.reset_at)}` : '—')
+      );
+    }
     const tone = upstreamBarTone(b.remaining_percentage);
     const pct = Math.max(0, Math.min(100, b.remaining_percentage || 0));
 
@@ -289,7 +300,7 @@ export function renderUpstreamQuotas(container) {
           planBadge,
           resetBtn
         ),
-        h('span', { class: `badge ${conn.status === 'ok' ? 'ok' : 'err'}` }, conn.status)
+        h('span', { class: `badge ${conn.source === 'sdk' ? 'muted' : conn.status === 'ok' ? 'ok' : 'err'}` }, conn.source === 'sdk' && conn.status === 'ok' ? telemetryStateLabel(conn.observation_state) : conn.status)
       ),
       hasError && conn.error_msg
         ? h('div', { class: 'banner err', style: { padding: '6px 10px', fontSize: '11.5px', marginBottom: '8px' } }, conn.error_msg)
@@ -299,14 +310,14 @@ export function renderUpstreamQuotas(container) {
             h('thead', null,
               h('tr', null,
                 h('th', { style: { width: '35%' } }, isKeyAllowance ? 'Model / Allowance Window' : 'Window / Bucket'),
-                h('th', { style: { width: '25%' } }, isKeyAllowance ? 'Tokens Consumed / Limit' : 'Used / Total'),
+                h('th', { style: { width: '25%' } }, provider.source === 'sdk' ? 'Usage' : isKeyAllowance ? 'Tokens Consumed / Limit' : 'Used / Total'),
                 h('th', { style: { width: '25%' } }, 'Remaining'),
                 h('th', { style: { width: '15%' } }, 'Reset In')
               )
             ),
             h('tbody', null, ...conn.buckets.map(renderBucketRow))
           )
-        : h('p', { class: 'muted', style: { margin: 0, fontSize: '12px' } }, 'No active quota buckets reported.')
+        : h('p', { class: 'muted', style: { margin: 0, fontSize: '12px' } }, conn.source === 'sdk' ? telemetryStateLabel(conn.observation_state) : 'No active quota buckets reported.'),
     );
   }
 
@@ -336,7 +347,7 @@ export function renderUpstreamQuotas(container) {
         class: 'btn btn-sm',
         type: 'button',
         disabled: isUnsupported || loading,
-        title: 'Force refresh live quotas from upstream',
+        title: p.source === 'sdk' ? 'Read latest SDK snapshot; no inference request is sent' : 'Force refresh live quotas from upstream',
         onclick: async () => {
           refreshBtn.disabled = true;
           await load(true);
@@ -363,11 +374,11 @@ export function renderUpstreamQuotas(container) {
         ? 'Router Protocol'
         : p.quota_type === 'nineguard'
         ? 'NineGuard Cascaded'
-        : 'Direct LLM (No Tracker)';
+        : p.quota_type === 'sdk' ? 'SDK account telemetry' : 'Direct LLM (No Tracker)';
 
-      const lastUpdatedLabel = p.last_updated
-        ? h('span', { class: 'muted', style: { fontSize: '11.5px', marginLeft: '6px' } }, `Synced ${timeAgo(p.last_updated)}`)
-        : null;
+      const lastUpdatedLabel = p.source === 'sdk'
+        ? h('span', { class: 'muted', style: { fontSize: '11px' } }, observationLabel(p.observed_at, p.observation_state))
+        : p.last_updated ? h('span', { class: 'muted', style: { fontSize: '11.5px', marginLeft: '6px' } }, `Synced ${timeAgo(p.last_updated)}`) : null;
 
       return h('div', { class: 'card', style: { marginBottom: '16px' } },
         h('div', { class: 'card-head', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
@@ -375,7 +386,7 @@ export function renderUpstreamQuotas(container) {
             icon('server'),
             h('h2', { style: { margin: 0, fontSize: '15px' } }, p.provider_name),
             h('span', { class: 'badge', style: { background: 'var(--hover)' } }, protocolLabel),
-            h('span', { class: `badge ${p.status === 'ok' ? 'ok' : p.status === 'degraded' ? 'warn' : 'muted'}` }, p.status),
+            h('span', { class: `badge ${p.source === 'sdk' ? 'muted' : p.status === 'ok' ? 'ok' : p.status === 'degraded' ? 'warn' : 'muted'}` }, p.source === 'sdk' && p.status === 'ok' ? telemetryStateLabel(p.observation_state) : p.status),
             lastUpdatedLabel
           ),
           refreshBtn
@@ -390,7 +401,7 @@ export function renderUpstreamQuotas(container) {
               )
             : p.connections && p.connections.length > 0
             ? h('div', null, ...p.connections.map((c) => renderConnectionCard(c, p)))
-            : h('p', { class: 'muted', style: { margin: 0, fontSize: '12px' } }, 'No account connections found on upstream.')
+            : h('p', { class: 'muted', style: { margin: 0, fontSize: '12px' } }, p.source === 'sdk' ? 'No connected accounts. Connect an account in Providers.' : 'No account connections found on upstream.')
         )
       );
     });

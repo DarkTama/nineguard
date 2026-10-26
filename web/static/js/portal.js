@@ -13,6 +13,7 @@ import {
 } from './portalhelpers.js';
 import { formatCost } from './costhelpers.js';
 import { formatTokensCompact } from './quotahelpers.js';
+import { isPercentBucket, remainingLabel, observationLabel, telemetryStateLabel } from './upstreamtelemetry.js';
 import { formatResetIn, shortModel } from './modelquotas.js';
 
 const root = document.getElementById('portal-app');
@@ -476,14 +477,22 @@ function renderSharedCapacity() {
     h('h2', null, 'Shared capacity'),
     h('p', { class: 'pt-sub' }, 'Upstream limits shared by every key. When one runs out, requests fail even if your own budget is left.'),
     h('ul', { class: 'pt-pools' }, ...pools.map((pool) => {
-      const buckets = (pool.buckets || []).filter((b) => b.is_credit_balance || b.total > 0);
+      const buckets = (pool.buckets || []).filter((b) => isPercentBucket(b) || b.is_credit_balance || b.total > 0);
       return h('li', null,
         h('div', { class: 'pt-pool-head' },
           h('strong', null, pool.family || pool.provider),
           pool.status && pool.status !== 'ok' ? h('span', { class: `badge ${pool.status === 'degraded' ? 'warn' : 'err'}` }, pool.status) : null
         ),
+        pool.source === 'sdk' ? h('p', { class: 'pt-fine' }, 'Most constrained observed account; not pooled capacity. Other connected accounts may still have room.') : null,
         buckets.length
           ? h('ul', { class: 'pt-buckets' }, ...buckets.map((b) => {
+              if (isPercentBucket(b)) {
+                return h('li', null,
+                  h('div', { class: 'pt-mq-head' }, h('span', null, b.name), h('span', { class: 'pt-num' }, remainingLabel(b))),
+                  h('p', { class: 'pt-fine' }, `${observationLabel(b.observed_at, b.observation_state)}${b.incomplete ? ' · incomplete observations' : ''}`),
+                  b.reset_at ? h('div', { class: 'pt-mq-foot' }, `resets in ${formatResetIn(b.reset_at)}`) : null
+                );
+              }
               if (b.is_credit_balance) {
                 return h('li', null, h('div', { class: 'pt-mq-head' }, h('span', null, b.name), h('span', { class: 'pt-num' }, `$${(b.remaining / 100).toFixed(2)} credit`)));
               }
@@ -498,7 +507,7 @@ function renderSharedCapacity() {
                 b.reset_at ? h('div', { class: 'pt-mq-foot' }, h('span', null, `resets in ${formatResetIn(b.reset_at)}`)) : null
               );
             }))
-          : h('p', { class: 'pt-fine' }, 'No limits reported.')
+          : h('p', { class: 'pt-fine' }, pool.source === 'sdk' ? telemetryStateLabel(pool.observation_state) : 'No limits reported.')
       );
     }))
   );

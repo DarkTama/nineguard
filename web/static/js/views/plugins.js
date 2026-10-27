@@ -1,38 +1,42 @@
 // Plugins view: Manage token savers, prompt injectors, HTTP filters, pipeline order, and scope bindings.
 import { api } from '../api.js';
-import { h, icon, toast, formDialog, confirmDialog, copy } from '../ui.js';
+import { h, icon, toast, formDialog, confirmDialog, copy, emptyState, searchableSelect } from '../ui.js';
 import { store } from '../state.js';
-import { scopeLabel, scopeSubLabel, formatInheritText, sortPipeline, warningBannerText } from '../pluginhelpers.js';
+import { scopeLabel, scopeSubLabel, sortPipeline, warningBannerText, appliesToSummary } from '../pluginhelpers.js';
 
-function promptSecretGuardMode(currentAction = 'block', onSave) {
-  let selected = currentAction || 'block';
+// SecretGuard handling modes, shared by the enable prompt and the settings drawer.
+const SECRETGUARD_MODES = [
+  {
+    id: 'block',
+    icon: 'shield',
+    title: 'Block request (recommended)',
+    desc: 'Rejects the request with HTTP 403 before it reaches the upstream model, so no secret can leak. Best for sensitive codebases.',
+    badge: 'Strict'
+  },
+  {
+    id: 'redact',
+    icon: 'scissors',
+    title: 'Redact in flight',
+    desc: 'Replaces detected secrets with [REDACTED_SECRET:<type>] and lets the request continue without the real credentials.',
+    badge: 'Safe pass'
+  },
+  {
+    id: 'warn_only',
+    icon: 'alert',
+    title: 'Warn only (audit mode)',
+    desc: 'Forwards the prompt unchanged but records a WARN security audit in System Logs. Useful for testing rule sensitivity without blocking agents.',
+    badge: 'Monitor'
+  }
+];
 
-  const modes = [
-    {
-      id: 'block',
-      title: '🛡️ Block Request (Recommended)',
-      desc: 'Immediately rejects the request with HTTP 403 Forbidden before it reaches upstream LLM. Prevents any accidental leak. Ideal for sensitive company codebases.',
-      badge: 'Strict'
-    },
-    {
-      id: 'redact',
-      title: '✂️ Redact In-Flight',
-      desc: 'Replaces detected secrets with [REDACTED_SECRET:<type>] in real-time, allowing the LLM request to complete without leaking actual credentials.',
-      badge: 'Safe Pass'
-    },
-    {
-      id: 'warn_only',
-      title: '⚠️ Warn Only (Audit Mode)',
-      desc: 'Forwards the prompt unmodified to the model, but records a WARN security audit in System Logs. Useful for testing rule sensitivity without blocking agents.',
-      badge: 'Monitor'
-    }
-  ];
-
-  const radioContainer = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', margin: '8px 0' } });
+// Radio-card picker for SecretGuard modes. Returns the node and a getter for the selected mode.
+function secretGuardModePicker(initial, radioName) {
+  let selected = initial || 'block';
+  const node = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', margin: '8px 0' } });
 
   function renderOptions() {
-    radioContainer.replaceChildren(
-      ...modes.map(m => {
+    node.replaceChildren(
+      ...SECRETGUARD_MODES.map((m) => {
         const isSel = selected === m.id;
         return h('label', {
           style: {
@@ -52,14 +56,14 @@ function promptSecretGuardMode(currentAction = 'block', onSave) {
         },
           h('input', {
             type: 'radio',
-            name: 'sg_mode',
+            name: radioName,
             value: m.id,
             checked: isSel,
             style: { marginTop: '3px' }
           }),
           h('div', { style: { flex: 1 } },
             h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' } },
-              h('b', { style: { fontSize: '13px' } }, m.title),
+              h('b', { style: { fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' } }, icon(m.icon), m.title),
               h('span', { class: 'badge', style: { fontSize: '10px' } }, m.badge)
             ),
             h('p', { class: 'muted', style: { fontSize: '11.5px', margin: 0, lineHeight: 1.4 } }, m.desc)
@@ -69,19 +73,23 @@ function promptSecretGuardMode(currentAction = 'block', onSave) {
     );
   }
   renderOptions();
+  return { node, value: () => selected };
+}
 
+function promptSecretGuardMode(currentAction = 'block', onSave) {
+  const picker = secretGuardModePicker(currentAction, 'sg_mode');
   formDialog({
-    title: 'SecretGuard: Select Guardrail Mode',
+    title: 'SecretGuard: choose a mode',
     submitText: 'Enable SecretGuard',
     wide: true,
     fields: [
       {
-        label: 'Choose how SecretGuard handles detected secrets (API keys, private keys, .env credentials):',
-        node: radioContainer
+        label: 'How should SecretGuard handle detected secrets (API keys, private keys, .env credentials)?',
+        node: picker.node
       }
     ],
     onSubmit: async () => {
-      await onSave(selected);
+      await onSave(picker.value());
     }
   });
 }
@@ -135,6 +143,7 @@ export function mount(root) {
   let keysList = [];
   let modelsList = [];
   let warningsList = [];
+  let bindingsByPlugin = new Map();
 
   const container = h('div', { class: 'page' });
 
@@ -146,12 +155,12 @@ export function mount(root) {
     type: 'button',
     style: { display: isAdmin() ? 'inline-flex' : 'none' },
     onclick: () => openRegisterModal()
-  }, icon('plus'), 'Register HTTP Plugin');
+  }, icon('plus'), 'Register HTTP plugin');
 
   const header = h('div', { class: 'page-head' },
     h('div', null,
-      h('h1', null, 'Plugins & Token Savers'),
-      h('p', null, 'Reduce token usage (Headroom, Ponytail, Caveman) or run custom HTTP filters. Key beats Group beats All keys, all models.')
+      h('h1', null, 'Plugins & token savers'),
+      h('p', null, 'Reduce token usage or run custom HTTP filters. Key settings override group settings, which override global.')
     ),
     h('div', { class: 'page-actions' }, registerBtn)
   );
@@ -161,28 +170,12 @@ export function mount(root) {
     const ack = localStorage.getItem('ng.plugins.ack.banner');
     if (ack) return null;
 
-    const banner = h('div', {
-      class: 'card',
-      style: {
-        background: 'var(--hover)',
-        borderColor: 'var(--accent)',
-        marginBottom: '16px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '12px 16px'
-      }
-    },
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
-        icon('info', 'text-accent'),
-        h('span', null,
-          h('b', null, 'Plugins available'),
-          ' — all token savers are off by default. Precedence: ',
-          h('code', null, 'Key beats Group beats All keys, all models'), '.'
-        )
-      ),
+    const banner = h('div', { class: 'note plugins-banner' },
+      icon('info'),
+      h('span', { style: { flex: '1' } }, 'All token savers are off by default. Use "Apply to" on a plugin to turn it on for a key or model group.'),
       h('button', {
         class: 'btn btn-sm',
+        type: 'button',
         onclick: () => {
           localStorage.setItem('ng.plugins.ack.banner', '1');
           banner.remove();
@@ -219,33 +212,40 @@ export function mount(root) {
   }
 
   // ── Plugin Cards List ──
-  const listEl = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' } });
+  const listEl = h('div', { class: 'plugin-list' });
+
+  const CATEGORY_LABELS = { input_compression: 'Input compression', output_style: 'Output style' };
+
+  function policyText(p) {
+    const fail = p.failure_policy === 'closed' ? 'Fail closed (blocks the request on error)' : 'Fail open (skips the plugin on error)';
+    return `${fail} · ${p.bypassable ? 'Bypassable' : 'Strict'}`;
+  }
+
+  function ordinal(n) {
+    const s = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+    return `${n}${s}`;
+  }
 
   function renderList() {
     const sorted = sortPipeline(pluginsList);
     if (!sorted.length) {
-      listEl.replaceChildren(h('div', { class: 'card', style: { padding: '24px', textAlign: 'center' } }, 'No plugins registered'));
+      listEl.replaceChildren(emptyState('puzzle', 'No plugins registered', 'Register an HTTP plugin to filter or transform requests.'));
       return;
     }
 
-    listEl.replaceChildren(...sorted.map((p, idx) => {
+    listEl.replaceChildren(
+      h('p', { class: 'plugin-pipeline-note' }, icon('layers'),
+        'Plugins run top to bottom on every request. Use the arrows to change the order.'),
+      ...sorted.map((p, idx) => {
       const globBinding = p.global_binding || { state: 'off' };
       const isGlobOn = globBinding.state === 'on';
+      const bindings = bindingsByPlugin.get(p.id);
+      const applies = bindings ? appliesToSummary(bindings) : `Global: ${isGlobOn ? 'on' : 'off'}`;
 
-      const catBadge = h('span', { class: 'badge', style: { textTransform: 'capitalize' } },
-        p.category === 'input_compression' ? 'Input Compression' :
-        p.category === 'output_style' ? 'Output Style' : 'Other'
-      );
-
-      const policyBadge = h('span', {
-        class: `badge ${p.failure_policy === 'closed' ? 'badge-danger' : 'badge-neutral'}`
-      }, p.failure_policy === 'closed' ? 'Fail Closed' : 'Fail Open');
-
-      const bypassBadge = h('span', { class: 'badge' }, p.bypassable ? 'Bypassable' : 'Strict');
-
-      const latencyLabel = h('span', { class: 'muted', style: { fontSize: '11px', marginLeft: '6px' } });
+      const latencyLabel = h('span', { class: 'muted plugin-latency', 'aria-live': 'polite' });
       const testBtn = h('button', {
         class: 'btn btn-sm',
+        type: 'button',
         onclick: async () => {
           testBtn.disabled = true;
           latencyLabel.textContent = 'Testing...';
@@ -267,7 +267,10 @@ export function mount(root) {
       }, icon('play'), 'Test');
 
       const toggleGlobBtn = h('button', {
-        class: `btn btn-sm ${isGlobOn ? 'btn-primary' : ''}`,
+        class: 'btn btn-sm',
+        type: 'button',
+        'aria-pressed': String(isGlobOn),
+        title: isGlobOn ? 'Turn off for every key and model' : 'Turn on for every key and model',
         onclick: async () => {
           const nextState = isGlobOn ? 'off' : 'on';
           if (nextState === 'on' && p.id === 'secretguard') {
@@ -288,10 +291,11 @@ export function mount(root) {
             const ackKey = `ng.plugins.ack.${p.id}`;
             if (!localStorage.getItem(ackKey)) {
               confirmDialog({
-                title: `Enable ${p.name} globally?`,
-                message: `Check that your upstream providers do not already apply token saving (e.g. 9router RTK, another NineGuard). Stacked token savers can remove context and lower answer quality.\n\nTurn on for All keys, all models?`,
-                confirmText: 'Enable',
+                title: `Turn on ${p.name} globally?`,
+                message: 'Check that your upstream providers do not already apply token saving (for example 9router RTK or another NineGuard). Stacked token savers can remove context and lower answer quality.',
+                confirmText: 'Turn on',
                 onConfirm: async () => {
+                  localStorage.setItem(ackKey, '1');
                   await saveBinding(p.id, 'global', '', nextState, '{}');
                   reload();
                 }
@@ -302,63 +306,152 @@ export function mount(root) {
           await saveBinding(p.id, 'global', '', nextState, '{}');
           reload();
         }
-      }, isGlobOn ? 'All keys, all models: ON' : 'All keys, all models: OFF');
+      }, isGlobOn ? icon('check') : null, isGlobOn ? 'Global: On' : 'Global: Off');
 
-      const configBtn = h('button', {
+      const applyBtn = h('button', {
+        class: 'btn btn-sm btn-primary',
+        type: 'button',
+        title: 'Turn this plugin on or off for a key or model group',
+        onclick: () => openApplyDialog(p)
+      }, icon('crosshair'), 'Apply to…');
+
+      const settingsBtn = h('button', {
         class: 'btn btn-sm',
+        type: 'button',
         onclick: () => openDrawer(p)
-      }, icon('pencil'), 'Configure & Scopes');
+      }, icon('settings'), 'Settings');
 
       const moveUpBtn = h('button', {
-        class: 'btn btn-sm',
+        class: 'plugin-rank-btn',
+        type: 'button',
         disabled: idx === 0,
-        title: 'Move up in pipeline',
+        title: idx === 0 ? 'Already first' : 'Run earlier',
+        'aria-label': `Move ${p.name} up`,
         onclick: () => reorder(idx, idx - 1)
-      }, icon('chevron-left'));
+      }, icon('chevron-up'));
 
       const moveDownBtn = h('button', {
-        class: 'btn btn-sm',
+        class: 'plugin-rank-btn',
+        type: 'button',
         disabled: idx === sorted.length - 1,
-        title: 'Move down in pipeline',
+        title: idx === sorted.length - 1 ? 'Already last' : 'Run later',
+        'aria-label': `Move ${p.name} down`,
         onclick: () => reorder(idx, idx + 1)
-      }, icon('chevron-right'));
+      }, icon('chevron-down'));
 
-      const guidanceCard = p.guidance ? h('div', {
-        class: 'muted',
-        style: {
-          fontSize: '11.5px',
-          marginTop: '8px',
-          background: 'var(--panel)',
-          padding: '8px 12px',
-          borderRadius: '6px'
-        }
-      },
+      const guidanceCard = p.guidance ? h('div', { class: 'muted plugin-guidance' },
         h('div', null, h('b', null, 'Summary: '), p.guidance.summary || ''),
-        p.guidance.recommended_for ? h('div', { style: { marginTop: '2px' } }, h('b', null, 'Recommended for: '), p.guidance.recommended_for) : null,
-        p.guidance.not_recommended_for ? h('div', { style: { marginTop: '2px', color: 'var(--warning, #eab308)' } }, h('b', null, 'Not recommended: '), p.guidance.not_recommended_for) : null
+        p.guidance.recommended_for ? h('div', null, h('b', null, 'Recommended for: '), p.guidance.recommended_for) : null,
+        p.guidance.not_recommended_for ? h('div', { class: 'plugin-guidance-warn' }, h('b', null, 'Not recommended: '), p.guidance.not_recommended_for) : null
       ) : null;
 
-      return h('div', { class: 'card', style: { padding: '14px' } },
-        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' } },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
-            h('span', { class: 'badge', style: { fontWeight: 'bold' } }, `#${p.pipeline_order}`),
-            h('h3', { style: { margin: 0, fontSize: '15px' } }, p.name),
-            h('span', { class: 'badge' }, p.kind),
-            catBadge,
-            policyBadge,
-            bypassBadge
-          ),
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
-            moveUpBtn, moveDownBtn,
-            toggleGlobBtn,
-            testBtn, latencyLabel,
-            configBtn
-          )
+      return h('div', { class: `card plugin-card${isGlobOn ? ' is-on' : ''}` },
+        h('div', { class: 'plugin-rank', title: `Runs ${ordinal(idx + 1)} in the pipeline` },
+          moveUpBtn,
+          h('span', { class: 'plugin-rank-num', 'aria-label': `Position ${idx + 1} of ${sorted.length}` }, String(idx + 1)),
+          moveDownBtn
         ),
-        p.description ? h('p', { class: 'muted', style: { fontSize: '12px', margin: '6px 0 0' } }, p.description) : null,
-        guidanceCard
+        h('div', { class: 'plugin-card-main' },
+          h('div', { class: 'plugin-card-head' },
+            h('div', { class: 'plugin-card-title' },
+              h('h3', { title: policyText(p) }, p.name),
+              h('span', { class: 'badge' }, p.kind),
+              h('span', { class: 'badge' }, CATEGORY_LABELS[p.category] || 'Other')
+            ),
+            h('div', { class: 'plugin-card-actions' },
+              toggleGlobBtn,
+              applyBtn,
+              testBtn,
+              settingsBtn
+            )
+          ),
+          h('div', { class: 'plugin-meta' },
+            h('span', null, h('b', null, 'Applies to: '), applies),
+            h('span', { class: 'muted' }, policyText(p)),
+            latencyLabel
+          ),
+          p.description ? h('p', { class: 'muted plugin-desc' }, p.description) : null,
+          guidanceCard
+        )
       );
     }));
+  }
+
+  // ── Apply to… dialog: one key or model group binding ──
+  function openApplyDialog(p) {
+    const bindings = bindingsByPlugin.get(p.id) || [];
+    let targetType = keysList.length || !groupsList.length ? 'key' : 'group';
+
+    const targetSelect = h('select', { class: 'select wide', 'aria-label': 'Target' });
+    const stateSelect = h('select', { class: 'select wide', 'aria-label': 'State' },
+      h('option', { value: 'on' }, 'On'),
+      h('option', { value: 'off' }, 'Off')
+    );
+    const currentLine = h('small', { class: 'muted' });
+
+    const existing = () => bindings.find((b) => b.scope_type === targetType && b.scope_id === targetSelect.value);
+
+    function syncState() {
+      const b = existing();
+      if (b && (b.state === 'on' || b.state === 'off')) {
+        stateSelect.value = b.state;
+        currentLine.textContent = `Currently ${b.state} for this ${targetType === 'key' ? 'key' : 'group'}.`;
+      } else {
+        stateSelect.value = 'on';
+        currentLine.textContent = targetSelect.value ? 'Currently follows the broader setting.' : '';
+      }
+    }
+
+    function fillTargets() {
+      const items = targetType === 'key'
+        ? keysList.map((k) => [k.id, k.key ? `${k.name} (${k.key})` : k.name])
+        : groupsList.map((g) => [g.id, `${g.name} (${g.models_count || 0} models)`]);
+      targetSelect.replaceChildren(...(items.length
+        ? items.map(([v, l]) => h('option', { value: v }, l))
+        : [h('option', { value: '' }, targetType === 'key' ? 'No keys yet' : 'No model groups yet')]));
+      targetSelect.disabled = !items.length;
+      syncState();
+    }
+
+    const segBtn = (type, title, sub) => h('button', {
+      type: 'button',
+      class: 'seg-btn',
+      onclick: () => {
+        targetType = type;
+        paintSeg();
+        fillTargets();
+      }
+    }, h('span', { class: 'seg-title' }, title), h('span', { class: 'seg-sub' }, sub));
+    const keyBtn = segBtn('key', 'Key', 'any model this key uses');
+    const groupBtn = segBtn('group', 'Model group', 'models in the group, any key');
+    function paintSeg() {
+      for (const [btn, type] of [[keyBtn, 'key'], [groupBtn, 'group']]) {
+        btn.classList.toggle('on', targetType === type);
+        btn.setAttribute('aria-pressed', String(targetType === type));
+      }
+    }
+    targetSelect.addEventListener('change', syncState);
+    paintSeg();
+    fillTargets();
+
+    formDialog({
+      title: `Apply ${p.name} to…`,
+      submitText: 'Save',
+      fields: [
+        { label: 'Target type', node: h('div', { class: 'seg', role: 'group', 'aria-label': 'Target type' }, keyBtn, groupBtn) },
+        { label: 'Target', node: h('div', { class: 'plugin-apply-target' }, targetSelect, currentLine) },
+        { label: 'State', input: stateSelect },
+        { node: h('p', { class: 'note' }, icon('info'), 'To target specific models, add them to a Model Group.') },
+      ],
+      onSubmit: async () => {
+        const scopeID = targetSelect.value;
+        if (!scopeID) throw new Error(targetType === 'key' ? 'Create an API key first.' : 'Create a model group first.');
+        const prev = existing();
+        await putBinding(p.id, targetType, scopeID, stateSelect.value, prev?.settings || '{}');
+        reload();
+        return true;
+      }
+    });
   }
 
   // ── Reorder pipeline ──
@@ -377,15 +470,20 @@ export function mount(root) {
   }
 
   // ── Save Binding ──
+  // putBinding throws on failure (for dialogs that show the error inline); saveBinding toasts it.
+  async function putBinding(pluginID, scopeType, scopeID, state, settings = '{}') {
+    const res = await api.put(`/plugins/${encodeURIComponent(pluginID)}/bindings`, {
+      scope_type: scopeType, scope_id: scopeID, state, settings
+    });
+    toast(state === 'inherit' ? 'Override removed' : `Plugin turned ${state}`);
+    if (res.warnings && res.warnings.length) {
+      toast(`Notice: ${res.warnings[0].message}`, 'warn');
+    }
+  }
+
   async function saveBinding(pluginID, scopeType, scopeID, state, settings = '{}') {
     try {
-      const res = await api.put(`/plugins/${encodeURIComponent(pluginID)}/bindings`, {
-        scope_type: scopeType, scope_id: scopeID, state, settings
-      });
-      toast(`Binding updated: ${state}`);
-      if (res.warnings && res.warnings.length) {
-        toast(`Notice: ${res.warnings[0].message}`, 'warning');
-      }
+      await putBinding(pluginID, scopeType, scopeID, state, settings);
     } catch (e) {
       toast(e.message, 'error');
     }
@@ -408,8 +506,8 @@ export function mount(root) {
     const globKey = 'global:';
     const globB = bindingMap.get(globKey) || { state: 'off', settings: '{}' };
     const globSelect = h('select', { class: 'input', style: { width: '130px', fontWeight: 'bold' } },
-      h('option', { value: 'off', selected: globB.state === 'off' }, 'Off (Disabled)'),
-      h('option', { value: 'on', selected: globB.state === 'on' }, 'On (Enabled)')
+      h('option', { value: 'off', selected: globB.state === 'off' }, 'Off'),
+      h('option', { value: 'on', selected: globB.state === 'on' }, 'On')
     );
     globSelect.onchange = async () => {
       if (globSelect.value === 'on' && p.id === 'secretguard') {
@@ -443,7 +541,7 @@ export function mount(root) {
       h('div', null,
         h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
           h('b', { style: { fontSize: '13px' } }, scopeLabel('global')),
-          h('span', { class: 'badge', style: { fontSize: '10px' } }, 'Base Rule')
+          h('span', { class: 'badge', style: { fontSize: '10px' } }, 'Global')
         ),
         h('div', { class: 'muted', style: { fontSize: '11px', marginTop: '2px' } }, scopeSubLabel('global'))
       ),
@@ -465,7 +563,7 @@ export function mount(root) {
       if (!activeList.length) {
         overridesContainer.replaceChildren(
           h('div', { class: 'muted', style: { padding: '16px', textAlign: 'center', border: '1px dashed var(--border)', borderRadius: '6px', fontSize: '12px' } },
-            'No scope overrides configured. All model groups and API keys currently inherit the base rule above.'
+            'No overrides. Every model group and key follows the global setting above.'
           )
         );
         return;
@@ -497,7 +595,7 @@ export function mount(root) {
         const removeBtn = h('button', {
           class: 'btn btn-sm btn-danger',
           type: 'button',
-          title: 'Reset to Inherit',
+          title: 'Remove override and follow the broader setting',
           onclick: async () => {
             bindingMap.delete(`${b.scope_type}:${b.scope_id}`);
             await saveBinding(p.id, b.scope_type, b.scope_id, 'inherit', '{}');
@@ -516,20 +614,22 @@ export function mount(root) {
             subText ? h('div', { class: 'muted', style: { fontSize: '10.5px', marginTop: '2px' } }, subText) : null
           ),
           h('td', null, stateSelect),
-          h('td', { style: { textAlign: 'right' } }, removeBtn)
+          h('td', { class: 'num' }, removeBtn)
         );
       });
 
       overridesContainer.replaceChildren(
-        h('table', { class: 'table', style: { width: '100%', fontSize: '12px' } },
-          h('thead', null,
-            h('tr', null,
-              h('th', null, 'Target Scope'),
-              h('th', { style: { width: '110px' } }, 'Override Rule'),
-              h('th', { style: { width: '90px', textAlign: 'right' } }, 'Action')
-            )
-          ),
-          h('tbody', null, ...rows)
+        h('div', { class: 'table-wrap' },
+          h('table', { class: 'table' },
+            h('thead', null,
+              h('tr', null,
+                h('th', null, 'Target'),
+                h('th', { class: 'col-state' }, 'State'),
+                h('th', { class: 'num col-action' }, 'Action')
+              )
+            ),
+            h('tbody', null, ...rows)
+          )
         )
       );
     }
@@ -542,7 +642,7 @@ export function mount(root) {
     );
 
     function updatePickerOptions() {
-      const opts = [h('option', { value: '' }, '-- Select Group or Key to Override --')];
+      const opts = [h('option', { value: '' }, 'Select a group or key')];
 
       const groupOpts = groupsList
         .filter((g) => {
@@ -598,7 +698,7 @@ export function mount(root) {
           addOverrideBtn.disabled = false;
         }
       }
-    }, icon('plus'), 'Add Override');
+    }, icon('plus'), 'Add override');
 
     const addOverrideRow = h('div', {
       style: {
@@ -806,73 +906,10 @@ export function mount(root) {
         savePromptBtn
       );
     } else if (p.id === 'secretguard') {
-      let currentAction = currentSettings.action || 'block';
-
-      const modes = [
-        {
-          id: 'block',
-          title: '🛡️ Block Request (Recommended)',
-          desc: 'Immediately rejects the request with HTTP 403 Forbidden before it reaches upstream LLM. Prevents any accidental leak. Ideal for sensitive company codebases.',
-          badge: 'Strict'
-        },
-        {
-          id: 'redact',
-          title: '✂️ Redact In-Flight',
-          desc: 'Replaces detected secrets with [REDACTED_SECRET:<type>] in real-time, allowing the LLM request to complete without leaking actual credentials.',
-          badge: 'Safe Pass'
-        },
-        {
-          id: 'warn_only',
-          title: '⚠️ Warn Only (Audit Mode)',
-          desc: 'Forwards the prompt unmodified to the model, but records a WARN security audit in System Logs. Useful for testing rule sensitivity without blocking agents.',
-          badge: 'Monitor'
-        }
-      ];
-
-      const cardsContainer = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', margin: '8px 0 12px' } });
-
-      function renderCards() {
-        cardsContainer.replaceChildren(
-          ...modes.map((m) => {
-            const isSel = currentAction === m.id;
-            return h('label', {
-              style: {
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: '10px',
-                padding: '10px 12px',
-                borderRadius: '8px',
-                border: `1px solid ${isSel ? 'var(--accent, #6366f1)' : 'var(--border)'}`,
-                background: isSel ? 'var(--hover)' : 'var(--panel)',
-                cursor: 'pointer'
-              },
-              onclick: () => {
-                currentAction = m.id;
-                renderCards();
-              }
-            },
-              h('input', {
-                type: 'radio',
-                name: 'sg_drawer_mode',
-                value: m.id,
-                checked: isSel,
-                style: { marginTop: '3px' }
-              }),
-              h('div', { style: { flex: 1 } },
-                h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' } },
-                  h('b', { style: { fontSize: '13px' } }, m.title),
-                  h('span', { class: 'badge', style: { fontSize: '10px' } }, m.badge)
-                ),
-                h('p', { class: 'muted', style: { fontSize: '11.5px', margin: 0, lineHeight: 1.4 } }, m.desc)
-              )
-            );
-          })
-        );
-      }
-      renderCards();
+      const picker = secretGuardModePicker(currentSettings.action || 'block', 'sg_drawer_mode');
 
       const saveSecretGuard = async () => {
-        const newSettings = { action: currentAction };
+        const newSettings = { action: picker.value() };
         await api.put(`/plugins/${encodeURIComponent(p.id)}`, {
           default_settings: JSON.stringify(newSettings)
         });
@@ -903,7 +940,7 @@ export function mount(root) {
         h('p', { class: 'muted', style: { fontSize: '11px', margin: '0 0 8px' } },
           'Scans incoming prompts for private keys (RSA/EC), high-entropy API tokens (sk-, ghp-, AKIA), and sensitive environment variables.'
         ),
-        cardsContainer,
+        picker.node,
         saveSecretBtn
       );
     }
@@ -994,16 +1031,16 @@ export function mount(root) {
     }
 
     formDialog({
-      title: `Configure ${p.name}`,
+      title: `${p.name} settings`,
       wide: true,
       body: h('div', null,
         httpSection,
         settingsSection,
-        h('h4', { style: { margin: '0 0 4px', fontSize: '13px' } }, 'Base Rule (Default for All Requests)'),
+        h('h4', { style: { margin: '0 0 4px', fontSize: '13px' } }, 'Global setting'),
         globalPanel,
-        h('h4', { style: { margin: '16px 0 4px', fontSize: '13px' } }, 'Scope Overrides (Exceptions)'),
+        h('h4', { style: { margin: '16px 0 4px', fontSize: '13px' } }, 'Overrides'),
         h('p', { class: 'muted', style: { fontSize: '11px', margin: '0 0 10px' } },
-          'Explicit overrides for specific Model Groups or API Keys. Precedence: Key beats Group beats All keys, all models.'
+          'Turn the plugin on or off for specific model groups or keys.'
         ),
         overridesContainer,
         addOverrideRow
@@ -1087,24 +1124,22 @@ export function mount(root) {
 
   function renderProbe() {
     const activeKeys = keysList.filter((k) => k.is_active !== false);
-    const keySelect = h('select', { class: 'input', style: { minWidth: '220px' } },
+    const keySelect = h('select', { class: 'select', 'aria-label': 'API key', style: { minWidth: '220px' } },
       ...activeKeys.map((k) => h('option', { value: k.raw_key || k.key, 'data-id': k.id }, `${k.name} (${k.key})`))
     );
 
     const activeModels = modelsList.filter((m) => m.enabled !== false);
-    const datalistId = 'plugin-probe-models';
-    const datalist = h('datalist', { id: datalistId },
-      ...activeModels.map((m) => h('option', { value: m.id }))
-    );
-
-    const defaultModel = activeModels[0] ? activeModels[0].id : '9router/anthropic/claude-3.5-sonnet';
-    const modelInput = h('input', {
-      class: 'input',
-      list: datalistId,
-      placeholder: 'Select or type model...',
-      value: defaultModel,
+    const modelInput = searchableSelect({
+      placeholder: activeModels.length ? 'Select a model' : 'No enabled models',
+      searchPlaceholder: 'Search models...',
+      ariaLabel: 'Model',
+      clearable: false,
+      compact: false,
+      options: activeModels.map((m) => ({ value: m.id, label: m.id })),
+      value: activeModels[0] ? activeModels[0].id : '',
       style: { minWidth: '260px' }
     });
+    modelInput.disabled = !activeModels.length;
 
     const promptInput = h('input', {
       class: 'input',
@@ -1123,7 +1158,7 @@ export function mount(root) {
       class: 'btn btn-primary',
       type: 'button',
       onclick: async () => {
-        const model = modelInput.value.trim();
+        const model = String(modelInput.value || '').trim();
         const key = keySelect.value;
         const prompt = promptInput.value.trim();
 
@@ -1164,7 +1199,7 @@ export function mount(root) {
               pluginBadges.push(h('span', {
                 class: 'badge',
                 style: { background: 'rgba(249, 115, 22, 0.15)', color: 'var(--accent)', border: '1px solid rgba(249, 115, 22, 0.4)' }
-              }, '🧩 ' + pluginsApplied));
+              }, icon('puzzle'), pluginsApplied));
             }
             if (tokensSaved && parseInt(tokensSaved, 10) > 0) {
               pluginBadges.push(h('span', { class: 'badge ok' }, `-${tokensSaved} tokens saved`));
@@ -1207,12 +1242,12 @@ export function mount(root) {
 
     // 2. Scope Preview Button
     const previewBtn = h('button', {
-      class: 'btn btn-secondary',
+      class: 'btn',
       type: 'button',
       onclick: async () => {
         const selectedOpt = keySelect.selectedOptions?.[0];
         const keyID = selectedOpt?.getAttribute('data-id') || '';
-        const model = modelInput.value.trim();
+        const model = String(modelInput.value || '').trim();
 
         previewBtn.disabled = true;
         try {
@@ -1224,39 +1259,41 @@ export function mount(root) {
           resultBox.style.display = 'block';
           resultBox.replaceChildren(
             h('div', { style: { marginBottom: '8px', fontWeight: 'bold', fontSize: '12.5px' } },
-              `Scope Precedence for ${model || '(any model)'}:`
+              `Which plugins run for ${model || '(any model)'}:`
             ),
-            h('table', { class: 'table', style: { width: '100%', fontSize: '12px' } },
-              h('thead', null,
-                h('tr', null,
-                  h('th', null, 'Plugin'),
-                  h('th', null, 'Effective State'),
-                  h('th', null, 'Decided By'),
-                  h('th', null, 'Overridden Candidates')
+            h('div', { class: 'table-wrap' },
+              h('table', { class: 'table' },
+                h('thead', null,
+                  h('tr', null,
+                    h('th', null, 'Plugin'),
+                    h('th', null, 'Effective state'),
+                    h('th', null, 'Decided by'),
+                    h('th', null, 'Overridden candidates')
+                  )
+                ),
+                h('tbody', null,
+                  ...(res.plugins || []).map((rp) => {
+                    const runs = rp.effective_state === 'on';
+                    const overriddenText = (rp.overridden || []).map((o) => o.label).join(', ') || '—';
+                    return h('tr', null,
+                      h('td', null, h('b', null, rp.plugin.name)),
+                      h('td', null, h('span', { class: `badge${runs ? ' ok' : ''}` }, runs ? 'On' : 'Off')),
+                      h('td', null, rp.decided_by?.label || '—'),
+                      h('td', { class: 'muted' }, overriddenText)
+                    );
+                  })
                 )
-              ),
-              h('tbody', null,
-                ...(res.plugins || []).map((rp) => {
-                  const runs = rp.effective_state === 'on';
-                  const overriddenText = (rp.overridden || []).map((o) => o.label).join(', ') || '—';
-                  return h('tr', null,
-                    h('td', null, h('b', null, rp.plugin.name)),
-                    h('td', null, h('span', { class: `badge ${runs ? 'badge-primary' : ''}` }, runs ? 'ON' : 'OFF')),
-                    h('td', null, rp.decided_by?.label || '—'),
-                    h('td', { class: 'muted' }, overriddenText)
-                  );
-                })
               )
             )
           );
         } catch (e) {
           resultBox.style.display = 'block';
-          resultBox.replaceChildren(h('p', { class: 'text-danger' }, e.message));
+          resultBox.replaceChildren(h('p', { class: 'error-text' }, e.message));
         } finally {
           previewBtn.disabled = false;
         }
       }
-    }, icon('table'), 'Check Scope Preview');
+    }, icon('table'), 'Preview scopes');
 
     probeCard.replaceChildren(
       h('div', { class: 'card-head' },
@@ -1269,7 +1306,6 @@ export function mount(root) {
         h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' } },
           keySelect,
           modelInput,
-          datalist,
           promptInput,
           pingBtn,
           previewBtn
@@ -1280,6 +1316,26 @@ export function mount(root) {
   }
 
   // ── Reload data ──
+  // First load shows skeleton cards, then content or an error with Retry. Later reloads keep current content.
+  let loaded = false;
+
+  function renderLoading() {
+    container.replaceChildren(
+      header,
+      h('div', { class: 'plugin-list', 'aria-busy': 'true' },
+        ...Array.from({ length: 3 }, () => h('div', { class: 'card skel plugin-skel' })))
+    );
+  }
+
+  function renderLoadError(message) {
+    container.replaceChildren(
+      header,
+      h('div', { class: 'card' },
+        emptyState('alert', 'Could not load plugins', message,
+          h('button', { class: 'btn', type: 'button', onclick: () => { renderLoading(); reload(); } }, icon('refresh'), 'Retry')))
+    );
+  }
+
   async function reload() {
     try {
       const [pRes, gRes, kRes, wRes, mRes] = await Promise.all([
@@ -1289,16 +1345,25 @@ export function mount(root) {
         api.get('/plugins/warnings'),
         api.get('/models').catch(() => []),
       ]);
-      pluginsList = pRes.plugins || [];
+      const plugins = pRes.plugins || [];
+      // Per-plugin bindings feed the "Applies to" line; a failed fetch falls back to the global state only.
+      const bindingResults = await Promise.all(plugins.map((p) =>
+        api.get(`/plugins/${encodeURIComponent(p.id)}/bindings`).then((r) => r.bindings || []).catch(() => null)));
+      pluginsList = plugins;
+      bindingsByPlugin = new Map();
+      plugins.forEach((p, i) => { if (bindingResults[i]) bindingsByPlugin.set(p.id, bindingResults[i]); });
       groupsList = gRes.groups || [];
       keysList = kRes.keys || [];
       warningsList = wRes.warnings || [];
       modelsList = Array.isArray(mRes) ? mRes : (mRes?.models || []);
 
       if (!alive) return;
+      loaded = true;
       render();
     } catch (e) {
-      if (alive) toast(e.message, 'error');
+      if (!alive) return;
+      if (loaded) toast(e.message, 'error');
+      else renderLoadError(e.message);
     }
   }
 
@@ -1318,6 +1383,7 @@ export function mount(root) {
   }
 
   root.replaceChildren(container);
+  renderLoading();
   reload();
 
   return {

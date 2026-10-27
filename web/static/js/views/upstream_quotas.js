@@ -3,12 +3,9 @@ import { api } from '../api.js';
 import { h, icon, toast, emptyState, fmtNum, confirmDialog } from '../ui.js';
 import { formatResetIn } from '../modelquotas.js';
 import { formatTokensCompact } from '../quotahelpers.js';
+import { isPercentBucket, remainingLabel, observationLabel, telemetryStateLabel, freshPercent, remainingTone, sdkMeter } from '../upstreamtelemetry.js';
 
-export function upstreamBarTone(pct) {
-  if (pct > 70) return 'ok';
-  if (pct >= 30) return 'warn';
-  return 'danger';
-}
+export const upstreamBarTone = remainingTone;
 
 export function upstreamAlertRows(providers, max = 6) {
   if (!Array.isArray(providers)) return { rows: [], total: 0 };
@@ -33,7 +30,7 @@ export function upstreamAlertRows(providers, max = 6) {
           accountLabel: '',
           status: 'error',
           errorMsg: p.error_msg || '',
-          tone: 'danger',
+          tone: 'err',
         });
       } else if (p.status === 'degraded') {
         degradedProblemRows.push({
@@ -59,7 +56,7 @@ export function upstreamAlertRows(providers, max = 6) {
           accountLabel,
           status: 'error',
           errorMsg: conn.error_msg || '',
-          tone: 'danger',
+          tone: 'err',
         });
       } else if (conn.status === 'degraded') {
         degradedProblemRows.push({
@@ -75,14 +72,15 @@ export function upstreamAlertRows(providers, max = 6) {
       const buckets = Array.isArray(conn.buckets) ? conn.buckets : [];
       for (const b of buckets) {
         if (!b) continue;
+        if (isPercentBucket(b) && !freshPercent(b)) continue;
         if (b.warning === true) {
           const isCredit = Boolean(b.is_credit_balance);
           const remaining = typeof b.remaining === 'number' ? b.remaining : 0;
-          const rawPct = typeof b.remaining_percentage === 'number' ? b.remaining_percentage : 0;
+          const rawPct = isPercentBucket(b) ? (b.remaining_percent ?? 0) : (typeof b.remaining_percentage === 'number' ? b.remaining_percentage : 0);
           const percent = Math.max(0, Math.min(100, Math.round(rawPct)));
           let tone = upstreamBarTone(percent);
           if (isCredit && remaining <= 0) {
-            tone = 'danger';
+            tone = 'err';
           }
           bucketRows.push({
             kind: 'bucket',
@@ -121,6 +119,53 @@ function timeAgo(dateStr) {
   if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
   if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
   return `${Math.floor(diffSec / 86400)}d ago`;
+}
+
+// True when a provider needs a look: provider/connection errors or degradation, or a warning bucket.
+export function upstreamNeedsAttention(p) {
+  if (!p) return false;
+  if (p.status === 'error' || p.status === 'degraded' || p.error_msg) return true;
+  return (p.connections || []).some((c) => c && (c.status === 'error' || c.status === 'degraded'
+    || (c.buckets || []).some((b) => b && b.warning === true)));
+}
+
+// One-line digest for a collapsed provider card: connections, lowest remaining %, soonest reset.
+export function upstreamProviderSummary(p, now = Date.now()) {
+  const conns = (p?.connections || []).filter(Boolean);
+  let low = null;
+  let reset = null;
+  for (const c of conns) {
+    for (const b of c.buckets || []) {
+      if (!b) continue;
+      let pct = null;
+      if (isPercentBucket(b)) { if (freshPercent(b, now) && Number.isFinite(b.remaining_percent)) pct = b.remaining_percent; }
+      else if (!b.is_credit_balance && b.total > 0 && Number.isFinite(b.remaining_percentage)) pct = b.remaining_percentage;
+      if (pct != null) low = low == null ? pct : Math.min(low, pct);
+      const t = b.reset_at ? Date.parse(b.reset_at) : NaN;
+      if (Number.isFinite(t) && t > now && (reset == null || t < reset)) reset = t;
+    }
+  }
+  const parts = [`${conns.length} ${conns.length === 1 ? 'connection' : 'connections'}`];
+  if (low != null) parts.push(`lowest ${Math.max(0, Math.min(100, Math.round(low)))}% left`);
+  if (reset != null) parts.push(`next reset in ${formatResetIn(new Date(reset).toISOString())}`);
+  return parts.join(' · ');
+}
+
+// User choices per provider id (true = collapsed); unset providers use the default.
+const COLLAPSE_KEY = 'ng.upstream.collapsed';
+function loadCollapsed() {
+  try { return JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '{}') || {}; } catch { return {}; }
+}
+const providerKey = (p) => String(p.provider_id || p.provider_name || '');
+function isProviderOpen(p, count) {
+  const saved = loadCollapsed()[providerKey(p)];
+  if (typeof saved === 'boolean') return !saved;
+  return count <= 2 || upstreamNeedsAttention(p);
+}
+function setProviderOpen(p, open) {
+  const all = loadCollapsed();
+  all[providerKey(p)] = !open;
+  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(all)); } catch { /* storage unavailable */ }
 }
 
 export function renderUpstreamQuotas(container) {
@@ -195,6 +240,20 @@ export function renderUpstreamQuotas(container) {
   }
 
   function renderBucketRow(b) {
+    if (isPercentBucket(b)) {
+      const state = `${telemetryStateLabel(b.observation_state)}${b.incomplete ? ' · incomplete' : ''}`;
+      const m = sdkMeter(b);
+      return h('tr', null,
+        h('td', null, b.name, b.scope && b.scope !== 'account' ? h('div', { class: 'muted' }, b.scope) : null),
+        h('td', { class: 'muted' }, b.used_percent == null ? '—' : `${b.used_percent.toFixed(1)}% used`),
+        h('td', null,
+          h('div', { class: `uq-remaining${m.dim ? ' is-dim' : ''}` },
+            h('span', { class: `qbar ${m.tone}`, role: 'img', 'aria-label': `${remainingLabel(b)}` }, h('i', { style: { width: `${m.pct}%` } })),
+            h('strong', { class: `qpct ${m.tone}` }, remainingLabel(b))),
+          h('div', { class: 'muted uq-state' }, state)),
+        h('td', { class: 'muted' }, b.reset_at ? `in ${formatResetIn(b.reset_at)}` : '—')
+      );
+    }
     const tone = upstreamBarTone(b.remaining_percentage);
     const pct = Math.max(0, Math.min(100, b.remaining_percentage || 0));
 
@@ -209,7 +268,7 @@ export function renderUpstreamQuotas(container) {
 
     return h('tr', null,
       h('td', { style: { fontWeight: '500' } },
-        b.warning ? h('span', { title: 'Depletion warning (<25%)', style: { marginRight: '6px' } }, '⚠️') : null,
+        b.warning ? h('span', { class: 'uq-warn', title: 'Depletion warning (<25%)' }, icon('alert')) : null,
         b.name
       ),
       h('td', { class: 'muted', style: { fontSize: '12px' } }, usedTotalStr),
@@ -238,10 +297,10 @@ export function renderUpstreamQuotas(container) {
       title: `Use 1 reset now (${conn.reset_credits} available)`,
       onclick: async () => {
         const ok = await confirmDialog({
-          title: 'Spend Upstream Quota Reset?',
+          title: 'Spend upstream quota reset?',
           body: `Spend 1 irreversible reset grant for "${conn.account_label || conn.connection_id}"? This will refill session and weekly limits on ${provider.provider_name}. (${conn.reset_credits} resets available)`,
           danger: true,
-          okText: 'Confirm & Reset'
+          confirmText: 'Spend reset'
         });
         if (!ok) return;
         try {
@@ -263,50 +322,42 @@ export function renderUpstreamQuotas(container) {
 
     const isSharedPool = provider.quota_type === 'nineguard' || conn.plan === 'Shared Upstream Pool';
     const tierBadge = isKeyAllowance
-      ? h('span', { class: 'badge ok', style: { fontWeight: 'bold', border: '1px solid var(--ok)' } }, '👤 Key Allowance (Admin Limit)')
+      ? h('span', { class: 'badge ok', style: { fontWeight: 'bold', border: '1px solid var(--ok)' } }, icon('user'), 'Key allowance (admin limit)')
       : (isSharedPool
-          ? h('span', { class: 'badge', style: { background: 'var(--hover)', fontWeight: 'bold', border: '1px solid var(--border)' } }, '🌐 Shared Upstream Pool')
+          ? h('span', { class: 'badge', style: { background: 'var(--hover)', fontWeight: 'bold', border: '1px solid var(--border)' } }, icon('globe'), 'Shared upstream pool')
           : null);
 
     const planBadge = (conn.plan && conn.plan !== 'Shared Upstream Pool')
       ? h('span', { class: 'badge' }, conn.plan)
       : null;
 
-    return h('div', {
-      style: {
-        background: isKeyAllowance ? 'color-mix(in srgb, var(--ok) 5%, var(--panel))' : 'var(--panel)',
-        border: isKeyAllowance ? '1.5px solid var(--ok)' : '1px solid var(--border)',
-        borderRadius: '8px',
-        padding: '12px 14px',
-        marginBottom: '12px'
-      }
-    },
-      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' } },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+    return h('section', { class: `uq-conn${isKeyAllowance ? ' uq-conn-allowance' : ''}` },
+      h('div', { class: 'uq-conn-head' },
+        h('div', { class: 'uq-conn-title' },
           icon(isKeyAllowance ? 'shield' : 'user'),
-          h('span', { style: { fontWeight: '700', fontSize: '13px' } }, conn.account_label || conn.connection_id),
+          h('h3', null, conn.account_label || conn.connection_id),
           tierBadge,
           planBadge,
           resetBtn
         ),
-        h('span', { class: `badge ${conn.status === 'ok' ? 'ok' : 'err'}` }, conn.status)
+        h('span', { class: `badge ${conn.source === 'sdk' ? 'muted' : conn.status === 'ok' ? 'ok' : 'err'}` }, conn.source === 'sdk' && conn.status === 'ok' ? telemetryStateLabel(conn.observation_state) : conn.status)
       ),
       hasError && conn.error_msg
         ? h('div', { class: 'banner err', style: { padding: '6px 10px', fontSize: '11.5px', marginBottom: '8px' } }, conn.error_msg)
         : null,
       conn.buckets && conn.buckets.length > 0
-        ? h('table', { class: 'table', style: { width: '100%', fontSize: '12px', margin: 0 } },
+        ? h('div', { class: 'table-wrap' }, h('table', { class: 'table uq-table' },
             h('thead', null,
               h('tr', null,
-                h('th', { style: { width: '35%' } }, isKeyAllowance ? 'Model / Allowance Window' : 'Window / Bucket'),
-                h('th', { style: { width: '25%' } }, isKeyAllowance ? 'Tokens Consumed / Limit' : 'Used / Total'),
-                h('th', { style: { width: '25%' } }, 'Remaining'),
-                h('th', { style: { width: '15%' } }, 'Reset In')
+                h('th', null, isKeyAllowance ? 'Model / allowance window' : 'Window / bucket'),
+                h('th', null, provider.source === 'sdk' ? 'Usage' : isKeyAllowance ? 'Tokens consumed / limit' : 'Used / total'),
+                h('th', null, 'Remaining'),
+                h('th', null, 'Resets in')
               )
             ),
             h('tbody', null, ...conn.buckets.map(renderBucketRow))
-          )
-        : h('p', { class: 'muted', style: { margin: 0, fontSize: '12px' } }, 'No active quota buckets reported.')
+          ))
+        : h('p', { class: 'muted', style: { margin: 0, fontSize: '12px' } }, conn.source === 'sdk' ? telemetryStateLabel(conn.observation_state) : 'No active quota buckets reported.'),
     );
   }
 
@@ -316,15 +367,15 @@ export function renderUpstreamQuotas(container) {
     if (!providersData.length || !activeTrackers.length) {
       content.replaceChildren(
         emptyState(
-          'data_usage',
-          'No Upstream Quota Trackers Configured',
-          'Configure a provider with 9router API or Cascaded NineGuard protocol in the Providers settings to track live upstream limits.',
+          'inbox',
+          'No upstream quota trackers configured',
+          'Configure a provider with the 9router API or cascaded NineGuard protocol in Providers to track live upstream limits.',
           h('button', {
             class: 'btn btn-primary',
             type: 'button',
             style: { marginTop: '12px' },
             onclick: () => location.hash = '#/providers'
-          }, icon('server'), 'Manage Providers')
+          }, icon('server'), 'Manage providers')
         )
       );
       return;
@@ -336,7 +387,7 @@ export function renderUpstreamQuotas(container) {
         class: 'btn btn-sm',
         type: 'button',
         disabled: isUnsupported || loading,
-        title: 'Force refresh live quotas from upstream',
+        title: p.source === 'sdk' ? 'Read latest SDK snapshot; no inference request is sent' : 'Force refresh live quotas from upstream',
         onclick: async () => {
           refreshBtn.disabled = true;
           await load(true);
@@ -363,35 +414,56 @@ export function renderUpstreamQuotas(container) {
         ? 'Router Protocol'
         : p.quota_type === 'nineguard'
         ? 'NineGuard Cascaded'
-        : 'Direct LLM (No Tracker)';
+        : p.quota_type === 'sdk' ? 'SDK account telemetry' : 'Direct LLM (No Tracker)';
 
-      const lastUpdatedLabel = p.last_updated
-        ? h('span', { class: 'muted', style: { fontSize: '11.5px', marginLeft: '6px' } }, `Synced ${timeAgo(p.last_updated)}`)
-        : null;
+      const lastUpdatedLabel = p.source === 'sdk'
+        ? h('span', { class: 'muted', style: { fontSize: '11px' } }, observationLabel(p.observed_at, p.observation_state))
+        : p.last_updated ? h('span', { class: 'muted', style: { fontSize: '11.5px', marginLeft: '6px' } }, `Synced ${timeAgo(p.last_updated)}`) : null;
 
-      return h('div', { class: 'card', style: { marginBottom: '16px' } },
-        h('div', { class: 'card-head', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } },
+      const open = isProviderOpen(p, providersData.length);
+      const bodyId = `uq-body-${String(p.provider_id || p.provider_name || '').replace(/[^\w-]/g, '_')}`;
+      const chevron = h('button', {
+        class: 'icon-btn sm', type: 'button', 'aria-expanded': String(open), 'aria-controls': bodyId,
+        'aria-label': `${open ? 'Collapse' : 'Expand'} ${p.provider_name}`,
+      }, icon(open ? 'chevron-down' : 'chevron-right'));
+      const summary = h('span', { class: 'muted uq-summary', hidden: open }, upstreamProviderSummary(p));
+      const cardBody = h('div', { id: bodyId, class: 'uq-body', hidden: !open },
+        isUnsupported
+          ? h('p', { class: 'muted', style: { margin: 0, fontSize: '12px' } },
+              'This provider connects directly to an LLM without upstream limit telemetry. Switch protocol in Providers menu to enable.'
+            )
+          : p.connections && p.connections.length > 0
+          ? h('div', null, ...p.connections.map((c) => renderConnectionCard(c, p)))
+          : h('p', { class: 'muted', style: { margin: 0, fontSize: '12px' } }, p.source === 'sdk' ? 'No connected accounts. Connect an account in Providers.' : 'No account connections found on upstream.')
+      );
+      const setOpen = (next) => {
+        setProviderOpen(p, next);
+        cardBody.hidden = !next;
+        summary.hidden = next;
+        chevron.setAttribute('aria-expanded', String(next));
+        chevron.setAttribute('aria-label', `${next ? 'Collapse' : 'Expand'} ${p.provider_name}`);
+        chevron.replaceChildren(icon(next ? 'chevron-down' : 'chevron-right'));
+      };
+      // Clicks anywhere on the header (including the chevron) bubble here; Refresh stops them.
+      refreshBtn.addEventListener('click', (e) => e.stopPropagation());
+
+      return h('div', { class: 'card uq-card' },
+        h('div', { class: 'card-head uq-head', onclick: () => setOpen(cardBody.hidden) },
+          h('div', { class: 'uq-head-main' },
+            chevron,
             icon('server'),
             h('h2', { style: { margin: 0, fontSize: '15px' } }, p.provider_name),
             h('span', { class: 'badge', style: { background: 'var(--hover)' } }, protocolLabel),
-            h('span', { class: `badge ${p.status === 'ok' ? 'ok' : p.status === 'degraded' ? 'warn' : 'muted'}` }, p.status),
-            lastUpdatedLabel
+            h('span', { class: `badge ${p.source === 'sdk' ? 'muted' : p.status === 'ok' ? 'ok' : p.status === 'degraded' ? 'warn' : 'muted'}` }, p.source === 'sdk' && p.status === 'ok' ? telemetryStateLabel(p.observation_state) : p.status),
+            lastUpdatedLabel,
+            summary
           ),
           refreshBtn
         ),
         p.error_msg
           ? h('div', { class: 'banner err', style: { margin: '8px 14px' } }, icon('alert'), ' ', p.error_msg)
           : null,
-        h('div', { style: { padding: '12px 14px' } },
-          isUnsupported
-            ? h('p', { class: 'muted', style: { margin: 0, fontSize: '12px' } },
-                'This provider connects directly to an LLM without upstream limit telemetry. Switch protocol in Providers menu to enable.'
-              )
-            : p.connections && p.connections.length > 0
-            ? h('div', null, ...p.connections.map((c) => renderConnectionCard(c, p)))
-            : h('p', { class: 'muted', style: { margin: 0, fontSize: '12px' } }, 'No account connections found on upstream.')
-        )
+        cardBody
       );
     });
 

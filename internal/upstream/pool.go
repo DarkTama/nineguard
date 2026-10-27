@@ -70,6 +70,13 @@ func MergeAccountPools(providerName string, connections []ConnectionQuota) []Mer
 	if len(connections) == 0 {
 		return nil
 	}
+	var sdkConnections, httpConnections []ConnectionQuota
+	for _, connection := range connections { if connection.Source == "sdk" { sdkConnections = append(sdkConnections, connection) } else { httpConnections = append(httpConnections, connection) } }
+	if len(sdkConnections) > 0 {
+		result := mergeSDKPools(providerName, sdkConnections)
+		if len(httpConnections) > 0 { result = append(result, MergeAccountPools(providerName, httpConnections)... ) }
+		return result
+	}
 
 	type connGroup struct {
 		key         string

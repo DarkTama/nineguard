@@ -1,6 +1,6 @@
 // Endpoints & Agent Setup: Upstream provider configuration, NineGuard API key generation, and IDE guides.
 import { api } from '../api.js';
-import { h, icon, toast, copy, fmtNum, fmtCompact, fmtAgo, fmtDateTime, tzLabel, debounce, emptyState, formDialog, confirmDialog, searchableSelect } from '../ui.js';
+import { h, icon, toast, copy, fmtNum, fmtCompact, fmtAgo, fmtDateTime, tzLabel, debounce, emptyState, formDialog, confirmDialog, searchableSelect, menu, skeletonRows } from '../ui.js';
 import { setRoute, getRoute } from '../state.js';
 import {
   stateFromParams, paramsFromState, apiQuery, nextSort, withFilter,
@@ -29,15 +29,17 @@ export function mount(root) {
   const baseUrl = `${origin}/v1`;
 
   const upstreamCard = h('div', { class: 'card mt' });
-  const keysCard = h('div', { class: 'card mt' });
+  const keysCard = h('div', { class: 'card table-card' });
   const guidesWrap = h('div', { class: 'card-body p-0' });
   const testerCard = h('div', { class: 'card mt' });
 
+  const generateBtn = h('button', { class: 'btn btn-primary', type: 'button', onclick: () => openKeyModal(null, generateBtn) }, icon('plus'), 'Generate key');
   const header = h('div', { class: 'page-head' },
     h('div', null,
       h('h1', null, 'Endpoints & Agent Setup'),
       h('p', null, 'Manage upstream provider connection, generate NineGuard keys for your agents, and configure tools')
-    )
+    ),
+    h('div', { class: 'page-actions' }, generateBtn)
   );
 
   // ── Copy Helper ──
@@ -62,14 +64,14 @@ export function mount(root) {
 
   // ── Flow Architecture Card ──
   function renderFlowCard() {
-    return h('div', { class: 'card' },
+    return h('div', { class: 'card mt' },
       h('div', { class: 'card-head' },
         h('div', null,
           h('h2', null, 'Architecture: NineGuard as Master Proxy for Agents'),
           h('p', { class: 'card-sub' }, 'Agents connect to NineGuard using their own keys; NineGuard authorizes calls and forwards to upstream providers')
         )
       ),
-      h('div', { class: 'flow-wrap', style: { padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px' } },
+      h('div', { class: 'flow-wrap', style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
         h('div', { class: 'flow-steps', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' } },
           // Step 1: Agent
           h('div', { class: 'flow-box', style: { padding: '14px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--panel)' } },
@@ -176,16 +178,23 @@ export function mount(root) {
   }
 
   const keySearch = h('input', {
-    class: 'input',
     type: 'search',
-    placeholder: 'Search key name...',
+    placeholder: 'Search keys...',
+    autocomplete: 'off',
+    spellcheck: 'false',
     value: keyState.q,
-    style: { width: '220px' },
+    'aria-label': 'Search keys by name',
     oninput: debounce((e) => setKeyState(withFilter(keyState, { q: e.target.value.trim() })), 300),
+    onkeydown: (e) => {
+      if (e.key === 'Escape' && keySearch.value) {
+        keySearch.value = '';
+        setKeyState(withFilter(keyState, { q: '' }));
+      }
+    },
   });
 
   function selectEl(options, value, onChange, title) {
-    const el = h('select', { class: 'select', title, onchange: (e) => onChange(e.target.value) },
+    const el = h('select', { class: 'select', title, 'aria-label': title, onchange: (e) => onChange(e.target.value) },
       options.map(([v, l]) => h('option', { value: v }, l)));
     el.value = String(value);
     return el;
@@ -333,6 +342,16 @@ export function mount(root) {
     }, k.is_active ? 'Active' : 'Disabled');
 
     const created = k.created_at ? Date.parse(k.created_at) : NaN;
+    const editBtn = h('button', { class: 'btn btn-sm', type: 'button', title: 'Edit key and model access', onclick: () => openKeyModal(k, editBtn) }, icon('pencil'), 'Edit');
+    const moreBtn = h('button', {
+      class: 'icon-btn sm', type: 'button', title: 'More actions', 'aria-label': `More actions for ${k.name}`, 'aria-haspopup': 'menu',
+      onclick: () => menu(moreBtn, [
+        { icon: 'activity', text: 'Usage', onClick: () => openKeyUsageModal(k) },
+        { icon: 'puzzle', text: 'Plugins', onClick: () => setRoute('plugins') },
+        { icon: 'copy', text: 'Copy key', onClick: () => copyText(raw, `Key "${k.name}" copied`) },
+        { icon: 'trash', text: 'Delete', onClick: () => confirmDeleteKey(k) },
+      ]),
+    }, icon('more'));
     return h('tr', null,
       h('td', { class: 'strong' },
         h('span', { class: 'badge', style: { background: 'var(--hover)', marginRight: '8px' } }, icon('key')),
@@ -347,12 +366,9 @@ export function mount(root) {
       h('td', null, statusBtn),
       h('td', { class: 'muted', title: isNaN(created) ? '' : `${fmtDateTime(created)} (${tzLabel()})` }, isNaN(created) ? '-' : fmtDateTime(created).slice(0, 10)),
       h('td', { style: { textAlign: 'right' } },
-        h('div', { style: { display: 'inline-flex', gap: '6px' } },
-          h('button', { class: 'btn btn-sm', type: 'button', title: 'View Key Usage Summary & Heatmap', onclick: () => openKeyUsageModal(k) }, icon('activity'), 'Usage'),
-          h('a', { class: 'btn btn-sm', href: '#/plugins', title: 'Manage plugins and token savers' }, icon('puzzle'), 'Plugins'),
-          h('button', { class: 'btn btn-sm', type: 'button', title: 'Edit Key & Model Access', onclick: () => openKeyModal(k) }, icon('pencil'), 'Edit'),
-          h('button', { class: 'btn btn-sm', type: 'button', title: 'Copy NineGuard API Key', onclick: () => copyText(raw, `Key "${k.name}" copied!`) }, icon('copy'), 'Copy Key'),
-          h('button', { class: 'btn btn-sm btn-danger', type: 'button', title: 'Delete Key', onclick: () => confirmDeleteKey(k) }, icon('trash'))
+        h('div', { style: { display: 'inline-flex', gap: '6px', alignItems: 'center' } },
+          editBtn,
+          moreBtn
         )
       )
     );
@@ -361,50 +377,102 @@ export function mount(root) {
   function renderPager() {
     const pages = totalPages(keyPage.total, keyState.limit);
     const go = (n) => setKeyState({ ...keyState, page: n });
-    const btn = (label, n, disabled, current = false) => h('button', {
-      class: `btn btn-sm${current ? ' btn-primary' : ''}`,
+    const btn = (label, n, disabled, current = false, num = false) => h('button', {
+      class: `btn btn-sm${num ? ' page-num' : ''}${current ? ' btn-primary' : ''}`,
       type: 'button',
       disabled,
       'aria-current': current ? 'page' : null,
       onclick: () => go(n),
     }, label);
-    return h('div', { class: 'table-foot', style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } },
+    return h('div', { class: 'table-foot table-pager' },
       h('span', null, rangeLabel(keyState.page, keyState.limit, keyPage.total, (keyPage.keys || []).length)),
-      h('span', { class: 'spacer' }),
-      btn('\u2039 Prev', keyState.page - 1, keyState.page <= 1),
-      ...pageItems(keyState.page, pages).map((it) => it === '\u2026'
-        ? h('span', { class: 'muted' }, '\u2026')
-        : btn(String(it), it, false, it === keyState.page)),
-      btn('Next \u203a', keyState.page + 1, keyState.page >= pages)
+      h('div', { class: 'pager-pages' },
+        keyLimitSel,
+        btn('Previous', keyState.page - 1, keyState.page <= 1),
+        ...pageItems(keyState.page, pages).map((it) => it === '\u2026'
+          ? h('span', { class: 'muted pager-gap' }, '\u2026')
+          : btn(String(it), it, false, it === keyState.page, true)),
+        btn('Next', keyState.page + 1, keyState.page >= pages))
     );
   }
 
   // Card chrome is built once so the search box keeps focus while typing;
   // renderKeysCard() only refreshes control values and the body.
-  const keyStatusSel = selectEl([['all', 'All statuses'], ['active', 'Active'], ['disabled', 'Disabled']], keyState.status,
-    (v) => setKeyState(withFilter(keyState, { status: v })), 'Status');
-  const keyModeSel = selectEl([['any', 'Any access mode'], ['all', 'All models'], ['group', 'Model groups'], ['custom', 'Custom list']], keyState.mode,
-    (v) => setKeyState(withFilter(keyState, { mode: v })), 'Access mode');
+  const KEY_STATUS_FILTERS = [
+    { id: 'all', label: 'All' },
+    { id: 'active', label: 'Active' },
+    { id: 'disabled', label: 'Disabled' },
+  ];
+  const keyStatusCounts = new Map();
+  const keyStatusButtons = new Map();
+  const keyStatusSegmented = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Filter by key status' },
+    ...KEY_STATUS_FILTERS.map((s) => {
+      const count = h('span', { class: 'seg-count' }, '0');
+      keyStatusCounts.set(s.id, count);
+      const btn = h('button', {
+        type: 'button',
+        'aria-pressed': String(s.id === keyState.status),
+        onclick: () => setKeyState(withFilter(keyState, { status: s.id })),
+      }, s.label, count);
+      keyStatusButtons.set(s.id, btn);
+      return btn;
+    })
+  );
+  const keyModeSel = selectEl([['any', 'All access modes'], ['all', 'All models'], ['group', 'Model groups'], ['custom', 'Custom list']], keyState.mode,
+    (v) => setKeyState(withFilter(keyState, { mode: v })), 'Filter by access mode');
   const keyLimitSel = selectEl(PAGE_SIZES.map((n) => [String(n), `${n} / page`]), keyState.limit,
     (v) => setKeyState(withFilter(keyState, { limit: Number(v) })), 'Page size');
-  const keysBody = h('div');
+  const keyClearBtn = h('button', {
+    class: 'btn btn-sm',
+    type: 'button',
+    title: 'Reset search, status and access mode filters',
+    onclick: () => {
+      keySearch.value = '';
+      setKeyState(withFilter(keyState, { q: '', status: 'all', mode: 'any' }));
+    },
+  }, icon('x'), 'Clear');
+  const keyMatchInfo = h('span', { class: 'muted', style: { fontSize: '11.5px', whiteSpace: 'nowrap' } });
+  const keysBody = h('div', null, skeletonRows(5));
   keysCard.append(
-    h('div', { class: 'card-head', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-      h('div', null,
-        h('h2', null, 'NineGuard Client API Keys'),
-        h('p', { class: 'card-sub' }, 'Generate dedicated keys for Cursor, Cline, Pi, and developers. Every token and request is tracked per key.')
-      ),
-      h('button', { class: 'btn btn-sm btn-primary', type: 'button', onclick: () => openKeyModal() }, icon('plus'), 'Generate New Key')
-    ),
-    h('div', { class: 'toolbar' }, keySearch, keyStatusSel, keyModeSel, h('span', { class: 'spacer' }), keyLimitSel),
+    h('div', { class: 'toolbar card-toolbar' },
+      h('label', { class: 'tool-search' }, icon('search'), keySearch),
+      keyStatusSegmented, keyModeSel, keyClearBtn,
+      h('span', { class: 'spacer' }), keyMatchInfo),
     keysBody
   );
 
+  // Status counts come from the full key list (keysList) narrowed by the same
+  // name search and access mode the server applies, so they match the table.
+  function keyAccessMode(k) {
+    return k.model_access_mode || 'all';
+  }
+
+  function renderKeyToolbar() {
+    const q = keyState.q.toLowerCase();
+    const base = keysList.filter((k) =>
+      (!q || String(k.name || '').toLowerCase().includes(q)) &&
+      (keyState.mode === 'any' || keyAccessMode(k) === keyState.mode));
+    for (const s of KEY_STATUS_FILTERS) {
+      const n = s.id === 'all' ? base.length : base.filter((k) => (s.id === 'active') === Boolean(k.is_active)).length;
+      keyStatusCounts.get(s.id).textContent = fmtNum(n);
+      const btn = keyStatusButtons.get(s.id);
+      btn.classList.toggle('active', s.id === keyState.status);
+      btn.setAttribute('aria-pressed', String(s.id === keyState.status));
+    }
+    keyModeSel.classList.toggle('has-value', keyState.mode !== 'any');
+    const filtered = Boolean(keyState.q || keyState.status !== 'all' || keyState.mode !== 'any');
+    keyClearBtn.hidden = !filtered;
+    const total = keyPage.total || 0;
+    keyMatchInfo.textContent = filtered
+      ? `${fmtNum(total)} of ${fmtNum(keysList.length)} ${keysList.length === 1 ? 'key' : 'keys'}`
+      : `${fmtNum(total)} ${total === 1 ? 'key' : 'keys'}`;
+  }
+
   function renderKeysCard() {
     if (document.activeElement !== keySearch) keySearch.value = keyState.q;
-    keyStatusSel.value = keyState.status;
     keyModeSel.value = keyState.mode;
     keyLimitSel.value = String(keyState.limit);
+    renderKeyToolbar();
 
     const filtered = keyState.q || keyState.status !== 'all' || keyState.mode !== 'any';
     if (keyPage.error) {
@@ -414,20 +482,20 @@ export function mount(root) {
     if (!keyPage.total) {
       keysBody.replaceChildren(filtered
         ? emptyState('search', 'No keys match these filters', 'Clear the search or filters to see all keys.')
-        : emptyState('key', 'No NineGuard API keys generated yet', 'Click "Generate New Key" to issue your first API key for an agent.'));
+        : emptyState('key', 'No NineGuard API keys generated yet', 'Use "Generate key" to issue your first API key for an agent.'));
       return;
     }
 
     const table = h('table', { class: 'table' },
       h('thead', null,
         h('tr', null,
-          sortHeader('Agent / Key Name', 'name'),
-          h('th', null, 'Key Token'),
-          h('th', null, 'Allowed Models'),
+          sortHeader('Agent / key name', 'name'),
+          h('th', null, 'Key token'),
+          h('th', null, 'Allowed models'),
           sortHeader('Requests', 'requests', { class: 'num' }),
           sortHeader('Tokens', 'tokens', { class: 'num' }),
           h('th', null, 'Quota'),
-          sortHeader('Last Active', 'last_active'),
+          sortHeader('Last active', 'last_active'),
           sortHeader('Status', 'status'),
           sortHeader('Created', 'created'),
           h('th', { style: { textAlign: 'right' } }, 'Actions')
@@ -439,11 +507,18 @@ export function mount(root) {
     keysBody.replaceChildren(h('div', { class: 'table-wrap' }, table), renderPager());
   }
 
-  async function openKeyModal(existingKey = null) {
+  async function openKeyModal(existingKey = null, trigger = null) {
     const isEdit = Boolean(existingKey);
     const existingModels = (existingKey && Array.isArray(existingKey.allowed_models)) ? existingKey.allowed_models : [];
     const existingGroupIDs = new Set((existingKey && Array.isArray(existingKey.model_group_ids)) ? existingKey.model_group_ids : []);
 
+    // The prerequisite requests can take a moment; the triggering button shows it is working.
+    const triggerContent = trigger ? [...trigger.childNodes] : null;
+    if (trigger) {
+      if (trigger.disabled) return;
+      trigger.disabled = true;
+      trigger.replaceChildren('Loading\u2026');
+    }
     let pluginsList = [];
     let keyBindings = new Map();
     let globalSchedule = null; // Global Reset Schedule (ADR 0010), null when unset
@@ -456,15 +531,21 @@ export function mount(root) {
       globalSchedule = (gRes && gRes.quota_reset_schedule) || null;
       pluginsList = pRes.plugins || [];
       (bRes.bindings || []).forEach(b => keyBindings.set(b.plugin_id, b.state));
-    } catch { /* ignore */ }
+    } catch { /* ignore */ } finally {
+      if (trigger) {
+        trigger.disabled = false;
+        trigger.replaceChildren(...triggerContent);
+      }
+    }
+    if (!alive) return;
 
     const pluginSelectMap = new Map();
     const pluginRows = pluginsList.map(p => {
       const curState = keyBindings.get(p.id) || 'inherit';
-      const sel = h('select', { class: 'input', style: { width: '140px', fontSize: '12px' } },
-        h('option', { value: 'inherit', selected: curState === 'inherit' }, 'Inherit (Default)'),
-        h('option', { value: 'on', selected: curState === 'on' }, 'On (Enabled)'),
-        h('option', { value: 'off', selected: curState === 'off' }, 'Off (Disabled)')
+      const sel = h('select', { class: 'select', 'aria-label': `${p.name} for this key`, style: { width: '180px' } },
+        h('option', { value: 'inherit', selected: curState === 'inherit' }, 'Inherit (default)'),
+        h('option', { value: 'on', selected: curState === 'on' }, 'On'),
+        h('option', { value: 'off', selected: curState === 'off' }, 'Off')
       );
       pluginSelectMap.set(p.id, sel);
 
@@ -472,7 +553,7 @@ export function mount(root) {
         p.category === 'input_compression' ? 'Compress' : (p.category === 'output_style' ? 'Style' : 'Plugin')
       );
 
-      return h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: 'var(--panel)', borderRadius: '6px' } },
+      return h('div', { class: 'key-plugin-row' },
         h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
           h('b', { style: { fontSize: '12px' } }, p.name),
           catBadge
@@ -481,18 +562,8 @@ export function mount(root) {
       );
     });
 
-    const pluginsWrap = h('div', {
-      style: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '6px',
-        padding: '10px',
-        borderRadius: '8px',
-        border: '1px solid var(--border)',
-        background: 'var(--hover)'
-      }
-    },
-      pluginRows.length ? pluginRows : h('span', { class: 'muted', style: { fontSize: '12px' } }, 'No plugins registered')
+    const pluginsWrap = h('div', { class: 'key-panel' },
+      pluginRows.length ? pluginRows : h('span', { class: 'muted' }, 'No plugins registered')
     );
 
     let initialMode = 'all';
@@ -507,8 +578,8 @@ export function mount(root) {
     const nameInput = h('input', {
       class: 'input',
       type: 'text',
-      placeholder: 'e.g. Cursor IDE, Cline Mac, Pi Agent',
-      value: existingKey ? existingKey.name : 'Cursor IDE'
+      placeholder: 'e.g. Cursor on laptop',
+      value: existingKey ? existingKey.name : ''
     });
 
     const quotaLimitInput = h('input', {
@@ -520,12 +591,12 @@ export function mount(root) {
       value: (existingKey && existingKey.quota_limit) ? String(existingKey.quota_limit) : '0'
     });
 
-    const quotaPeriodSelect = h('select', { class: 'input' },
-      h('option', { value: 'none', selected: !existingKey || !existingKey.quota_period || existingKey.quota_period === 'none' }, 'None (Unlimited)'),
+    const quotaPeriodSelect = h('select', { class: 'select wide' },
+      h('option', { value: 'none', selected: !existingKey || !existingKey.quota_period || existingKey.quota_period === 'none' }, 'None (unlimited)'),
       h('option', { value: 'daily', selected: existingKey && existingKey.quota_period === 'daily' }, 'Daily'),
       h('option', { value: 'weekly', selected: existingKey && existingKey.quota_period === 'weekly' }, 'Weekly'),
       h('option', { value: 'monthly', selected: existingKey && existingKey.quota_period === 'monthly' }, 'Monthly'),
-      h('option', { value: 'total', selected: existingKey && existingKey.quota_period === 'total' }, 'Lifetime (All-time)')
+      h('option', { value: 'total', selected: existingKey && existingKey.quota_period === 'total' }, 'Lifetime (all-time)')
     );
 
     const velocityBox = h('div', {
@@ -539,7 +610,7 @@ export function mount(root) {
         borderRadius: '6px',
         fontSize: '11px'
       }
-    }, h('span', { class: 'muted' }, 'Loading usage velocity...'));
+    }, h('span', { class: 'muted' }, 'Loading usage history\u2026'));
 
     if (isEdit) {
       api.get(`/keys/${existingKey.id}/velocity`).then(vel => {
@@ -553,7 +624,7 @@ export function mount(root) {
         const pill30 = h('span', { class: 'badge', title: `${vel.tokens_30d || 0} tokens in past 30d` }, `30d: ${p30}`);
 
         velocityBox.replaceChildren(
-          h('b', { style: { color: 'var(--text-2)' } }, 'Historical Velocity:'),
+          h('b', { style: { color: 'var(--text-2)' } }, 'Usage history:'),
           pill24, pill7d, pill30,
           presetButtons(vel.tokens_7d_avg, quotaLimitInput, quotaPeriodSelect, true)
         );
@@ -564,73 +635,24 @@ export function mount(root) {
 
     let mode = initialMode;
 
-    // ── Segmented Mode Buttons ──
-    const tabBtnStyle = {
-      flex: '1 1 0',
-      minWidth: '0',
-      display: 'inline-flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: '6px',
-      fontSize: '12px',
-      height: '32px',
-      padding: '0 10px',
-      whiteSpace: 'nowrap',
-      boxSizing: 'border-box',
-      cursor: 'pointer',
-      textAlign: 'center'
-    };
+    // ── Access mode switch (same .seg control as the quota mode) ──
+    const segBtn = (value, title, sub) => h('button', {
+      type: 'button', class: 'seg-btn', 'aria-pressed': 'false', onclick: () => switchAccessMode(value)
+    }, h('span', { class: 'seg-title' }, title), h('span', { class: 'seg-sub' }, sub));
+    const btnAll = segBtn('all', 'All models', 'follows global settings');
+    const btnGroup = segBtn('group', 'Model groups', 'models from chosen groups');
+    const btnCustom = segBtn('custom', 'Custom', 'pick models by hand');
 
-    const btnAll = h('button', {
-      type: 'button',
-      class: `tab${mode === 'all' ? ' active' : ''}`,
-      style: { ...tabBtnStyle },
-      onclick: () => switchAccessMode('all')
-    }, icon('check'), 'All Models (Global)');
-
-    const btnGroup = h('button', {
-      type: 'button',
-      class: `tab${mode === 'group' ? ' active' : ''}`,
-      style: { ...tabBtnStyle },
-      onclick: () => switchAccessMode('group')
-    }, icon('sparkles'), 'Model Groups');
-
-    const btnCustom = h('button', {
-      type: 'button',
-      class: `tab${mode === 'custom' ? ' active' : ''}`,
-      style: { ...tabBtnStyle },
-      onclick: () => switchAccessMode('custom')
-    }, icon('pencil'), 'Custom Selection');
-
-    const modeSelector = h('div', {
-      class: 'tabs',
-      style: {
-        width: '100%',
-        boxSizing: 'border-box',
-        marginBottom: '10px',
-        display: 'flex',
-        gap: '4px',
-        padding: '3px'
-      }
-    },
-      btnAll, btnGroup, btnCustom
+    const modeSelector = h('div', { class: 'seg-wrap' },
+      h('div', { class: 'seg-label' }, 'Access mode'),
+      h('div', { class: 'seg', role: 'group', 'aria-label': 'Access mode' }, btnAll, btnGroup, btnCustom)
     );
 
     // ── Panel 1: All Models ──
-    const panelAll = h('div', {
-      style: {
-        display: mode === 'all' ? 'block' : 'none',
-        padding: '12px 14px',
-        background: 'var(--hover)',
-        borderRadius: '8px',
-        border: '1px solid var(--border)'
-      }
-    },
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '600', marginBottom: '4px' } },
-        icon('check'), 'Inherit Global Firewall Configuration'
-      ),
-      h('p', { class: 'muted', style: { fontSize: '12px', margin: 0, lineHeight: 1.4 } },
-        'Memberi akses ke semua model yang aktif di global settings. Model baru yang ditambahkan di masa depan otomatis langsung bisa diakses tanpa perlu mengubah settingan API key ini.'
+    const panelAll = h('div', { class: 'key-panel', style: { display: mode === 'all' ? '' : 'none' } },
+      h('div', { class: 'key-panel-title' }, icon('check'), 'Inherit global firewall settings'),
+      h('p', { class: 'muted' },
+        'Grants access to every model enabled in global settings. Models added later become available automatically, without editing this key.'
       )
     );
 
@@ -661,8 +683,8 @@ export function mount(root) {
 
       if (selectedGroups.length === 0) {
         previewContainer.replaceChildren(
-          h('div', { class: 'muted', style: { fontSize: '12px', fontStyle: 'italic' } },
-            'Belum ada group yang dipilih. Silakan centang minimal satu model group di atas.'
+          h('div', { class: 'muted' },
+            'No group selected yet. Select at least one model group above.'
           )
         );
         return;
@@ -677,20 +699,20 @@ export function mount(root) {
 
       previewContainer.replaceChildren(
         h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' } },
-          h('b', { style: { fontSize: '12px' } }, `Preview Model yang Diizinkan (${unionModels.size} models):`),
-          h('span', { class: 'badge ok', style: { fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: '3px' } }, icon('sparkles'), 'Dynamic Sync')
+          h('b', { style: { fontSize: '12px' } }, `Allowed models (${unionModels.size})`),
+          h('span', { class: 'badge ok', style: { fontSize: '10px' } }, icon('sparkles'), 'Synced')
         ),
         h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px', maxHeight: '100px', overflowY: 'auto' } }, ...badges),
-        h('p', { class: 'muted', style: { fontSize: '11px', margin: '8px 0 0', lineHeight: 1.3 } },
-          '💡 Dynamic Reference: Jika ada model baru ditambahkan ke group di atas nanti, API key ini otomatis langsung mendapatkan akses tanpa perlu disentuh ulang.'
+        h('p', { class: 'muted', style: { margin: '8px 0 0' } },
+          'Models added to these groups later are allowed for this key automatically.'
         )
       );
     }
 
     if (modelGroupsList.length === 0) {
       groupListItems.push(
-        h('div', { class: 'muted', style: { padding: '12px', textAlign: 'center', fontSize: '12px' } },
-          'Belum ada Model Group. Buat group di menu Models > Model Groups.'
+        h('div', { class: 'muted', style: { padding: '12px', textAlign: 'center' } },
+          'No model groups yet. Create one under Models > Model groups.'
         )
       );
     } else {
@@ -703,22 +725,7 @@ export function mount(root) {
         cb.onchange = updateGroupPreview;
 
         const count = Array.isArray(g.models) ? g.models.length : 0;
-        const item = h('label', {
-          style: {
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '8px 10px',
-            borderRadius: '6px',
-            cursor: 'pointer',
-            fontSize: '12.5px',
-            background: 'var(--panel)',
-            border: '1px solid var(--border)',
-            userSelect: 'none'
-          },
-          onmouseenter: (e) => e.currentTarget.style.borderColor = 'var(--accent)',
-          onmouseleave: (e) => e.currentTarget.style.borderColor = 'var(--border)'
-        },
+        const item = h('label', { class: 'key-group-option' },
           cb,
           h('div', { style: { flex: 1, minWidth: 0 } },
             h('div', { style: { fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' } },
@@ -733,18 +740,8 @@ export function mount(root) {
       });
     }
 
-    const panelGroup = h('div', {
-      style: {
-        display: mode === 'group' ? 'flex' : 'none',
-        flexDirection: 'column',
-        gap: '8px',
-        padding: '12px',
-        borderRadius: '8px',
-        border: '1px solid var(--border)',
-        background: 'var(--hover)'
-      }
-    },
-      h('div', { style: { fontSize: '12px', fontWeight: '500', marginBottom: '2px' } }, 'Select Model Group(s):'),
+    const panelGroup = h('div', { class: 'key-panel', style: { display: mode === 'group' ? '' : 'none' } },
+      h('div', { class: 'key-panel-title' }, 'Model groups'),
       h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '170px', overflowY: 'auto' } }, ...groupListItems),
       previewContainer
     );
@@ -789,21 +786,7 @@ export function mount(root) {
       checkboxes.set(m.id, cb);
       cb.onchange = updateCount;
 
-      const item = h('label', {
-        style: {
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          padding: '5px 8px',
-          borderRadius: '4px',
-          cursor: 'pointer',
-          fontSize: '12px',
-          fontFamily: 'monospace',
-          userSelect: 'none'
-        },
-        onmouseenter: (e) => e.currentTarget.style.background = 'var(--panel)',
-        onmouseleave: (e) => e.currentTarget.style.background = 'transparent'
-      },
+      const item = h('label', { class: 'key-model-option' },
         cb,
         h('span', { style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, m.id),
         m.provider_id ? h('span', { class: 'badge', style: { fontSize: '10px' } }, m.provider_id) : null
@@ -833,7 +816,7 @@ export function mount(root) {
         checkboxes.forEach(cb => { cb.checked = true; });
         updateCount();
       }
-    }, 'Select All');
+    }, 'Select all');
 
     const clearAllBtn = h('button', {
       class: 'btn btn-sm',
@@ -842,17 +825,17 @@ export function mount(root) {
         checkboxes.forEach(cb => { cb.checked = false; });
         updateCount();
       }
-    }, 'Clear Selection');
+    }, 'Clear selection');
 
     // Detour helper: Load from Group dropdown
     const detourSelect = searchableSelect({
-      placeholder: '⚡ Customize from Group...',
+      placeholder: 'Add models from a group',
       searchPlaceholder: 'Search model group...',
       clearable: false,
       compact: true,
       style: { fontSize: '11.5px', height: '28px', maxWidth: '210px' },
       options: [
-        { value: '', label: '⚡ Customize from Group...' },
+        { value: '', label: 'Add models from a group' },
         ...modelGroupsList.map(g => ({
           value: g.id,
           label: `${g.name} (${(g.models || []).length})`,
@@ -908,23 +891,14 @@ export function mount(root) {
       style: { fontSize: '12px' }
     });
 
-    const panelCustom = h('div', {
-      style: {
-        display: mode === 'custom' ? 'flex' : 'none',
-        flexDirection: 'column',
-        gap: '8px',
-        padding: '12px',
-        borderRadius: '8px',
-        border: '1px solid var(--border)',
-        background: 'var(--hover)'
-      }
-    },
+    const panelCustom = h('div', { class: 'key-panel', style: { display: mode === 'custom' ? '' : 'none' } },
       actionsRow,
       filterInput,
       scrollList,
-      h('div', { style: { marginTop: '4px' } },
-        h('span', { class: 'muted', style: { fontSize: '11px', display: 'block', marginBottom: '4px' } }, 'Additional model IDs or wildcards (comma-separated):'),
-        customInput
+      h('label', { class: 'field' },
+        h('span', null, 'Extra model IDs or wildcards'),
+        customInput,
+        h('small', { class: 'muted' }, 'Comma-separated.')
       )
     );
 
@@ -940,16 +914,16 @@ export function mount(root) {
 
     // Key Quota block (limit, period, velocity). The quota section shows it in Key Quota mode.
     const keyQuotaNode = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
-      h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' } },
-        h('div', { class: 'field', style: { marginBottom: 0 } },
-          h('span', { style: { fontSize: '11.5px', fontWeight: '600' } }, 'Key Quota limit'),
+      h('div', { class: 'key-grid-2' },
+        h('label', { class: 'field' },
+          h('span', null, 'Key quota limit'),
           quotaLimitInput,
-          h('small', { class: 'muted', style: { fontSize: '11px' } }, 'Max tokens across all models. 0 = unlimited.')
+          h('small', { class: 'muted' }, 'Max tokens across all models. 0 = unlimited.')
         ),
-        h('div', { class: 'field', style: { marginBottom: 0 } },
-          h('span', { style: { fontSize: '11.5px', fontWeight: '600' } }, 'Reset Period'),
+        h('label', { class: 'field' },
+          h('span', null, 'Reset period'),
           quotaPeriodSelect,
-          h('small', { class: 'muted', style: { fontSize: '11px' } }, 'When it resets is set in Reset schedule below.')
+          h('small', { class: 'muted' }, 'When it resets is set in Reset schedule below.')
         )
       ),
       velocityBox
@@ -971,71 +945,72 @@ export function mount(root) {
     function switchAccessMode(newMode) {
       mode = newMode;
       queueMicrotask(() => quotaUI.refreshAccess());
-      btnAll.classList.toggle('active', mode === 'all');
-      btnGroup.classList.toggle('active', mode === 'group');
-      btnCustom.classList.toggle('active', mode === 'custom');
+      [[btnAll, 'all'], [btnGroup, 'group'], [btnCustom, 'custom']].forEach(([b, v]) => {
+        b.classList.toggle('on', mode === v);
+        b.setAttribute('aria-pressed', String(mode === v));
+      });
 
-      panelAll.style.display = mode === 'all' ? 'block' : 'none';
-      panelGroup.style.display = mode === 'group' ? 'flex' : 'none';
-      panelCustom.style.display = mode === 'custom' ? 'flex' : 'none';
+      panelAll.style.display = mode === 'all' ? '' : 'none';
+      panelGroup.style.display = mode === 'group' ? '' : 'none';
+      panelCustom.style.display = mode === 'custom' ? '' : 'none';
     }
+    switchAccessMode(mode);
 
-    const costVisSelect = h('select', { class: 'input' },
+    const costVisSelect = h('select', { class: 'select wide' },
       h('option', { value: '', selected: !existingKey || !existingKey.cost_visibility }, 'Follow global setting'),
       h('option', { value: 'show', selected: existingKey && existingKey.cost_visibility === 'show' }, 'Always show to key holder'),
       h('option', { value: 'hide', selected: existingKey && existingKey.cost_visibility === 'hide' }, 'Always hide from key holder')
     );
 
+    const section = (title, ...children) => h('section', { class: 'key-section' },
+      h('h4', { class: 'key-section-title' }, title), ...children);
+
     formDialog({
-      title: isEdit ? `Edit API Key: ${existingKey.name}` : 'Generate New NineGuard API Key',
-      submitText: isEdit ? 'Save Changes' : 'Generate Key',
-      wide: true,
+      title: isEdit ? `Edit key: ${existingKey.name}` : 'Generate API key',
+      submitText: isEdit ? 'Save changes' : 'Generate key',
       extraWide: true,
       fields: [
         {
-          label: 'Key Name / Description',
-          node: h('div', null,
-            nameInput,
-            h('p', { class: 'muted', style: { fontSize: '11px', margin: '3px 0 0' } }, 'Name for tracking usage in traffic logs.')
-          )
-        },
-        {
-          label: 'Allowed Models (Access Control)',
-          node: h('div', null,
-            modeSelector,
-            panelAll,
-            panelGroup,
-            panelCustom,
-            h('p', { class: 'muted', style: { fontSize: '11.5px', marginTop: '6px' } },
-              'Configure which models this API key can call. Unauthorized model calls are blocked with HTTP 403 Forbidden.'
+          node: section('Name and access',
+            h('label', { class: 'field' },
+              h('span', null, 'Name'),
+              nameInput,
+              h('small', { class: 'muted' }, 'Shown in traffic logs and usage reports.')
+            ),
+            h('div', { class: 'field' },
+              h('span', null, 'Allowed models'),
+              modeSelector,
+              panelAll,
+              panelGroup,
+              panelCustom,
+              h('small', { class: 'muted' }, 'Calls to models outside this list are blocked with HTTP 403.')
             )
           )
         },
         {
-          label: 'Quota (Rate Limiting)',
-          node: quotaUI.node
+          node: section('Quota', quotaUI.node)
         },
         {
-          label: 'Estimated Cost Visibility',
-          node: h('div', null,
-            costVisSelect,
-            h('p', { class: 'muted', style: { fontSize: '11px', margin: '3px 0 0' } },
-              'Controls whether this key can view estimated cost and pricing in /usage and /v1/usage.'
-            )
-          )
-        },
-        {
-          label: 'Plugin Overrides (Optional)',
-          node: h('div', null,
-            pluginsWrap,
-            h('p', { class: 'muted', style: { fontSize: '11px', margin: '4px 0 0' } },
-              'Override plugins specifically for this API key. Keys override Model Groups and All keys, all models.'
+          node: section('Plugins and cost',
+            h('label', { class: 'field' },
+              h('span', null, 'Estimated cost visibility'),
+              costVisSelect,
+              h('small', { class: 'muted' }, 'Whether this key can see estimated cost and pricing in /usage and /v1/usage.')
+            ),
+            h('div', { class: 'field' },
+              h('span', null, 'Plugin overrides (optional)'),
+              pluginsWrap,
+              h('small', { class: 'muted' }, 'Overrides for this key take priority over model group and global plugin settings.')
             )
           )
         }
       ],
       onSubmit: async () => {
-        const name = nameInput.value.trim() || (isEdit ? existingKey.name : 'Agent Key');
+        const name = nameInput.value.trim() || (isEdit ? existingKey.name : '');
+        if (!name) {
+          nameInput.focus();
+          throw new Error('Enter a name for this key.');
+        }
         let model_access_mode = mode;
         let model_group_ids = [];
         let allowed_models = [];
@@ -1045,7 +1020,7 @@ export function mount(root) {
             if (cb.checked) model_group_ids.push(gid);
           });
           if (model_group_ids.length === 0) {
-            throw new Error('Please select at least one Model Group or switch to "All Models".');
+            throw new Error('Select at least one model group, or switch to All models.');
           }
         } else if (mode === 'custom') {
           const selected = [];
@@ -1059,7 +1034,7 @@ export function mount(root) {
           });
 
           if (selected.length === 0) {
-            throw new Error('Please select at least one model or switch to "All Models (*)".');
+            throw new Error('Select at least one model, or switch to All models.');
           }
           allowed_models = selected;
         }
@@ -1297,7 +1272,7 @@ console.log(response.choices[0].message.content);`
 
     guidesWrap.replaceChildren(
       h('div', { class: 'tab-nav' }, ...tabBtns),
-      h('div', { style: { padding: '20px' } },
+      h('div', { style: { paddingTop: '14px' } },
         h('h3', { style: { margin: '0 0 6px 0' } }, g.title),
         h('p', { class: 'muted', style: { fontSize: '13px', marginBottom: '14px' } }, g.desc),
         h('ol', { style: { paddingLeft: '18px', margin: '0 0 16px 0', fontSize: '13px', lineHeight: '1.6' } },
@@ -1437,7 +1412,7 @@ console.log(response.choices[0].message.content);`
           h('p', { class: 'card-sub' }, 'Test the full pipeline Agent → NineGuard → Upstream Provider directly from your browser')
         )
       ),
-      h('div', { style: { padding: '16px' } },
+      h('div', null,
         h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' } },
           modelSelect,
           keySelect,
@@ -1451,14 +1426,14 @@ console.log(response.choices[0].message.content);`
 
   // ── Endpoints URL Summary Box ──
   function renderUrlCard() {
-    return h('div', { class: 'card' },
+    return h('div', { class: 'card mt' },
       h('div', { class: 'card-head' },
         h('div', null,
           h('h2', null, 'OpenAI-Compatible URLs'),
           h('p', { class: 'card-sub' }, 'Configure these endpoints in your developer tools and coding agents')
         )
       ),
-      h('div', { style: { padding: '16px' } },
+      h('div', null,
         copyField('OpenAI Base URL (Recommended for agents)', baseUrl),
         copyField('Chat Completions Endpoint', `${baseUrl}/chat/completions`),
         copyField('Models List Endpoint', `${baseUrl}/models`),
@@ -1508,10 +1483,10 @@ console.log(response.choices[0].message.content);`
 
   root.append(h('div', { class: 'page' },
     header,
-    renderFlowCard(),
-    upstreamCard,
-    h('div', { class: 'mt' }, renderUrlCard()),
     keysCard,
+    renderUrlCard(),
+    upstreamCard,
+    renderFlowCard(),
     guidesCard,
     testerCard
   ));

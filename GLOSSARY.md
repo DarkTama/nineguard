@@ -190,13 +190,16 @@ A request whose total tokens meet or exceed the system-wide `heavy_token_thresho
 An external resource limit reported by an upstream provider (such as 9router rolling 5-hour sessions, weekly allowances, or credit balances). Distinct from NineGuard's internal Key Quota and Model Quota.
 
 **Provider Quota Type**
-The integration protocol used to fetch quota status from an upstream provider: `disabled` (standard LLM / NanoGPT), `9router` (direct 9router instance), or `nineguard` (cascaded NineGuard instance).
+The integration source of upstream quota status: `disabled`, `9router`, `nineguard`, or automatically derived `sdk` for embedded account-backed providers.
 
 **Cascaded Quota**
 An Upstream Quota fetched from another NineGuard instance higher in the routing chain via its client API key. Reports both the issuing instance's Key Quota allowance and its upstream model pool capacity.
 
 **Merged Account Pool**
-A client-facing aggregation of multiple upstream accounts from the same provider into a single quota row, summing consumed and total capacity while hiding underlying account counts and email identities.
+A client-facing aggregation of upstream account limits that hides account counts and email identities. Absolute allowances can be summed; SDK percentage-only observations instead describe the most constrained observed eligible account, not pooled capacity.
+
+**SDK Quota Observation**
+A passive measurement of an upstream account limit from provider response headers. A percentage, not an absolute token allowance; may be missing, stale, or incomplete across accounts.
 
 **Chat Command Interceptor**
 A proxy pipeline hook that intercepts exact slash prompts (such as `/quota`, `/limits`, `/usage`) in `/v1/chat/completions` and `/v1/messages`, short-circuiting the request to return formatted diagnostic markdown at zero token cost. `/quota` and `/limits` show quota status; `/usage` shows the Usage Summary.

@@ -1059,8 +1059,13 @@ func (p *Proxy) buildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.Key
 		provList, err := p.providers.ListProviders()
 		if err == nil {
 			for _, prov := range provList {
-				if !prov.IsActive || prov.QuotaType == "disabled" || prov.QuotaType == "" {
+				if !prov.IsActive || !upstream.SupportsQuotaTracking(prov) {
 					continue
+				}
+				if prov.Backend == "cliproxy" && keyInfo != nil && !keyInfo.IsAllModelsAllowed() {
+					visible := false
+					for _, id := range p.providers.SDKModelIDs(ctx, prov) { if keyInfo.IsModelAllowed(id) { visible = true; break } }
+					if !visible { continue }
 				}
 
 				var res *upstream.ProviderQuotaResult

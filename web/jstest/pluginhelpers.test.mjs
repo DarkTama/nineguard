@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { scopeLabel, scopeSubLabel, formatInheritText, sortPipeline, warningBannerText } from '../static/js/pluginhelpers.js';
+import { scopeLabel, scopeSubLabel, formatInheritText, sortPipeline, warningBannerText, appliesToSummary } from '../static/js/pluginhelpers.js';
 
 test('scopeLabel conforms to spec §9.2', () => {
   assert.equal(scopeLabel('global'), 'All keys, all models');
@@ -33,4 +33,15 @@ test('sortPipeline sorts by pipeline_order ASC', () => {
 test('warningBannerText pluralization', () => {
   assert.equal(warningBannerText(1), '1 overlap warning active');
   assert.equal(warningBannerText(3), '3 overlap warnings active');
+});
+
+test('appliesToSummary counts on/off overrides and skips inherit', () => {
+  assert.equal(appliesToSummary([]), 'Global: off');
+  assert.equal(appliesToSummary([
+    { scope_type: 'global', scope_id: '', state: 'on' },
+    { scope_type: 'group', scope_id: 'g1', state: 'on' },
+    { scope_type: 'group', scope_id: 'g2', state: 'on' },
+    { scope_type: 'key', scope_id: 'k1', state: 'off' },
+    { scope_type: 'key', scope_id: 'k2', state: 'inherit' },
+  ]), 'Global: on · 2 groups on · 1 key off');
 });

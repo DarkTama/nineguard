@@ -54,3 +54,25 @@ export function warningBannerText(count) {
   }
   return `${count} overlap warnings active`;
 }
+
+// One-line "Applies to" summary from a plugin's bindings, e.g. "Global: on · 2 groups on · 1 key off".
+// Inherit bindings are skipped; a missing global binding counts as off.
+export function appliesToSummary(bindings = []) {
+  let globalState = 'off';
+  const counts = { group: { on: 0, off: 0 }, key: { on: 0, off: 0 } };
+  for (const b of bindings) {
+    if (b.scope_type === 'global') {
+      if (b.state === 'on' || b.state === 'off') globalState = b.state;
+    } else if (counts[b.scope_type] && (b.state === 'on' || b.state === 'off')) {
+      counts[b.scope_type][b.state] += 1;
+    }
+  }
+  const parts = [`Global: ${globalState}`];
+  for (const [type, noun] of [['group', 'group'], ['key', 'key']]) {
+    for (const state of ['on', 'off']) {
+      const n = counts[type][state];
+      if (n) parts.push(`${n} ${noun}${n === 1 ? '' : 's'} ${state}`);
+    }
+  }
+  return parts.join(' · ');
+}

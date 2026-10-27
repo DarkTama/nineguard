@@ -183,7 +183,8 @@ func FormatQuotaMarkdown(resp *upstream.UnifiedQuotaResponse, arg string) string
 	}
 
 	sb.WriteString("### 🌐 Upstream Provider Capacity (Shared Pool)\n\n")
-	sb.WriteString("| Provider / Family | Window | Used / Total | Remaining | Next Reset |\n")
+	for _, pool := range matchingPools { if pool.Source == "sdk" { sb.WriteString("*SDK percentages describe the most constrained observed account, not pooled capacity; other accounts may still have room.*\n\n"); break } }
+	sb.WriteString("| Provider / Family | Window | Usage | Remaining | Next Reset |\n")
 	sb.WriteString("|---|---|---|---|---|\n")
 
 	for _, pool := range matchingPools {
@@ -192,11 +193,21 @@ func FormatQuotaMarkdown(resp *upstream.UnifiedQuotaResponse, arg string) string
 			displayFamily = pool.Provider
 		}
 
+		if pool.Source == "sdk" && len(pool.Buckets) == 0 { sb.WriteString(fmt.Sprintf("| %s | SDK telemetry | — | waiting for upstream telemetry | — |\n", displayFamily)) }
 		for _, b := range pool.Buckets {
 			if filterStr != "" && !strings.Contains(strings.ToLower(pool.Provider), filterStr) &&
 				!strings.Contains(strings.ToLower(pool.SubProvider), filterStr) &&
 				!strings.Contains(strings.ToLower(pool.Family), filterStr) &&
 				!strings.Contains(strings.ToLower(b.Name), filterStr) {
+				continue
+			}
+			if b.Unit == "percent" {
+				used, remaining := "unknown", "unknown"
+				if b.UsedPercent != nil { used = fmt.Sprintf("%.1f%% used", *b.UsedPercent) }
+				if b.RemainingPercent != nil { remaining = fmt.Sprintf("%.1f%% left", *b.RemainingPercent) }
+				state := b.ObservationState
+				if b.Incomplete { state += ", incomplete" }
+				sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s (%s) | %s |\n", displayFamily, b.Name, used, remaining, state, formatResetIn(b.ResetAt)))
 				continue
 			}
 

@@ -46,7 +46,7 @@ export function quotaSection(ctx) {
   function makeRow(src, stored) {
     const limit = h('input', { class: 'input', type: 'number', min: '1', step: '1', placeholder: 'tokens', style: { width: '130px' } });
     limit.value = src.quota_limit ? String(src.quota_limit) : '';
-    const period = h('select', { class: 'input qk-period', style: { width: '170px' } },
+    const period = h('select', { class: 'select qk-period', 'aria-label': `Reset period for ${src.model_id}`, style: { width: '170px' } },
       MODEL_QUOTA_PERIODS.map(([v, l]) => h('option', { value: v, selected: v === (src.quota_period || 'daily') }, l)));
     const row = {
       modelId: src.model_id, stored, limit, period,
@@ -88,8 +88,8 @@ export function quotaSection(ctx) {
   }
 
   // ── Mode switch ──
-  const btnKey = h('button', { type: 'button', class: 'seg-btn', 'aria-pressed': 'false', onclick: () => setMode('key') }, h('span', { class: 'seg-title' }, 'Key Quota'), h('span', { class: 'seg-sub' }, 'one limit, all models'));
-  const btnModel = h('button', { type: 'button', class: 'seg-btn', 'aria-pressed': 'false', onclick: () => setMode('model') }, h('span', { class: 'seg-title' }, 'Per Model'), h('span', { class: 'seg-sub' }, 'a limit for each model'));
+  const btnKey = h('button', { type: 'button', class: 'seg-btn', 'aria-pressed': 'false', onclick: () => setMode('key') }, h('span', { class: 'seg-title' }, 'Key quota'), h('span', { class: 'seg-sub' }, 'one limit, all models'));
+  const btnModel = h('button', { type: 'button', class: 'seg-btn', 'aria-pressed': 'false', onclick: () => setMode('model') }, h('span', { class: 'seg-title' }, 'Per model'), h('span', { class: 'seg-sub' }, 'a limit for each model'));
   const modeBar = h('div', { class: 'seg-wrap' },
     h('div', { class: 'seg-label' }, 'Quota mode ', h('span', { class: 'muted' }, '(only one is enforced)')),
     h('div', { class: 'seg', role: 'group', 'aria-label': 'Quota mode' }, btnKey, btnModel));
@@ -99,11 +99,11 @@ export function quotaSection(ctx) {
   // ── Model rows ──
   const tbody = h('tbody');
   const table = h('table', { class: 'table qk-table' },
-    h('thead', null, h('tr', null, h('th', null, 'Model'), h('th', null, 'Token limit'), h('th', null, 'Reset period'), h('th', null, 'Used (current window)'), h('th'))),
+    h('thead', null, h('tr', null, h('th', null, 'Model'), h('th', null, 'Token limit'), h('th', null, 'Reset period'), h('th', null, 'Used (current window)'), h('th', { class: 'num' }))),
     tbody);
   const empty = h('p', { class: 'muted', style: { fontSize: '12px', margin: '6px 0' } }, 'No Model Quotas. All models are unlimited for this key.');
   const loadErr = h('p', { class: 'muted', style: { fontSize: '12px', margin: '6px 0' } }, 'Could not load the saved Model Quotas. Saving will leave them unchanged.');
-  const addBtn = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => togglePicker() }, icon('plus'), 'Add Model');
+  const addBtn = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => togglePicker() }, icon('plus'), 'Add model');
   const picker = h('div', { class: 'card', style: { display: 'none', padding: '10px', marginTop: '8px' } });
   const modelBox = h('div', null, h('div', { class: 'table-wrap' }, table), empty, loadErr,
     h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' } }, addBtn,
@@ -131,10 +131,10 @@ export function quotaSection(ctx) {
       h('td', null, r.limit),
       h('td', null, r.period),
       h('td', null, r.inactive ? h('span', { class: 'muted' }, 'not enforced') : (r.stored ? bar(r) : h('span', { class: 'muted' }, 'new'))),
-      h('td', { style: { textAlign: 'right' } },
+      h('td', { class: 'num' },
         h('button', { class: 'btn btn-sm', type: 'button', title: 'Remove', onclick: () => { rows.splice(rows.indexOf(r), 1); render(); } }, icon('x')))),
       // Usage history sits on its own full-width line so it never squeezes the model column.
-      h('tr', { class: 'qrow-velocity' }, h('td', { colspan: '5', style: { padding: '0 8px', border: '0' } }, r.velocity))]));
+      h('tr', { class: 'qrow-velocity' }, h('td', { colspan: '5' }, r.velocity))]));
     table.style.display = rows.length ? '' : 'none';
     empty.style.display = rows.length || !loaded ? 'none' : '';
     loadErr.style.display = !loaded && isEdit && !rows.length ? '' : 'none';
@@ -267,7 +267,7 @@ export function quotaSection(ctx) {
     keyBox.style.display = mode === 'key' ? '' : 'none';
     modelBox.style.display = mode === 'model' ? '' : 'none';
     savedHint.textContent = mode === 'key' && rows.length
-      ? `▸ ${rows.length} Model Quota${rows.length === 1 ? '' : 's'} saved (inactive while in Key Quota mode)` : '';
+      ? `${rows.length} model quota${rows.length === 1 ? '' : 's'} saved (inactive while in Key quota mode)` : '';
     refreshAccess();
     renderRows();
     renderSchedule();
@@ -280,10 +280,10 @@ export function quotaSection(ctx) {
     if (pickerOpen) renderPicker('');
   }
 
-  const node = h('div', { style: { padding: '12px 14px', background: 'var(--hover)', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '8px' } },
+  const node = h('div', { class: 'key-panel' },
     modeBar, keyBox, modelBox, schedBox,
-    h('p', { class: 'muted', style: { fontSize: '11px', margin: 0, lineHeight: 1.4 } },
-      '🛡️ Soft Post-Facto Gating: requests are blocked with HTTP 429 once consumed tokens reach the quota. Only one mode is enforced; the other mode\'s settings are kept.'));
+    h('p', { class: 'muted key-panel-note' }, icon('shield'),
+      h('span', null, 'Soft post-facto gating: requests are blocked with HTTP 429 once consumed tokens reach the quota. Only one mode is enforced; the other mode\'s settings are kept.')));
 
   render();
 

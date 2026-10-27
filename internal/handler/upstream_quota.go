@@ -107,8 +107,13 @@ func (h *Handler) BuildUnifiedQuotaResponse(ctx context.Context, keyInfo *keys.K
 		provList, err := h.providers.ListProviders()
 		if err == nil {
 			for _, prov := range provList {
-				if !prov.IsActive || prov.QuotaType == "disabled" || prov.QuotaType == "" {
+				if !prov.IsActive || !upstream.SupportsQuotaTracking(prov) {
 					continue
+				}
+				if prov.Backend == "cliproxy" && keyInfo != nil && !keyInfo.IsAllModelsAllowed() {
+					visible := false
+					for _, id := range h.providers.SDKModelIDs(ctx, prov) { if keyInfo.IsModelAllowed(id) { visible = true; break } }
+					if !visible { continue }
 				}
 
 				res, fetchErr := h.upstream.GetProviderQuotas(ctx, prov, force)
@@ -255,7 +260,7 @@ func (h *Handler) SyncAllUpstreamQuotas(ctx context.Context, force bool) int {
 	var mu sync.Mutex
 
 	for _, p := range provList {
-		if !p.IsActive || p.QuotaType == "disabled" || p.QuotaType == "" {
+		if !p.IsActive || !upstream.SupportsQuotaTracking(p) {
 			continue
 		}
 		wg.Add(1)

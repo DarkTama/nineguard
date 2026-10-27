@@ -12,6 +12,15 @@ type QuotaBucket struct {
 	ResetAt             *time.Time `json:"reset_at,omitempty"`
 	IsCreditBalance     bool       `json:"is_credit_balance"`
 	Warning             bool       `json:"warning"`              // true if remaining_percentage < 25
+	Unit string `json:"unit,omitempty"`
+	UsedPercent *float64 `json:"used_percent,omitempty"`
+	RemainingPercent *float64 `json:"remaining_percent,omitempty"`
+	Scope string `json:"scope,omitempty"`
+	WindowMinutes int64 `json:"window_minutes,omitempty"`
+	ObservedAt *time.Time `json:"observed_at,omitempty"`
+	ObservationState string `json:"observation_state,omitempty"`
+	LimitReached bool `json:"limit_reached,omitempty"`
+	Incomplete bool `json:"incomplete,omitempty"`
 }
 
 // ConnectionQuota represents quota data for a specific upstream account connection.
@@ -27,6 +36,9 @@ type ConnectionQuota struct {
 	Status         string        `json:"status"` // "ok", "degraded", "error"
 	ErrorMsg       string        `json:"error_msg,omitempty"`
 	LastUpdated    time.Time     `json:"last_updated"`
+	Source string `json:"source,omitempty"`
+	ObservedAt *time.Time `json:"observed_at,omitempty"`
+	ObservationState string `json:"observation_state,omitempty"`
 }
 
 // ProviderQuotaResult holds the complete quota state for an upstream provider.
@@ -38,6 +50,9 @@ type ProviderQuotaResult struct {
 	ErrorMsg     string            `json:"error_msg,omitempty"`
 	Connections  []ConnectionQuota `json:"connections"`
 	LastUpdated  time.Time         `json:"last_updated"`
+	Source string `json:"source,omitempty"`
+	ObservedAt *time.Time `json:"observed_at,omitempty"`
+	ObservationState string `json:"observation_state,omitempty"`
 }
 
 // MergedPoolQuota represents client-facing aggregated quotas grouped by provider & family.
@@ -49,6 +64,9 @@ type MergedPoolQuota struct {
 	AllowedModels []string      `json:"allowed_models,omitempty"`
 	Status        string        `json:"status"`
 	Warning       bool          `json:"warning"`
+	Source string `json:"source,omitempty"`
+	ObservedAt *time.Time `json:"observed_at,omitempty"`
+	ObservationState string `json:"observation_state,omitempty"`
 }
 
 // ClientKeyBudget represents the calling key's own token budget in key mode.

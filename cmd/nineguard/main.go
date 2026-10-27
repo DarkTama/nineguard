@@ -163,6 +163,7 @@ func main() {
 	}
 	// Share one upstream quota manager so the background sync warms the same cache /quota reads.
 	upstreamMgr := upstream.NewManager()
+	upstreamMgr.SetSDKQuotaSource(providerEngine)
 	revProxy.SetUpstreamManager(upstreamMgr)
 	h.SetUpstreamManager(upstreamMgr)
 	instanceID := database.GetInstanceID()

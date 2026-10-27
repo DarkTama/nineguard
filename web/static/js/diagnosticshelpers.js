@@ -25,9 +25,9 @@ export function formatCacheHitRate(cacheRead, prompt) {
 
 export function thinkingBadge(thinkingReq, thinkingDel, reasoningTokens, apiFormat, model) {
   if (thinkingDel) {
-    const countStr = reasoningTokens > 0 ? ` ${formatTokensCompact(reasoningTokens)}` : '';
     return {
-      text: `🧠${countStr}`,
+      icon: 'brain',
+      text: reasoningTokens > 0 ? formatTokensCompact(reasoningTokens) : 'Thinking',
       cls: 'thinking-delivered',
       title: reasoningTokens > 0
         ? `Thinking delivered: ${Number(reasoningTokens).toLocaleString()} reasoning tokens observed`
@@ -40,13 +40,15 @@ export function thinkingBadge(thinkingReq, thinkingDel, reasoningTokens, apiForm
       model.toLowerCase().includes('claude');
     if (isUnverifiable) {
       return {
-        text: '🧠?',
+        icon: 'brain',
+        text: '?',
         cls: 'thinking-unknown',
         title: 'Thinking was requested. Claude over the OpenAI chat format returns no observable reasoning text, so delivery cannot be verified.',
       };
     }
     return {
-      text: '🧠✗',
+      icon: 'brain',
+      text: 'Lost',
       cls: 'thinking-lost',
       title: 'Thinking was requested but the upstream response shows no reasoning.',
     };
@@ -57,7 +59,8 @@ export function thinkingBadge(thinkingReq, thinkingDel, reasoningTokens, apiForm
 export function fallbackBadge(modelFallback, requestedModel, servedModel) {
   if (!modelFallback) return null;
   return {
-    text: '⚠ fallback',
+    icon: 'alert',
+    text: 'Fallback',
     cls: 'model-fallback',
     title: `Model fallback detected: requested ${requestedModel || '-'} → served ${servedModel || '-'}`,
   };

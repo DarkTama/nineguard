@@ -30,10 +30,11 @@ func NewPipelineExecutor(client *http.Client) *PipelineExecutor {
 func ComputeAppliedHeader(incoming string, executedBuiltins []string) string {
 	set := make(map[string]bool)
 	validBuiltins := map[string]bool{
-		"secretguard": true,
-		"headroom":    true,
-		"caveman":     true,
-		"ponytail":    true,
+		"secretguard":     true,
+		"headroom":        true,
+		"billion-context": true,
+		"caveman":         true,
+		"ponytail":        true,
 	}
 
 	for _, id := range strings.Split(incoming, ",") {
@@ -100,6 +101,7 @@ func (pe *PipelineExecutor) Execute(
 	groups []models.ModelGroup,
 	apiKeyID, apiKeyName string,
 	model, providerID string,
+	providerBackend string,
 	apiFormat string,
 	isBypassRequested bool,
 	incomingAppliedHeader string,
@@ -137,6 +139,7 @@ func (pe *PipelineExecutor) Execute(
 	var pluginsSkipped []string
 	var pluginErrors []string
 	var executedBuiltins []string
+	var upstreamProxyURL string
 	totalTokensSaved := 0
 	totalTokensOverhead := 0
 
@@ -212,6 +215,12 @@ func (pe *PipelineExecutor) Execute(
 				skipReason = "unsupported_format"
 			} else {
 				modifiedBody, tokensSaved, skipped, skipReason, err = builtin.ApplyHeadroom(pCtx, pe.httpClient, currentBody, item.MergedSettings)
+			}
+		case "billion-context":
+			var proxyURL string
+			proxyURL, skipped, skipReason, err = builtin.ApplyBillionContext(pCtx, pe.httpClient, item.MergedSettings, providerBackend)
+			if err == nil && !skipped {
+				upstreamProxyURL = proxyURL
 			}
 		case "caveman":
 			if apiFormat == "messages" {
@@ -324,12 +333,13 @@ func (pe *PipelineExecutor) Execute(
 	upstreamAppliedHeader := ComputeAppliedHeader(incomingAppliedHeader, executedBuiltins)
 
 	return &PipelineResult{
-		Body:           finalBytes,
-		PluginsApplied: pluginsApplied,
-		PluginsSkipped: pluginsSkipped,
-		TokensSaved:    totalTokensSaved,
-		TokensOverhead: totalTokensOverhead,
-		PluginErrors:   pluginErrors,
-		DurationMs:     time.Since(start).Milliseconds(),
+		Body:             finalBytes,
+		UpstreamProxyURL: upstreamProxyURL,
+		PluginsApplied:   pluginsApplied,
+		PluginsSkipped:   pluginsSkipped,
+		TokensSaved:      totalTokensSaved,
+		TokensOverhead:   totalTokensOverhead,
+		PluginErrors:     pluginErrors,
+		DurationMs:       time.Since(start).Milliseconds(),
 	}, upstreamAppliedHeader, nil
 }

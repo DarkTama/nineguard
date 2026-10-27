@@ -121,7 +121,7 @@ NineGuard acts as a unified gateway between AI Coding Agents and Upstream Provid
 | **Model Quotas (Per Model)** | Alternative to Key Quota: keys can have individual token ceilings for specific models (e.g. `openai/gpt-4o` 50k/day, `anthropic/claude-sonnet` 1M/month). A key uses one mode at a time without losing settings of the inactive mode. When depleted, HTTP 429 `model_quota_exceeded` blocks only that specific model. |
 | **Quotas View & Alerts** | Dedicated **Quotas** view displaying usage across all keys and models (filterable by mode/status), "Quotas near limit" cards on the Dashboard, and inline quota status in the keys table. Alert threshold configured via `quota_warn_percent` (default 80%). |
 | **Token Burn Velocity & Presets** | Monitor historical consumption velocity (24 hours, 7-day average, 30 days) per key to guide quota sizing with 1-click preset buttons (1.5x / 2x average) matching the selected reset period (daily, weekly, monthly). |
-| **Plugin Pipeline & Token Savers** | Trim tokens and modify requests automatically via built-in plugins (Headroom, Ponytail, Caveman) or external HTTP webhooks with global pipeline ordering and hierarchical overrides (Global $\rightarrow$ Model Group $\rightarrow$ API Key). |
+| **Plugin Pipeline & Token Savers** | Trim tokens and modify requests automatically via built-in plugins (Headroom, Billion Context, Ponytail, Caveman) or external HTTP webhooks with global pipeline ordering and hierarchical overrides (Global $\rightarrow$ Model Group $\rightarrow$ API Key). |
 | **Secret Leak Guardrail (SecretGuard)** | Prevent leakage of API tokens (`sk-`, `ghp-`, `AKIA`), private keys, and environment secrets into upstream LLM prompts with regex inspection (Block HTTP 403, Redact in-flight, or Audit mode). |
 | **Traffic Spike Alerts** | Flag oversized requests exceeding thresholds (`heavy_token_threshold`) with ⚠️ warning badges in Traffic Explorer and audit logs without dropping the connection. |
 | **Multimodal Image Logging** | Detect and track requests containing image/vision payloads in chat history with `🖼️ N img` badges and search filters. |
@@ -270,7 +270,7 @@ docker run -d \
   nineguard:latest
 ```
 
-#### Docker Compose (NineGuard + 9router Stack)
+#### Docker Compose (NineGuard + 9router + Billion Context Stack)
 
 ```bash
 # 1. Prepare environment variables
@@ -281,13 +281,14 @@ cp .env.example .env
 docker compose up -d --build
 
 # 3. Access from local machine via SSH tunnel
-ssh -L 8080:localhost:8080 -L 20128:localhost:20128 user@VM_IP
+ssh -L 8080:localhost:8080 -L 20128:localhost:20128 -L 8788:localhost:8788 user@VM_IP
 ```
 
 * NineGuard: `http://localhost:8080/` (set up admin account on first visit).
 * 9router: `http://localhost:20128/dashboard` — issue your API keys here.
 * Register 9router in NineGuard (**Gateway → Providers**) using `http://9router:20128/v1` and the 9router API key.
-* Both services bind strictly to `127.0.0.1`. For remote public access, place them behind a TLS reverse proxy (Caddy/Nginx).
+* Billion Context (`bili`): Runs ACP proxy on port 8787 in Docker (exposed at `127.0.0.1:8788` on the host). In NineGuard (**Plugins → Billion Context**), set endpoint URL to `http://bili:8787` to enable incremental, prefix-cache friendly history compression for OpenAI chat and Anthropic messages.
+* All services bind strictly to `127.0.0.1`. For remote public access, place them behind a TLS reverse proxy (Caddy/Nginx).
 
 ---
 
@@ -378,7 +379,7 @@ For Claude models, prefer the native Anthropic Messages API over `/v1/chat/compl
 * **Extended thinking** — `thinking` blocks and their signatures survive multi-turn tool loops. Via chat completions, Claude's adaptive thinking is often invisible (signature-only), so the Traffic Explorer can only mark it as unverifiable, and some upstreams drop `thinking` on tool-result turns.
 * **Prompt caching** — `cache_control` breakpoints reach Anthropic unchanged, including in plugin-injected `system` prompts.
 * **Native tool blocks** — `tool_use` / `tool_result` keep their structure; tool names cloaked by 9router (`bash_ide`, `_cc`) are restored automatically.
-* **Same governance** — key permissions, Key/Model Quotas, plugins (Caveman, Ponytail, SecretGuard; Headroom is skipped on this format), `/quota` and `/usage` chat commands, and errors in the Anthropic envelope (`{"type":"error",...}`).
+* **Same governance** — key permissions, Key/Model Quotas, plugins (Billion Context, Caveman, Ponytail, SecretGuard; Headroom is skipped on this format), `/quota` and `/usage` chat commands, and errors in the Anthropic envelope (`{"type":"error",...}`).
 
 Settings:
 * **Base URL:** `http://localhost:8080` (**no `/v1`**: Anthropic SDKs and Claude Code append `/v1/messages` themselves)

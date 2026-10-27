@@ -18,6 +18,7 @@ import (
 	"nineguard/internal/keys"
 	"nineguard/internal/models"
 	"nineguard/internal/plugins"
+	"nineguard/internal/plugins/builtin"
 	"nineguard/internal/pricing"
 	"nineguard/internal/providers"
 	"nineguard/internal/traffic"
@@ -498,6 +499,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var pluginsApplied, pluginsSkipped, pluginErrors string
 	var tokensSaved, tokensOverhead, pluginMs int
 	var upstreamAppliedHeader string
+	var upstreamProxyURL string
 
 	if isChatOrMessages && p.plugins != nil {
 		isBypass := strings.EqualFold(r.Header.Get("X-NineGuard-Plugins"), "off")
@@ -515,6 +517,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			keyName,
 			actualModel,
 			provider.ID,
+			provider.Backend,
 			apiFormat,
 			isBypass,
 			incomingApplied,
@@ -530,6 +533,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			tokensOverhead = pipeRes.TokensOverhead
 			pluginMs = int(pipeRes.DurationMs)
 			upstreamAppliedHeader = appliedHdr
+			upstreamProxyURL = pipeRes.UpstreamProxyURL
 
 			if pipeRes.Rejected {
 				errType := "permission_error"
@@ -611,6 +615,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		targetURL += "?" + r.URL.RawQuery
 	}
 
+	if upstreamProxyURL != "" && provider.Backend != "cliproxy" {
+		targetURL = builtin.WrapBillionContextURL(upstreamProxyURL, targetURL)
+	}
+
 	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(forwardBody))
 	if err != nil {
 		http.Error(w, `{"error":"failed to construct forward request"}`, http.StatusInternalServerError)
@@ -630,7 +638,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		outReq.Header.Del("X-NineGuard-Plugins-Applied")
 	}
-	if parsedU, err := url.Parse(targetBase); err == nil {
+	if upstreamProxyURL != "" && provider.Backend != "cliproxy" {
+		if parsedBiliURL, err := url.Parse(upstreamProxyURL); err == nil && parsedBiliURL.Host != "" {
+			outReq.Host = parsedBiliURL.Host
+		}
+	} else if parsedU, err := url.Parse(targetBase); err == nil {
 		outReq.Host = parsedU.Host
 	}
 	if provider.APIKey != "" {

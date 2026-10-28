@@ -134,3 +134,76 @@ func TestProxyAnthropicMessagesIntegration(t *testing.T) {
 		t.Errorf("UsageEstimated = true; expected false")
 	}
 }
+
+func TestProxyNonStreamMissingUsageEstimation(t *testing.T) {
+	d, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	defer d.Close()
+
+	keyMgr := keys.NewManager(d, "")
+	trafficMgr := traffic.NewManager(d)
+	modelsMgr := models.NewManager(d)
+	providersMgr := providers.NewManager(d)
+
+	respJSON := `{"id":"chatcmpl-123","object":"chat.completion","model":"gpt-4o","choices":[{"message":{"role":"assistant","content":"Done"}}]}`
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(respJSON))
+	}))
+	defer upstream.Close()
+
+	_, _ = providersMgr.CreateProvider("test-openai", upstream.URL, "sk-test", "", true, true)
+	clientKey, _ := keyMgr.CreateKey("client-agent", "all", nil, nil)
+	p, _ := proxy.NewProxy(modelsMgr, trafficMgr, keyMgr, providersMgr, nil)
+
+	reqBody := `{"model":"gpt-4o","messages":[{"role":"user","content":"ping"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	req.Header.Set("Authorization", "Bearer "+clientKey.RawKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	p.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	logs, total, err := trafficMgr.QueryLogs(traffic.FilterParams{Limit: 10})
+	if err != nil {
+		t.Fatalf("QueryLogs: %v", err)
+	}
+	if total != 1 || len(logs) != 1 {
+		t.Fatalf("expected 1 log entry, got total=%d len=%d", total, len(logs))
+	}
+
+	entry := logs[0]
+	if !entry.UsageEstimated {
+		t.Errorf("expected UsageEstimated=true")
+	}
+
+	expectedPrompt := len(reqBody) / 4
+	expectedCompletion := len(respJSON) / 4
+	if expectedCompletion < 1 {
+		expectedCompletion = 1
+	}
+	expectedTotal := expectedPrompt + expectedCompletion
+
+	if entry.PromptTokens != expectedPrompt {
+		t.Errorf("PromptTokens = %d; expected %d", entry.PromptTokens, expectedPrompt)
+	}
+	if entry.CompletionTokens != expectedCompletion {
+		t.Errorf("CompletionTokens = %d; expected %d", entry.CompletionTokens, expectedCompletion)
+	}
+	if entry.TotalTokens != expectedTotal {
+		t.Errorf("TotalTokens = %d; expected %d", entry.TotalTokens, expectedTotal)
+	}
+	if entry.CostUSD != nil {
+		t.Errorf("expected CostUSD to be nil for estimated usage, got %v", *entry.CostUSD)
+	}
+}

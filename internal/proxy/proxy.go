@@ -866,6 +866,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			thinkingDelivered = diag.ThinkingDelivered
 			servedModel = diag.ServedModel
 			if resp.StatusCode < 400 && totalTokens == 0 {
+				promptTokens = len(bodyBytes) / 4
+				completionTokens = len(respBody) / 4
+				if completionTokens < 1 {
+					completionTokens = 1
+				}
+				totalTokens = promptTokens + completionTokens
 				usageEstimated = true
 			}
 			if diag.ErrorMessage != nil {

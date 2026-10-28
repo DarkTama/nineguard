@@ -589,6 +589,21 @@ textarea.input {
 .vchart-tip .tip-title { color: var(--muted); margin-bottom: 4px; }
 .vchart-tip .tip-sep { height: 1px; margin: 4px 0; background: var(--border); }
 .vchart-tip .tip-hint { margin-top: 5px; color: var(--muted); font-size: 10.5px; }
+.vchart-seg { transition: opacity .1s ease, filter .1s ease; }
+.vchart-seg.is-dim { opacity: 0.35; }
+.vchart-seg.is-focus { filter: brightness(1.25); stroke: var(--text); stroke-width: 1px; }
+.vchart-tip.has-focus .tip-row:not(.is-focus):not(.tip-total) { opacity: 0.45; }
+.vchart-tip .tip-row.is-focus {
+  background: var(--hover);
+  border-radius: var(--radius-sm);
+  padding: 0 4px;
+  margin: 0 -4px;
+}
+.vchart-tip .tip-row.is-focus b,
+.vchart-tip .tip-row.is-focus .tip-name {
+  color: var(--text);
+  font-weight: 700;
+}
 .vchart-empty { display: grid; place-items: center; height: 70px; color: var(--muted); }
 
 .log-table { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -1158,6 +1173,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .pt-panel h2 { margin: 0 0 12px; font-size: 13px; font-weight: 700; }
 .pt-panel h3 { margin: 0 0 10px; font-size: 12px; font-weight: 600; color: var(--text-2); }
 .pt-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.pt-head + .pt-sub { margin: -6px 0 14px; }
 .pt-head h2 { margin: 0; }
 .pt-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pt-sub { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.55; max-width: 68ch; }
@@ -1195,18 +1211,17 @@ table.table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .pt-stats dd { margin: 2px 0 1px; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .pt-stats small { display: block; font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pt-daily { margin: 0 0 20px; }
-.pt-daily figcaption { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; font-weight: 600; color: var(--text-2); }
-.pt-bars { display: flex; align-items: flex-end; gap: 2px; height: 96px; padding-bottom: 1px; border-bottom: 1px solid var(--border); }
-.pt-bars > span { flex: 1 1 0; min-width: 2px; border-radius: 2px 2px 0 0; background: var(--accent); opacity: .85; }
-.pt-bars > span:hover { opacity: 1; }
-.pt-bars > span.zero { background: var(--border-strong); opacity: .5; }
-.pt-axis { display: flex; justify-content: space-between; margin-top: 4px; font-size: 10.5px; color: var(--muted); }
 .pt-share ul { display: flex; flex-direction: column; gap: 10px; }
 .pt-share-head { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; margin-bottom: 4px; }
 .pt-share-bar { display: flex; align-items: center; gap: 8px; }
 .pt-share-bar > i { display: block; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--accent) 55%, var(--hover)); }
 .pt-share-bar > b { font-size: 10.5px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
 .pt-extras { margin: 18px 0 0; padding-top: 12px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.pt-how { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; font-size: 11px; color: var(--muted); }
+.pt-how summary { cursor: pointer; color: var(--text-2); font-weight: 500; user-select: none; }
+.pt-how summary:hover { color: var(--text); }
+.pt-how ul { margin: 8px 0 2px; padding-left: 18px; line-height: 1.6; }
+.pt-how li { margin-bottom: 3px; }
 
 /* Side column */
 .pt-copy { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-top: 1px solid var(--border); }
@@ -1243,7 +1258,6 @@ table.table { width: 100%; border-collapse: collapse; font-size: 12px; }
   .pt-panel { padding: 16px; }
   .pt-budget { padding: 18px 16px; }
   .pt-hide-sm { display: none; }
-  .pt-bars { height: 72px; }
   .pt-models button { padding: 10px 2px; }
   .pt-models button .icon { opacity: 1; }
 }

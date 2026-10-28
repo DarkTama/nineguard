@@ -364,7 +364,10 @@ func (p *StreamDiagnosticsParser) FeedSSEEvent(eventRaw []byte, dataPayload []by
 				StopReason  string `json:"stop_reason"`
 			} `json:"delta"`
 			Usage struct {
-				OutputTokens int `json:"output_tokens"`
+				OutputTokens             int `json:"output_tokens"`
+				InputTokens              int `json:"input_tokens"`
+				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 			} `json:"usage"`
 		}
 
@@ -416,6 +419,14 @@ func (p *StreamDiagnosticsParser) FeedSSEEvent(eventRaw []byte, dataPayload []by
 				if anthropicEvent.Usage.OutputTokens > 0 {
 					p.completionTokens = anthropicEvent.Usage.OutputTokens
 					p.hasRealUsage = true
+				}
+				if p.anthropicInput == 0 && p.cacheReadTokens == 0 && p.cacheWriteTokens == 0 {
+					if anthropicEvent.Usage.InputTokens > 0 || anthropicEvent.Usage.CacheReadInputTokens > 0 || anthropicEvent.Usage.CacheCreationInputTokens > 0 {
+						p.anthropicInput = anthropicEvent.Usage.InputTokens
+						p.cacheReadTokens = anthropicEvent.Usage.CacheReadInputTokens
+						p.cacheWriteTokens = anthropicEvent.Usage.CacheCreationInputTokens
+						p.hasRealUsage = true
+					}
 				}
 			}
 		}
@@ -546,10 +557,13 @@ func (p *StreamDiagnosticsParser) FeedSSEEvent(eventRaw []byte, dataPayload []by
 					}
 				}
 			}
-			if chunk.Usage != nil && chunk.Usage.TotalTokens > 0 {
+			if chunk.Usage != nil && (chunk.Usage.TotalTokens > 0 || chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0) {
 				p.promptTokens = chunk.Usage.PromptTokens
 				p.completionTokens = chunk.Usage.CompletionTokens
 				p.totalTokens = chunk.Usage.TotalTokens
+				if p.totalTokens == 0 {
+					p.totalTokens = p.promptTokens + p.completionTokens
+				}
 				p.cacheReadTokens = chunk.Usage.PromptTokensDetails.CachedTokens
 				p.cacheWriteTokens = chunk.Usage.PromptTokensDetails.CacheWriteTokens
 				p.reasoningTokens = chunk.Usage.CompletionTokensDetails.ReasoningTokens

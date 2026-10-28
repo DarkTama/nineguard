@@ -34,9 +34,11 @@ func TestGetUsageSummary(t *testing.T) {
 	_, _ = d.Exec(`
 		INSERT INTO traffic_logs (
 			timestamp, api_key, api_key_id, model, model_id, prompt_tokens, completion_tokens, total_tokens,
+			cache_read_tokens, cache_write_tokens,
 			status_code, cost_usd, thinking_requested, thinking_delivered, model_fallback, usage_estimated
 		) VALUES (
 			datetime(?, '-7 hours'), 'sk-key1', 'key-agent-1', 'claude-3-5-sonnet', 'claude-3-5-sonnet', 1000, 500, 1500,
+			300, 100,
 			200, ?, 1, 1, 0, 0
 		)
 	`, "2026-10-19 10:00:00", cost1)
@@ -46,9 +48,11 @@ func TestGetUsageSummary(t *testing.T) {
 	_, _ = d.Exec(`
 		INSERT INTO traffic_logs (
 			timestamp, api_key, api_key_id, model, model_id, prompt_tokens, completion_tokens, total_tokens,
+			cache_read_tokens, cache_write_tokens,
 			status_code, cost_usd, thinking_requested, thinking_delivered, model_fallback, usage_estimated
 		) VALUES (
 			datetime(?, '-7 hours'), 'sk-key1', 'key-agent-1', 'claude-3-5-sonnet', 'claude-3-5-sonnet', 2000, 500, 2500,
+			700, 200,
 			200, ?, 1, 0, 1, 0
 		)
 	`, "2026-10-19 10:15:00", cost2)
@@ -123,6 +127,23 @@ func TestGetUsageSummary(t *testing.T) {
 	// 6. Validate Favorite Model: claude-3-5-sonnet has 4000 tokens, gpt-4o has 700 -> claude-3-5-sonnet
 	if summary.FavoriteModel != "claude-3-5-sonnet" {
 		t.Fatalf("expected favorite_model 'claude-3-5-sonnet', got %s", summary.FavoriteModel)
+	}
+
+	// 6b. Validate Models breakdown cache fields
+	var foundClaudeModel bool
+	for _, m := range summary.Models {
+		if m.ModelID == "claude-3-5-sonnet" {
+			foundClaudeModel = true
+			if m.CacheRead != 1000 {
+				t.Fatalf("expected claude CacheRead 1000, got %d", m.CacheRead)
+			}
+			if m.CacheWrite != 300 {
+				t.Fatalf("expected claude CacheWrite 300, got %d", m.CacheWrite)
+			}
+		}
+	}
+	if !foundClaudeModel {
+		t.Fatalf("claude-3-5-sonnet not found in summary.Models")
 	}
 
 	// 7. Validate Thinking

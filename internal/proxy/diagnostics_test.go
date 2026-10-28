@@ -345,6 +345,90 @@ func TestParseDiagnosticsStream(t *testing.T) {
 		}
 	})
 
+	t.Run("OpenAI chat stream with prompt and completion tokens but zero total_tokens", func(t *testing.T) {
+		parser := proxy.NewStreamDiagnosticsParser("chat")
+		// Usage chunk has prompt_tokens and completion_tokens, but total_tokens is 0
+		parser.FeedSSEEvent([]byte("data: {\"choices\":[],\"usage\":{\"prompt_tokens\":120,\"completion_tokens\":80,\"total_tokens\":0}}\n\n"),
+			[]byte(`{"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":80,"total_tokens":0}}`))
+
+		diag := parser.Finalize(1, 200, 200)
+		if diag.PromptTokens != 120 {
+			t.Errorf("PromptTokens = %d, expected 120", diag.PromptTokens)
+		}
+		if diag.CompletionTokens != 80 {
+			t.Errorf("CompletionTokens = %d, expected 80", diag.CompletionTokens)
+		}
+		if diag.TotalTokens != 200 {
+			t.Errorf("TotalTokens = %d, expected 200 (prompt+completion)", diag.TotalTokens)
+		}
+		if diag.UsageEstimated {
+			t.Errorf("UsageEstimated = true, expected false")
+		}
+	})
+
+	t.Run("Anthropic messages stream with input/cache only on message_delta", func(t *testing.T) {
+		parser := proxy.NewStreamDiagnosticsParser("messages")
+
+		// message_start with all 0 usage
+		parser.FeedSSEEvent([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-3-7-sonnet-20250219\",\"usage\":{\"input_tokens\":0,\"cache_read_input_tokens\":0,\"cache_creation_input_tokens\":0}}}\n\n"),
+			[]byte(`{"type":"message_start","message":{"model":"claude-3-7-sonnet-20250219","usage":{"input_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}`))
+
+		// message_delta with input_tokens, cache_read, cache_creation, output_tokens
+		parser.FeedSSEEvent([]byte("event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"input_tokens\":400,\"cache_read_input_tokens\":1000,\"cache_creation_input_tokens\":50,\"output_tokens\":200}}\n\n"),
+			[]byte(`{"type":"message_delta","usage":{"input_tokens":400,"cache_read_input_tokens":1000,"cache_creation_input_tokens":50,"output_tokens":200}}`))
+
+		diag := parser.Finalize(2, 400, 200)
+		// Prompt = 400 + 1000 + 50 = 1450
+		if diag.PromptTokens != 1450 {
+			t.Errorf("PromptTokens = %d; expected 1450", diag.PromptTokens)
+		}
+		if diag.CompletionTokens != 200 {
+			t.Errorf("CompletionTokens = %d; expected 200", diag.CompletionTokens)
+		}
+		if diag.TotalTokens != 1650 {
+			t.Errorf("TotalTokens = %d; expected 1650", diag.TotalTokens)
+		}
+		if diag.CacheReadTokens != 1000 {
+			t.Errorf("CacheReadTokens = %d; expected 1000", diag.CacheReadTokens)
+		}
+		if diag.CacheWriteTokens != 50 {
+			t.Errorf("CacheWriteTokens = %d; expected 50", diag.CacheWriteTokens)
+		}
+		if diag.UsageEstimated {
+			t.Errorf("UsageEstimated = true; expected false")
+		}
+	})
+
+	t.Run("Anthropic messages stream keeps message_start values when present", func(t *testing.T) {
+		parser := proxy.NewStreamDiagnosticsParser("messages")
+
+		// message_start with non-zero usage
+		parser.FeedSSEEvent([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-3-7-sonnet-20250219\",\"usage\":{\"input_tokens\":300,\"cache_read_input_tokens\":1200,\"cache_creation_input_tokens\":100}}}\n\n"),
+			[]byte(`{"type":"message_start","message":{"model":"claude-3-7-sonnet-20250219","usage":{"input_tokens":300,"cache_read_input_tokens":1200,"cache_creation_input_tokens":100}}}`))
+
+		// message_delta with different input/cache values that should NOT overwrite message_start
+		parser.FeedSSEEvent([]byte("event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"input_tokens\":999,\"cache_read_input_tokens\":888,\"cache_creation_input_tokens\":777,\"output_tokens\":250}}\n\n"),
+			[]byte(`{"type":"message_delta","usage":{"input_tokens":999,"cache_read_input_tokens":888,"cache_creation_input_tokens":777,"output_tokens":250}}`))
+
+		diag := parser.Finalize(2, 400, 200)
+		// Prompt = 300 + 1200 + 100 = 1600 (not 999+888+777)
+		if diag.PromptTokens != 1600 {
+			t.Errorf("PromptTokens = %d; expected 1600", diag.PromptTokens)
+		}
+		if diag.CompletionTokens != 250 {
+			t.Errorf("CompletionTokens = %d; expected 250", diag.CompletionTokens)
+		}
+		if diag.TotalTokens != 1850 {
+			t.Errorf("TotalTokens = %d; expected 1850", diag.TotalTokens)
+		}
+		if diag.CacheReadTokens != 1200 {
+			t.Errorf("CacheReadTokens = %d; expected 1200", diag.CacheReadTokens)
+		}
+		if diag.CacheWriteTokens != 100 {
+			t.Errorf("CacheWriteTokens = %d; expected 100", diag.CacheWriteTokens)
+		}
+	})
+
 	t.Run("Stream with missing usage triggers estimated flag", func(t *testing.T) {
 		parser := proxy.NewStreamDiagnosticsParser("chat")
 		parser.FeedSSEEvent([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n"),

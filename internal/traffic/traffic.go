@@ -205,6 +205,8 @@ type ModelUsageSummary struct {
 	TotalTokens      int     `json:"total_tokens"`
 	PromptTokens     int     `json:"prompt_tokens"`
 	CompTokens       int     `json:"comp_tokens"`
+	CacheReadTokens  int     `json:"cache_read_tokens"`
+	CacheWriteTokens int     `json:"cache_write_tokens"`
 	Requests         int     `json:"requests"`
 	Share            float64 `json:"share"`
 	EstimatedCostUSD float64 `json:"estimated_cost_usd"`
@@ -219,6 +221,8 @@ type KeyUsageSummary struct {
 	TotalTokens      int     `json:"total_tokens"`
 	PromptTokens     int     `json:"prompt_tokens"`
 	CompTokens       int     `json:"comp_tokens"`
+	CacheReadTokens  int     `json:"cache_read_tokens"`
+	CacheWriteTokens int     `json:"cache_write_tokens"`
 	Requests         int     `json:"requests"`
 	Share            float64 `json:"share"`
 	EstimatedCostUSD float64 `json:"estimated_cost_usd"`
@@ -233,6 +237,8 @@ type KeyUsageBreakdown struct {
 	TotalTokens      int                 `json:"total_tokens"`
 	PromptTokens     int                 `json:"prompt_tokens"`
 	CompletionTokens int                 `json:"completion_tokens"`
+	CacheReadTokens  int                 `json:"cache_read_tokens"`
+	CacheWriteTokens int                 `json:"cache_write_tokens"`
 	TotalRequests    int                 `json:"total_requests"`
 	SuccessRequests  int                 `json:"success_requests"`
 	ErrorRequests    int                 `json:"error_requests"`
@@ -253,6 +259,8 @@ type ModelUsageBreakdown struct {
 	TotalTokens      int               `json:"total_tokens"`
 	PromptTokens     int               `json:"prompt_tokens"`
 	CompletionTokens int               `json:"completion_tokens"`
+	CacheReadTokens  int               `json:"cache_read_tokens"`
+	CacheWriteTokens int               `json:"cache_write_tokens"`
 	TotalRequests    int               `json:"total_requests"`
 	SuccessRequests  int               `json:"success_requests"`
 	ErrorRequests    int               `json:"error_requests"`
@@ -278,6 +286,8 @@ type UsageReport struct {
 	TotalTokens      int                    `json:"total_tokens"`
 	PromptTokens     int                    `json:"prompt_tokens"`
 	CompletionTokens int                    `json:"completion_tokens"`
+	CacheReadTokens  int                    `json:"cache_read_tokens"`
+	CacheWriteTokens int                    `json:"cache_write_tokens"`
 	TokensSaved      int                    `json:"tokens_saved"`
 	TotalRequests    int                    `json:"total_requests"`
 	TopConsumerKey   string                 `json:"top_consumer_key"`
@@ -1241,11 +1251,12 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string, loc *time
 	var prevReqs, prevToks, prevBlk, prevSucc, prevErrs int
 	var prevCost float64
 	_ = m.db.QueryRow(prevAggQuery, prevFilterArgs...).Scan(&prevReqs, &prevToks, &prevBlk, &prevSucc, &prevErrs, &prevCost)
-	stats.Comparison.PrevEstimatedCost = prevCost
+	prevEstimatedCost := prevCost
+	var costDeltaPct float64
 	if prevCost > 0 {
-		stats.Comparison.CostDeltaPct = (stats.EstimatedCostUSD - prevCost) / prevCost * 100.0
+		costDeltaPct = (stats.EstimatedCostUSD - prevCost) / prevCost * 100.0
 	} else if stats.EstimatedCostUSD > 0 {
-		stats.Comparison.CostDeltaPct = 100.0
+		costDeltaPct = 100.0
 	}
 
 	var prevErrRate float64
@@ -1273,15 +1284,17 @@ func (m *Manager) GetDashboardStats(period, startDate, endDate string, loc *time
 	}
 
 	stats.Comparison = PeriodComparison{
-		PrevRequests:     prevReqs,
-		PrevErrors:       prevErrs,
-		PrevBlocked:      prevBlk,
-		PrevTokens:       prevToks,
-		PrevSuccess:      prevSucc,
-		PrevErrorRate:    prevErrRate,
-		ReqDeltaPct:      reqDeltaPct,
-		ErrDeltaPct:      errDeltaPct,
-		ErrorRateDeltaPt: curErrRate - prevErrRate,
+		PrevRequests:      prevReqs,
+		PrevErrors:        prevErrs,
+		PrevBlocked:       prevBlk,
+		PrevTokens:        prevToks,
+		PrevSuccess:       prevSucc,
+		PrevErrorRate:     prevErrRate,
+		ReqDeltaPct:       reqDeltaPct,
+		ErrDeltaPct:       errDeltaPct,
+		ErrorRateDeltaPt:  curErrRate - prevErrRate,
+		PrevEstimatedCost: prevEstimatedCost,
+		CostDeltaPct:      costDeltaPct,
 	}
 
 	// Level Mix calculation with comparison
@@ -1666,6 +1679,8 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 			COALESCE(SUM(total_tokens), 0),
 			COALESCE(SUM(prompt_tokens), 0),
 			COALESCE(SUM(completion_tokens), 0),
+			COALESCE(SUM(cache_read_tokens), 0),
+			COALESCE(SUM(cache_write_tokens), 0),
 			COALESCE(SUM(tokens_saved), 0),
 			COALESCE(SUM(cost_usd), 0),
 			COALESCE(SUM(CASE WHEN cost_usd IS NULL AND status_code < 400 THEN 1 ELSE 0 END), 0)
@@ -1678,6 +1693,8 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 		&report.TotalTokens,
 		&report.PromptTokens,
 		&report.CompletionTokens,
+		&report.CacheReadTokens,
+		&report.CacheWriteTokens,
 		&report.TokensSaved,
 		&report.EstimatedCostUSD,
 		&report.UnpricedRequests,
@@ -1696,6 +1713,8 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 			COALESCE(SUM(t.total_tokens), 0) AS tot_toks,
 			COALESCE(SUM(t.prompt_tokens), 0) AS p_toks,
 			COALESCE(SUM(t.completion_tokens), 0) AS c_toks,
+			COALESCE(SUM(t.cache_read_tokens), 0) AS cr_toks,
+			COALESCE(SUM(t.cache_write_tokens), 0) AS cw_toks,
 			COUNT(*) AS reqs,
 			COALESCE(SUM(t.cost_usd), 0) AS cost,
 			COALESCE(SUM(CASE WHEN t.cost_usd IS NULL AND t.status_code < 400 THEN 1 ELSE 0 END), 0) AS unpriced
@@ -1711,16 +1730,18 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 		for crossRows.Next() {
 			var g, kn, mod string
 			var masked sql.NullString
-			var tot, pt, ct, reqs int
+			var tot, pt, ct, cr, cw, reqs int
 			var cost float64
 			var unpriced int64
-			if err := crossRows.Scan(&g, &kn, &masked, &mod, &tot, &pt, &ct, &reqs, &cost, &unpriced); err == nil {
+			if err := crossRows.Scan(&g, &kn, &masked, &mod, &tot, &pt, &ct, &cr, &cw, &reqs, &cost, &unpriced); err == nil {
 				keyID, unlinked := splitKeyGroup(g)
 				keyModelMap[g] = append(keyModelMap[g], ModelUsageSummary{
 					Model:            mod,
 					TotalTokens:      tot,
 					PromptTokens:     pt,
 					CompTokens:       ct,
+					CacheReadTokens:  cr,
+					CacheWriteTokens: cw,
 					Requests:         reqs,
 					EstimatedCostUSD: cost,
 					UnpricedRequests: unpriced,
@@ -1733,6 +1754,8 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 					TotalTokens:      tot,
 					PromptTokens:     pt,
 					CompTokens:       ct,
+					CacheReadTokens:  cr,
+					CacheWriteTokens: cw,
 					Requests:         reqs,
 					EstimatedCostUSD: cost,
 					UnpricedRequests: unpriced,
@@ -1754,6 +1777,8 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 			COALESCE(SUM(t.total_tokens), 0) AS tot_toks,
 			COALESCE(SUM(t.prompt_tokens), 0) AS p_toks,
 			COALESCE(SUM(t.completion_tokens), 0) AS c_toks,
+			COALESCE(SUM(t.cache_read_tokens), 0) AS cr_toks,
+			COALESCE(SUM(t.cache_write_tokens), 0) AS cw_toks,
 			COUNT(*) AS tot_reqs,
 			COALESCE(SUM(CASE WHEN t.status_code >= 200 AND t.status_code < 400 THEN 1 ELSE 0 END), 0) AS ok_reqs,
 			COALESCE(SUM(CASE WHEN t.status_code >= 400 AND t.status_code != 403 THEN 1 ELSE 0 END), 0) AS err_reqs,
@@ -1777,6 +1802,7 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 			var masked sql.NullString
 			if err := kRows.Scan(
 				&g, &kb.KeyName, &masked, &kb.TotalTokens, &kb.PromptTokens, &kb.CompletionTokens,
+				&kb.CacheReadTokens, &kb.CacheWriteTokens,
 				&kb.TotalRequests, &kb.SuccessRequests, &kb.ErrorRequests, &kb.BlockedRequests,
 				&kb.AvgDurationMs, &kb.TokensSaved,
 				&kb.EstimatedCostUSD, &kb.UnpricedRequests,
@@ -1808,6 +1834,8 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 			COALESCE(SUM(t.total_tokens), 0) as tot_toks,
 			COALESCE(SUM(t.prompt_tokens), 0) as p_toks,
 			COALESCE(SUM(t.completion_tokens), 0) as c_toks,
+			COALESCE(SUM(t.cache_read_tokens), 0) as cr_toks,
+			COALESCE(SUM(t.cache_write_tokens), 0) as cw_toks,
 			COUNT(t.id) as tot_reqs,
 			COALESCE(SUM(CASE WHEN t.status_code >= 200 AND t.status_code < 400 THEN 1 ELSE 0 END), 0) as ok_reqs,
 			COALESCE(SUM(CASE WHEN t.status_code >= 400 AND t.status_code != 403 THEN 1 ELSE 0 END), 0) as err_reqs,
@@ -1830,6 +1858,7 @@ func (m *Manager) GetUsageReports(period, startDate, endDate string, loc *time.L
 			var enInt, rmInt int
 			if err := mRows.Scan(
 				&mb.Model, &enInt, &rmInt, &mb.TotalTokens, &mb.PromptTokens, &mb.CompletionTokens,
+				&mb.CacheReadTokens, &mb.CacheWriteTokens,
 				&mb.TotalRequests, &mb.SuccessRequests, &mb.ErrorRequests, &mb.BlockedRequests,
 				&mb.AvgDurationMs,
 				&mb.EstimatedCostUSD, &mb.UnpricedRequests,

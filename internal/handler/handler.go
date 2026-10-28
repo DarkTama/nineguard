@@ -1210,7 +1210,7 @@ func (h *Handler) ExportUsageReport(w http.ResponseWriter, r *http.Request) {
 
 	// 1. Executive Summary
 	_ = cw.Write([]string{"# EXECUTIVE SUMMARY"})
-	_ = cw.Write([]string{"period", "start_date", "end_date", "total_requests", "total_tokens", "prompt_tokens", "completion_tokens", "estimated_cost_usd", "unpriced_requests", "top_key", "top_model"})
+	_ = cw.Write([]string{"period", "start_date", "end_date", "total_requests", "total_tokens", "prompt_tokens", "cache_read_tokens", "cache_write_tokens", "completion_tokens", "estimated_cost_usd", "unpriced_requests", "top_key", "top_model"})
 	_ = cw.Write([]string{
 		report.Period,
 		report.StartDate,
@@ -1218,6 +1218,8 @@ func (h *Handler) ExportUsageReport(w http.ResponseWriter, r *http.Request) {
 		strconv.Itoa(report.TotalRequests),
 		strconv.Itoa(report.TotalTokens),
 		strconv.Itoa(report.PromptTokens),
+		strconv.Itoa(report.CacheReadTokens),
+		strconv.Itoa(report.CacheWriteTokens),
 		strconv.Itoa(report.CompletionTokens),
 		fmt.Sprintf("%.4f", report.EstimatedCostUSD),
 		strconv.FormatInt(report.UnpricedRequests, 10),
@@ -1228,13 +1230,15 @@ func (h *Handler) ExportUsageReport(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Client Keys Breakdown
 	_ = cw.Write([]string{"# CLIENT KEYS BREAKDOWN"})
-	_ = cw.Write([]string{"key_name", "key_masked", "requests", "prompt_tokens", "completion_tokens", "total_tokens", "estimated_cost_usd", "token_share_pct"})
+	_ = cw.Write([]string{"key_name", "key_masked", "requests", "prompt_tokens", "cache_read_tokens", "cache_write_tokens", "completion_tokens", "total_tokens", "estimated_cost_usd", "token_share_pct"})
 	for _, k := range report.KeysBreakdown {
 		_ = cw.Write([]string{
 			k.KeyName,
 			k.Key,
 			strconv.Itoa(k.TotalRequests),
 			strconv.Itoa(k.PromptTokens),
+			strconv.Itoa(k.CacheReadTokens),
+			strconv.Itoa(k.CacheWriteTokens),
 			strconv.Itoa(k.CompletionTokens),
 			strconv.Itoa(k.TotalTokens),
 			fmt.Sprintf("%.4f", k.EstimatedCostUSD),
@@ -1245,12 +1249,14 @@ func (h *Handler) ExportUsageReport(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Models Breakdown
 	_ = cw.Write([]string{"# MODELS BREAKDOWN"})
-	_ = cw.Write([]string{"model_id", "requests", "prompt_tokens", "completion_tokens", "total_tokens", "estimated_cost_usd", "token_share_pct"})
+	_ = cw.Write([]string{"model_id", "requests", "prompt_tokens", "cache_read_tokens", "cache_write_tokens", "completion_tokens", "total_tokens", "estimated_cost_usd", "token_share_pct"})
 	for _, m := range report.ModelsBreakdown {
 		_ = cw.Write([]string{
 			m.Model,
 			strconv.Itoa(m.TotalRequests),
 			strconv.Itoa(m.PromptTokens),
+			strconv.Itoa(m.CacheReadTokens),
+			strconv.Itoa(m.CacheWriteTokens),
 			strconv.Itoa(m.CompletionTokens),
 			strconv.Itoa(m.TotalTokens),
 			fmt.Sprintf("%.4f", m.EstimatedCostUSD),
@@ -1261,7 +1267,7 @@ func (h *Handler) ExportUsageReport(w http.ResponseWriter, r *http.Request) {
 
 	// 4. Key-to-Model Attribution Matrix
 	_ = cw.Write([]string{"# KEY TO MODEL ATTRIBUTION MATRIX"})
-	_ = cw.Write([]string{"key_name", "key_masked", "model_id", "requests", "prompt_tokens", "completion_tokens", "total_tokens", "estimated_cost_usd", "share_of_key_pct"})
+	_ = cw.Write([]string{"key_name", "key_masked", "model_id", "requests", "prompt_tokens", "cache_read_tokens", "cache_write_tokens", "completion_tokens", "total_tokens", "estimated_cost_usd", "share_of_key_pct"})
 	for _, k := range report.KeysBreakdown {
 		for _, m := range k.ModelUsage {
 			_ = cw.Write([]string{
@@ -1270,6 +1276,8 @@ func (h *Handler) ExportUsageReport(w http.ResponseWriter, r *http.Request) {
 				m.Model,
 				strconv.Itoa(m.Requests),
 				strconv.Itoa(m.PromptTokens),
+				strconv.Itoa(m.CacheReadTokens),
+				strconv.Itoa(m.CacheWriteTokens),
 				strconv.Itoa(m.CompTokens),
 				strconv.Itoa(m.TotalTokens),
 				fmt.Sprintf("%.4f", m.EstimatedCostUSD),

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -24,6 +25,10 @@ import (
 	"nineguard/internal/traffic"
 	"nineguard/internal/upstream"
 )
+
+// StreamIdleTimeout is the maximum duration to wait for bytes from an upstream response body before canceling.
+// Default is 5 minutes.
+var StreamIdleTimeout = 5 * time.Minute
 
 type Proxy struct {
 	models     *models.Manager
@@ -72,7 +77,6 @@ func NewProxy(mm *models.Manager, tm *traffic.Manager, km *keys.Manager, pm *pro
 	}
 	client := &http.Client{
 		Transport: transport,
-		Timeout:   15 * time.Minute, // Upper bound protection for long streaming
 	}
 	return &Proxy{
 		models:     mm,
@@ -683,7 +687,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		client = &http.Client{
 			Transport: transport,
-			Timeout:   15 * time.Minute,
 		}
 	}
 	var resp *http.Response
@@ -714,6 +717,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	idleBody, idleCtx := newIdleTimeoutReader(resp.Body, StreamIdleTimeout)
+	resp.Body = idleBody
 	defer resp.Body.Close()
 
 	// A Removed Model that upstream rejects as unknown gets a clear 404 instead of the
@@ -764,6 +769,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var promptTokens, completionTokens, totalTokens int
 	var cacheReadTokens, cacheWriteTokens, reasoningTokens int
 	var thinkingDelivered bool
+	var thinkingVerifiable bool
 	var servedModel string
 	var usageEstimated bool
 	var responseErrMsg *string
@@ -810,22 +816,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if err != nil {
+				if errors.Is(err, ErrUpstreamIdleTimeout) || errors.Is(idleCtx.Err(), context.Canceled) && context.Cause(idleCtx) == ErrUpstreamIdleTimeout {
+					idleErrStr := "upstream idle timeout: no data received for " + StreamIdleTimeout.String()
+					responseErrMsg = &idleErrStr
+				}
 				if eventBuf.Len() > 0 {
 					rawEvent := eventBuf.Bytes()
-					isUsageOnly, dataPayload := IsUsageOnlySSEEvent(rawEvent)
-					if !(injectedUsage && isUsageOnly) {
-						if len(offeredTools) > 0 {
-							decloakedEvent := DecloakSSEEvent(apiFormat, rawEvent, dataPayload, offeredTools)
-							if !bytes.Equal(decloakedEvent, rawEvent) {
-								decloaked = true
-							}
-							rawEvent = decloakedEvent
-						}
-						_, _ = w.Write(rawEvent)
-						if isFlusher {
-							flusher.Flush()
-						}
-					}
+					_, dataPayload := IsUsageOnlySSEEvent(rawEvent)
 					diagParser.FeedSSEEvent(rawEvent, dataPayload)
 				}
 				break
@@ -840,11 +837,16 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		cacheWriteTokens = diag.CacheWriteTokens
 		reasoningTokens = diag.ReasoningTokens
 		thinkingDelivered = diag.ThinkingDelivered
+		thinkingVerifiable = diag.ThinkingVerifiable
 		servedModel = diag.ServedModel
 		usageEstimated = diag.UsageEstimated
 		capturedRespBody = diagParser.BuildStreamSummary(chunkCount, diag)
 	} else {
 		respBody, err := io.ReadAll(resp.Body)
+		if errors.Is(err, ErrUpstreamIdleTimeout) || errors.Is(idleCtx.Err(), context.Canceled) && context.Cause(idleCtx) == ErrUpstreamIdleTimeout {
+			idleErrStr := "upstream idle timeout: no data received for " + StreamIdleTimeout.String()
+			responseErrMsg = &idleErrStr
+		}
 		if err == nil {
 			if len(offeredTools) > 0 {
 				decloakedResp := DecloakResponseBody(apiFormat, respBody, offeredTools)
@@ -864,6 +866,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			cacheWriteTokens = diag.CacheWriteTokens
 			reasoningTokens = diag.ReasoningTokens
 			thinkingDelivered = diag.ThinkingDelivered
+			thinkingVerifiable = diag.ThinkingVerifiable
 			servedModel = diag.ServedModel
 			if resp.StatusCode < 400 && totalTokens == 0 {
 				promptTokens = len(bodyBytes) / 4
@@ -911,10 +914,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ApiFormat:         apiFormat,
 			CacheReadTokens:   cacheReadTokens,
 			CacheWriteTokens:  cacheWriteTokens,
-			ReasoningTokens:   reasoningTokens,
-			ThinkingRequested: thinkingRequested,
-			ThinkingDelivered: thinkingDelivered,
-			ServedModel:       servedModel,
+			ReasoningTokens:    reasoningTokens,
+			ThinkingRequested:  thinkingRequested,
+			ThinkingDelivered:  thinkingDelivered,
+			ThinkingUnverified: thinkingRequested && !thinkingDelivered && !thinkingVerifiable,
+			ServedModel:        servedModel,
 			ModelFallback:     models.IsModelFallback(modelID, servedModel),
 			UsageEstimated:    usageEstimated,
 		}

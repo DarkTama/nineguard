@@ -46,9 +46,10 @@ type LogEntry struct {
 	CacheReadTokens   int    `json:"cache_read_tokens"`
 	CacheWriteTokens  int    `json:"cache_write_tokens"`
 	ReasoningTokens   int    `json:"reasoning_tokens"`
-	ThinkingRequested bool   `json:"thinking_requested"`
-	ThinkingDelivered bool   `json:"thinking_delivered"`
-	ServedModel       string `json:"served_model"`
+	ThinkingRequested  bool     `json:"thinking_requested"`
+	ThinkingDelivered  bool     `json:"thinking_delivered"`
+	ThinkingUnverified bool     `json:"thinking_unverified"`
+	ServedModel        string   `json:"served_model"`
 	ModelFallback     bool   `json:"model_fallback"`
 	UsageEstimated    bool   `json:"usage_estimated"`
 	CostUSD           *float64 `json:"cost_usd"` // Estimated cost in USD, NULL if unpriced or estimated
@@ -496,9 +497,11 @@ func (m *Manager) Record(entry *LogEntry) error {
 	if entry.ThinkingRequested {
 		thinkingReqInt = 1
 	}
-	thinkingDelInt := 0
+	var thinkingDelVal any = 0
 	if entry.ThinkingDelivered {
-		thinkingDelInt = 1
+		thinkingDelVal = 1
+	} else if entry.ThinkingRequested && entry.ThinkingUnverified {
+		thinkingDelVal = nil
 	}
 	modelFallbackInt := 0
 	if entry.ModelFallback {
@@ -524,7 +527,7 @@ func (m *Manager) Record(entry *LogEntry) error {
 		entry.PluginsSkipped, entry.PluginsApplied, entry.TokensSaved, entry.TokensOverhead, entry.PluginErrors, entry.PluginMs,
 		hasImagesInt, entry.ImageCount, sql.NullString{String: entry.ModelID, Valid: entry.ModelID != ""},
 		entry.ApiFormat, entry.CacheReadTokens, entry.CacheWriteTokens, entry.ReasoningTokens,
-		thinkingReqInt, thinkingDelInt, entry.ServedModel, modelFallbackInt, usageEstInt,
+		thinkingReqInt, thinkingDelVal, entry.ServedModel, modelFallbackInt, usageEstInt,
 		entry.CostUSD)
 
 	if err == nil {
@@ -612,7 +615,9 @@ func (m *Manager) QueryLogs(p FilterParams) ([]LogEntry, int, error) {
 		case "delivered":
 			conditions = append(conditions, "thinking_delivered = 1")
 		case "lost":
-			conditions = append(conditions, "(thinking_requested = 1 AND thinking_delivered = 0 AND NOT (api_format = 'chat' AND LOWER(model) LIKE '%claude%'))")
+			conditions = append(conditions, "(thinking_requested = 1 AND thinking_delivered = 0)")
+		case "unverified":
+			conditions = append(conditions, "(thinking_requested = 1 AND thinking_delivered IS NULL)")
 		}
 	}
 
@@ -798,7 +803,7 @@ func (m *Manager) QueryLogs(p FilterParams) ([]LogEntry, int, error) {
 		       COALESCE(has_images, 0), COALESCE(image_count, 0),
 		       EXISTS(SELECT 1 FROM models rm WHERE rm.id = COALESCE(NULLIF(traffic_logs.model_id, ''), traffic_logs.model) COLLATE NOCASE AND rm.removed_at IS NOT NULL),
 		       COALESCE(api_format, ''), COALESCE(cache_read_tokens, 0), COALESCE(cache_write_tokens, 0), COALESCE(reasoning_tokens, 0),
-		       COALESCE(thinking_requested, 0), COALESCE(thinking_delivered, 0), COALESCE(served_model, ''), COALESCE(model_fallback, 0), COALESCE(usage_estimated, 0),
+		       COALESCE(thinking_requested, 0), thinking_delivered, COALESCE(served_model, ''), COALESCE(model_fallback, 0), COALESCE(usage_estimated, 0),
 		       cost_usd
 		FROM traffic_logs
 		%s
@@ -821,7 +826,8 @@ func (m *Manager) QueryLogs(p FilterParams) ([]LogEntry, int, error) {
 		var lvlStr string
 		var hasImgInt, imgCount int
 		var removedInt int
-		var thinkingReqInt, thinkingDelInt, fallbackInt, estInt int
+		var thinkingReqInt, fallbackInt, estInt int
+		var thinkingDelInt sql.NullInt64
 		if err := rows.Scan(
 			&e.ID, &e.Timestamp, &e.APIKey, &e.APIKeyName, &e.APIKeyID, &e.ProviderID, &e.Model,
 			&e.PromptTokens, &e.CompletionTokens, &e.TotalTokens,
@@ -844,7 +850,8 @@ func (m *Manager) QueryLogs(p FilterParams) ([]LogEntry, int, error) {
 		e.ImageCount = imgCount
 		e.ModelRemoved = (removedInt == 1)
 		e.ThinkingRequested = (thinkingReqInt == 1)
-		e.ThinkingDelivered = (thinkingDelInt == 1)
+		e.ThinkingDelivered = (thinkingDelInt.Valid && thinkingDelInt.Int64 == 1)
+		e.ThinkingUnverified = (thinkingReqInt == 1 && !thinkingDelInt.Valid)
 		e.ModelFallback = (fallbackInt == 1)
 		e.UsageEstimated = (estInt == 1)
 		e.ComputeLevelAndMessage()
@@ -947,7 +954,9 @@ func (m *Manager) GetVolume(p FilterParams, buckets int) (*VolumeResult, error) 
 		case "delivered":
 			conditions = append(conditions, "thinking_delivered = 1")
 		case "lost":
-			conditions = append(conditions, "(thinking_requested = 1 AND thinking_delivered = 0 AND NOT (api_format = 'chat' AND LOWER(model) LIKE '%claude%'))")
+			conditions = append(conditions, "(thinking_requested = 1 AND thinking_delivered = 0)")
+		case "unverified":
+			conditions = append(conditions, "(thinking_requested = 1 AND thinking_delivered IS NULL)")
 		}
 	}
 	if p.Fallback != nil {

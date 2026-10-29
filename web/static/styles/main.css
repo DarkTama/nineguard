@@ -2347,6 +2347,7 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .badge.tf-badge-plugins { background: rgba(249, 115, 22, 0.15); color: var(--accent); border-color: rgba(249, 115, 22, 0.35); }
 .badge.thinking-delivered { background: rgba(168, 85, 247, 0.15); color: #a855f7; border-color: rgba(168, 85, 247, 0.35); }
 .badge.thinking-unknown { background: rgba(148, 163, 184, 0.15); color: #94a3b8; border-color: rgba(148, 163, 184, 0.35); }
+.badge.thinking-unverified { background: rgba(148, 163, 184, 0.15); color: #94a3b8; border-color: rgba(148, 163, 184, 0.35); }
 .badge.thinking-lost { background: rgba(239, 68, 68, 0.15); color: var(--lv-error); border-color: rgba(239, 68, 68, 0.35); }
 
 /* ui-polish: quotas */

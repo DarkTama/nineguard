@@ -519,6 +519,43 @@ func TestBuildStreamSummary(t *testing.T) {
 		}
 	})
 
+	t.Run("Responses stream with reasoning items and text delta", func(t *testing.T) {
+		parser := proxy.NewStreamDiagnosticsParser("responses")
+
+		// 1. output_item.added with item.type: "reasoning"
+		parser.FeedSSEEvent(nil, []byte(`{"type":"response.output_item.added","item":{"type":"reasoning","encrypted_content":"xyz"}}`))
+
+		// 2. reasoning_summary_text.delta
+		parser.FeedSSEEvent(nil, []byte(`{"type":"response.reasoning_summary_text.delta","delta":"thinking about primes"}`))
+
+		// 3. output_text.delta
+		parser.FeedSSEEvent(nil, []byte(`{"type":"response.output_text.delta","delta":"397"}`))
+
+		// 4. response.completed with usage output_tokens_details.reasoning_tokens = 0
+		parser.FeedSSEEvent(nil, []byte(`{"type":"response.completed","response":{"model":"gpt-4o","usage":{"input_tokens":100,"output_tokens":50,"total_tokens":150,"output_tokens_details":{"reasoning_tokens":0}}}}`))
+
+		diag := parser.Finalize(4, 200, 200)
+		summaryBytes := parser.BuildStreamSummary(4, diag)
+
+		var summary proxy.StreamSummary
+		if err := json.Unmarshal(summaryBytes, &summary); err != nil {
+			t.Fatalf("failed to unmarshal summary JSON: %v", err)
+		}
+
+		if !diag.ThinkingDelivered {
+			t.Errorf("expected diag.ThinkingDelivered=true, got false")
+		}
+		if !summary.ThinkingDelivered {
+			t.Errorf("expected summary.ThinkingDelivered=true, got false")
+		}
+		if summary.Thinking != "thinking about primes" {
+			t.Errorf("expected Thinking='thinking about primes', got %q", summary.Thinking)
+		}
+		if summary.Content != "397" {
+			t.Errorf("expected Content='397', got %q", summary.Content)
+		}
+	})
+
 	t.Run("OpenAI chat stream summary reconstruction", func(t *testing.T) {
 		parser := proxy.NewStreamDiagnosticsParser("chat")
 

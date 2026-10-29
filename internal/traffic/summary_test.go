@@ -187,25 +187,25 @@ func TestUsageSummaryThinkingLostExcludesUnverifiableClaudeChat(t *testing.T) {
 	loc := time.UTC
 	refTime := time.Date(2026, 10, 19, 14, 0, 0, 0, loc)
 
-	// 1. Claude chat, requested=1, delivered=0 (unverifiable, excluded from lost)
+	// 1. Claude chat, requested=1, delivered=NULL (unverifiable, excluded from lost)
 	_, _ = d.Exec(`
 		INSERT INTO traffic_logs (
 			timestamp, api_key, api_key_id, model, model_id, api_format, prompt_tokens, completion_tokens, total_tokens,
 			status_code, thinking_requested, thinking_delivered
 		) VALUES (
 			?, 'sk-key1', 'key-test', 'claude-3-7-sonnet', 'claude-3-7-sonnet', 'chat', 100, 50, 150,
-			200, 1, 0
+			200, 1, NULL
 		)
 	`, "2026-10-19 10:00:00")
 
-	// 2. Claude chat uppercase, requested=1, delivered=0 (unverifiable case-insensitive, excluded from lost)
+	// 2. Claude chat uppercase, requested=1, delivered=NULL (unverifiable case-insensitive, excluded from lost)
 	_, _ = d.Exec(`
 		INSERT INTO traffic_logs (
 			timestamp, api_key, api_key_id, model, model_id, api_format, prompt_tokens, completion_tokens, total_tokens,
 			status_code, thinking_requested, thinking_delivered
 		) VALUES (
 			?, 'sk-key1', 'key-test', 'Anthropic/Claude-3-5-Sonnet', 'claude-3-5-sonnet', 'chat', 100, 50, 150,
-			200, 1, 0
+			200, 1, NULL
 		)
 	`, "2026-10-19 10:05:00")
 

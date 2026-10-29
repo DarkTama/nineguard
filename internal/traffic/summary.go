@@ -91,7 +91,7 @@ func (m *Manager) GetUsageSummary(keyID string, rng string, loc *time.Location, 
 			COALESCE(SUM(CASE WHEN status_code < 400 AND cost_usd IS NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN thinking_requested = 1 THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN thinking_delivered = 1 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN thinking_requested = 1 AND thinking_delivered = 0 AND NOT (api_format = 'chat' AND LOWER(model) LIKE '%%claude%%') THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN thinking_requested = 1 AND thinking_delivered = 0 THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN model_fallback = 1 THEN 1 ELSE 0 END), 0),
 			MIN(timestamp)
 		FROM traffic_logs

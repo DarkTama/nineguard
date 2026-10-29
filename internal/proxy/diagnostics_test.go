@@ -556,6 +556,28 @@ func TestBuildStreamSummary(t *testing.T) {
 		}
 	})
 
+	t.Run("Responses stream function_call_arguments delta does not pollute content", func(t *testing.T) {
+		parser := proxy.NewStreamDiagnosticsParser("responses")
+
+		// 1. function_call_arguments.delta
+		parser.FeedSSEEvent(nil, []byte(`{"type":"response.function_call_arguments.delta","delta":"{\"location\":\"Paris\"}"}`))
+
+		// 2. output_text.delta
+		parser.FeedSSEEvent(nil, []byte(`{"type":"response.output_text.delta","delta":"Here is the weather"}`))
+
+		diag := parser.Finalize(2, 100, 200)
+		summaryBytes := parser.BuildStreamSummary(2, diag)
+
+		var summary proxy.StreamSummary
+		if err := json.Unmarshal(summaryBytes, &summary); err != nil {
+			t.Fatalf("failed to unmarshal summary JSON: %v", err)
+		}
+
+		if summary.Content != "Here is the weather" {
+			t.Errorf("expected Content='Here is the weather', got %q", summary.Content)
+		}
+	})
+
 	t.Run("OpenAI chat stream summary reconstruction", func(t *testing.T) {
 		parser := proxy.NewStreamDiagnosticsParser("chat")
 

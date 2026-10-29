@@ -822,7 +822,20 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				if eventBuf.Len() > 0 {
 					rawEvent := eventBuf.Bytes()
-					_, dataPayload := IsUsageOnlySSEEvent(rawEvent)
+					isUsageOnly, dataPayload := IsUsageOnlySSEEvent(rawEvent)
+					if !(injectedUsage && isUsageOnly) {
+						if len(offeredTools) > 0 {
+							decloakedEvent := DecloakSSEEvent(apiFormat, rawEvent, dataPayload, offeredTools)
+							if !bytes.Equal(decloakedEvent, rawEvent) {
+								decloaked = true
+							}
+							rawEvent = decloakedEvent
+						}
+						_, _ = w.Write(rawEvent)
+						if isFlusher {
+							flusher.Flush()
+						}
+					}
 					diagParser.FeedSSEEvent(rawEvent, dataPayload)
 				}
 				break

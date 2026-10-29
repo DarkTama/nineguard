@@ -522,7 +522,7 @@ func (p *StreamDiagnosticsParser) FeedSSEEvent(eventRaw []byte, dataPayload []by
 			default:
 				if respEvent.Response.OutputText.Delta != "" {
 					appendWithCap(&p.contentBuilder, respEvent.Response.OutputText.Delta, 64*1024)
-				} else if respEvent.Delta != "" {
+				} else if respEvent.Delta != "" && (strings.HasSuffix(respEvent.Type, "output_text.delta") || strings.HasSuffix(respEvent.Type, "refusal.delta")) {
 					appendWithCap(&p.contentBuilder, respEvent.Delta, 64*1024)
 				}
 			}

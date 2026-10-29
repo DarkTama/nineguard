@@ -112,4 +112,37 @@ func TestIdleStreamTimeout(t *testing.T) {
 		}
 		t.Fatalf("expected 'upstream idle timeout' in error message, got: %q", errMsg)
 	}
+
+	// Case 3: Final SSE event without trailing blank line reaches the client
+	upstreamTrailing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		// Final event has NO blank line after it
+		_, _ = w.Write([]byte("data: [DONE]\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer upstreamTrailing.Close()
+
+	provTrailing, _ := providersMgr.CreateProvider("prov-trailing", upstreamTrailing.URL, "sk-test", "", true, true)
+	pTrailing, _ := proxy.NewProxy(modelsMgr, trafficMgr, keyMgr, providersMgr, nil)
+	_ = provTrailing
+
+	req3 := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	req3.Header.Set("Authorization", "Bearer "+clientKey.RawKey)
+	req3.Header.Set("Content-Type", "application/json")
+	rec3 := httptest.NewRecorder()
+	pTrailing.ServeHTTP(rec3, req3)
+	if rec3.Code != http.StatusOK {
+		t.Fatalf("trailing stream failed: code %d: %s", rec3.Code, rec3.Body.String())
+	}
+	if !strings.Contains(rec3.Body.String(), "data: [DONE]") {
+		t.Fatalf("expected client response to contain final SSE event 'data: [DONE]', got: %q", rec3.Body.String())
+	}
 }

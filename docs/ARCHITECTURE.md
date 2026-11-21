@@ -54,7 +54,7 @@ NineGuard dirancang berdasarkan prinsip:
        ├── Rewrite Request Header:
        │     ├── Authorization: Bearer <Master_API_Key_Provider> dan x-api-key: <Master_API_Key_Provider>
        │     ├── anthropic-version: 2023-06-01 bila format messages dan client tidak mengirimnya
-       │     └── Buang header hop-by-hop, X-App, Origin/Referer/Sec-Fetch-* (browser), header internal NineGuard
+       │     └── Buang header hop-by-hop, X-App, Accept-Encoding (transport Go negosiasi gzip sendiri dan dekompresi, body ke klien selalu plaintext), Origin/Referer/Sec-Fetch-* (browser), header internal NineGuard
        ▼
 [3. Upstream Provider]
        │

@@ -2,6 +2,7 @@ package providers
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 )
 
@@ -33,4 +34,23 @@ func normalizeBackend(backend, family, route, apiKey string) (string, string, er
 		return "", "", fmt.Errorf("unsupported provider backend")
 	}
 	return backend, family, nil
+}
+
+// setUpstreamAuth mirrors the proxy's outbound auth on model probes and syncs: the key goes in
+// both Authorization: Bearer (OpenAI-compatible) and x-api-key (Anthropic accepts only this).
+// Anthropic's API also requires anthropic-version on every call, including GET /v1/models;
+// other upstreams ignore it, so it is only sent to api.anthropic.com.
+func setUpstreamAuth(req *http.Request, route, apiKey string) {
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("x-api-key", apiKey)
+	}
+	if IsAnthropicAPI(route) {
+		req.Header.Set("anthropic-version", "2023-06-01")
+	}
+}
+
+// IsAnthropicAPI reports whether route points at Anthropic's first-party API.
+func IsAnthropicAPI(route string) bool {
+	return strings.Contains(strings.ToLower(route), "api.anthropic.com")
 }

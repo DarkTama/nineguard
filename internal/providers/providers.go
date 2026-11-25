@@ -621,9 +621,7 @@ func (m *Manager) AggregateModels(ctx context.Context) ([]map[string]interface{}
 			if err != nil {
 				return
 			}
-			if prov.APIKey != "" {
-				req.Header.Set("Authorization", "Bearer "+prov.APIKey)
-			}
+			setUpstreamAuth(req, prov.Route, prov.APIKey)
 
 			resp, err := client.Do(req)
 			if err != nil || resp.StatusCode != http.StatusOK {
@@ -631,9 +629,7 @@ func (m *Manager) AggregateModels(ctx context.Context) ([]map[string]interface{}
 				fallbackURL := prov.Route + "/models"
 				req2, err2 := http.NewRequestWithContext(ctx, "GET", fallbackURL, nil)
 				if err2 == nil {
-					if prov.APIKey != "" {
-						req2.Header.Set("Authorization", "Bearer "+prov.APIKey)
-					}
+					setUpstreamAuth(req2, prov.Route, prov.APIKey)
 					resp2, err3 := client.Do(req2)
 					if err3 == nil && resp2.StatusCode == http.StatusOK {
 						resp = resp2
@@ -717,9 +713,7 @@ func (m *Manager) TestProvider(ctx context.Context, route, apiKey string) (map[s
 	if err != nil {
 		return nil, err
 	}
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
+	setUpstreamAuth(req, route, apiKey)
 
 	resp, err := client.Do(req)
 	latency := int(time.Since(start).Milliseconds())

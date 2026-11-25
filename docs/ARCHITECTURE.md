@@ -21,6 +21,8 @@ NineGuard dirancang berdasarkan prinsip:
        │
        │ HTTP POST /v1/chat/completions (atau /v1/messages, /v1/responses)
        │ Header: Authorization: Bearer sk-ng-... (atau x-api-key: sk-ng-... untuk /v1/messages, ADR 0014)
+       ├── CORS Opt-in (/v1, /v1/*, /v1beta/*; jika NINEGUARD_CORS_ORIGINS diisi)
+       │     └── Preflight OPTIONS dari origin terdaftar ──► 204 (sebelum auth/proxy)
        ▼
 [2. NineGuard Security Interceptor]
        │

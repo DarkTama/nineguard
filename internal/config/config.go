@@ -15,6 +15,7 @@ type Config struct {
 	RouterTarget string
 	RouterDBFile string
 	RouterAPIKey string
+	CORSOrigins  []string
 }
 
 func loadDotEnv(filenames ...string) {
@@ -61,8 +62,21 @@ func LoadFromEnv() *Config {
 		RouterTarget: routerTarget,
 		RouterDBFile: getEnv("NINEGUARD_ROUTER_DB_FILE", ""),
 		RouterAPIKey: getEnv("NINEGUARD_ROUTER_API_KEY", ""),
+		CORSOrigins:  ParseCORSOrigins(getEnv("NINEGUARD_CORS_ORIGINS", "")),
 	}
 	return cfg
+}
+
+// ParseCORSOrigins splits a comma-separated origin list, trimming whitespace
+// and ignoring empty entries. Returns nil when no origins are configured.
+func ParseCORSOrigins(raw string) []string {
+	var origins []string
+	for _, part := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			origins = append(origins, trimmed)
+		}
+	}
+	return origins
 }
 
 func getEnv(key, def string) string {

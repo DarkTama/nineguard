@@ -303,6 +303,7 @@ The `.env` file is loaded automatically on startup. Only ports, authentication t
 | `NINEGUARD_DB_FILE` | `./data/nineguard.db` | Local SQLite database file path |
 | `NINEGUARD_AUTH_FILE` | `./data/auth.json` | Fallback authentication file path (optional) |
 | `NINEGUARD_ENCRYPTION_KEY` | *(Auto-generated)* | AES-256 master key (32 bytes / 64 hex characters) for Secret Vault. If empty, NineGuard generates and persists a key at `data/.master.key` (mode 0600). |
+| `NINEGUARD_CORS_ORIGINS` | *(empty)* | Comma-separated exact browser origins allowed to call `/v1`, `/v1/*`, and `/v1beta/*` (e.g. `https://<app-domain>`). Empty disables CORS. |
 
 *Note: Upstream providers are managed dynamically through the Web UI (Providers view) and persisted in SQLite; target URLs do not need to be hardcoded in `.env`.*
 

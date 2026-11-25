@@ -18,6 +18,7 @@ import (
 
 	"nineguard/internal/auth"
 	"nineguard/internal/config"
+	"nineguard/internal/cors"
 	"nineguard/internal/db"
 	"nineguard/internal/handler"
 	"nineguard/internal/keys"
@@ -425,7 +426,7 @@ func main() {
 		fileServer.ServeHTTP(w, r)
 	})
 
-	finalHandler := authMgr.RequireAuthMiddleware(rootHandler)
+	finalHandler := cors.Middleware(cfg.CORSOrigins)(authMgr.RequireAuthMiddleware(rootHandler))
 
 	server := &http.Server{
 		Addr:    ":" + cfg.Port,

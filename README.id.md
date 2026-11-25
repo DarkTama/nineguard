@@ -286,6 +286,7 @@ File `.env` otomatis dibaca saat startup (hanya port, auth, dan path database ya
 | `NINEGUARD_DB_FILE` | `./data/nineguard.db` | Lokasi file database SQLite lokal NineGuard |
 | `NINEGUARD_AUTH_FILE` | `./data/auth.json` | Lokasi file fallback autentikasi (opsional) |
 | `NINEGUARD_ENCRYPTION_KEY` | *(Auto-generated)* | Kunci master AES-256 (32 byte / 64 hex) untuk Secret Vault. Jika kosong, NineGuard otomatis membuat dan menyimpan kunci di `data/.master.key` (mode 0600). |
+| `NINEGUARD_CORS_ORIGINS` | *(kosong)* | Daftar origin browser persis yang dipisahkan koma untuk mengakses `/v1`, `/v1/*`, dan `/v1beta/*` (mis. `https://<app-domain>`). Kosong menonaktifkan CORS. |
 
 *Catatan: Upstream provider dikelola langsung secara dinamis melalui UI Dashboard (menu Providers) dan tersimpan di database lokal, sehingga tidak perlu mengatur target upstream di `.env`.*
 
